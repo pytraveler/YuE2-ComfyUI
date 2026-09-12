@@ -1,0 +1,18 @@
+[project]
+name = "yue2-comfyui"
+version = "0.1.0"
+description = "ComfyUI nodes for YuE2-3B: a style description and lyrics become a readable score and then a complete 48 kHz stereo song, generated locally."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "tiktoken>=0.7",
+]
+
+[project.urls]
+Repository = "https://github.com/pytraveler/YuE2-ComfyUI"
+
+[tool.comfy]
+PublisherId = "darkil"
+DisplayName = "YuE2 Music"
+Icon = "https://avatars.githubusercontent.com/u/72470814"

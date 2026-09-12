@@ -1,0 +1,8 @@
+/.github export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+
+*.png binary
+*.jpg binary
+*.flac binary
+*.safetensors binary

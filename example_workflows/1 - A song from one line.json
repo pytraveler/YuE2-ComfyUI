@@ -1,0 +1,458 @@
+{
+  "id": "33b2222c-1c92-4f93-8666-239080f98d24",
+  "revision": 0,
+  "last_node_id": 6,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "YuE2WriteSong",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        430,
+        470
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "idea",
+          "name": "idea",
+          "type": "STRING",
+          "widget": {
+            "name": "idea"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "COMBO",
+          "widget": {
+            "name": "model"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "language",
+          "name": "language",
+          "type": "COMBO",
+          "widget": {
+            "name": "language"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "length",
+          "name": "length",
+          "type": "COMBO",
+          "widget": {
+            "name": "length"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "keep_model_loaded",
+          "name": "keep_model_loaded",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "keep_model_loaded"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "instructions",
+          "name": "instructions",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "instructions"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "links": [
+            1,
+            4
+          ]
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "links": [
+            2,
+            5
+          ]
+        }
+      ],
+      "title": "Write the words",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2WriteSong"
+      },
+      "widgets_values": [
+        "a quiet song about coming home in winter, female voice",
+        "auto",
+        "auto",
+        "normal",
+        831001,
+        "fixed",
+        false,
+        ""
+      ],
+      "widgets_values_named": {
+        "idea": "a quiet song about coming home in winter, female voice",
+        "model": "auto",
+        "language": "auto",
+        "length": "normal",
+        "seed": 831001,
+        "control_after_generate": "fixed",
+        "keep_model_loaded": false,
+        "instructions": ""
+      }
+    },
+    {
+      "id": 2,
+      "type": "YuE2GenerateSong",
+      "pos": [
+        490,
+        0
+      ],
+      "size": [
+        430,
+        210
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "widget": {
+            "name": "style"
+          },
+          "link": 1
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "widget": {
+            "name": "lyrics"
+          },
+          "link": 2
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            3
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Sing them",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2GenerateSong"
+      },
+      "widgets_values": [
+        "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        831001,
+        "fixed"
+      ],
+      "widgets_values_named": {
+        "style": "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "lyrics": "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        "seed": 831001,
+        "control_after_generate": "fixed"
+      }
+    },
+    {
+      "id": 3,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        990,
+        0
+      ],
+      "size": [
+        400,
+        160
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 3
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "The song",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2",
+        "format": "flac"
+      }
+    },
+    {
+      "id": 4,
+      "type": "PreviewAny",
+      "pos": [
+        990,
+        220
+      ],
+      "size": [
+        400,
+        180
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "STRING",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "The style it wrote",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 5,
+      "type": "PreviewAny",
+      "pos": [
+        990,
+        450
+      ],
+      "size": [
+        400,
+        320
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "STRING",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "The lyrics it wrote",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 6,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        780
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 1 - A song from one line\n\nOne sentence saying what the song is about, and a finished 48 kHz stereo\nsong comes out the other end. Nothing else has to be written.\n\n## What it needs\n\nTwo downloads, both on the first run and both automatic:\n\n- **Qwen3.5-4B**, 2.7 GB, which writes the style line and the lyrics. Any\n  instruction-following GGUF already on this machine is used instead -- the\n  **model** list shows what was found, with its size, wherever it lives:\n  ComfyUI's model folders, the Hugging Face cache, Ollama's own store.\n- **YuE2-3B**, 7.26 GB, which sings them.\n\nIf `llama-cpp-python` is not installed, about 32 MB of official llama.cpp\nbinaries are fetched as well and the writer runs through those. Either way\nthere is nothing to install by hand and no path to fill in.\n\n## How to use it\n\n1. Put one line into **idea**: what it is about and whose voice.\n   *a quiet song about coming home in winter, female voice* is enough.\n   Any language works -- leave **language** on `auto` and the idea's own\n   language is used.\n2. **length** is how many sung lines to ask for: 8, 16, 24 or 32.\n3. Run. What the writer produced is on the right, and the song is built\n   from exactly that text.\n\n**instructions** is optional and in your own words -- *no chorus*, *first\nperson*, *end on a question*. It wins wherever it disagrees with the\nwriting rules.\n\n## The two seeds are not the same seed\n\nThe writer's seed decides the words. The singer's seed decides the\nperformance. Hold the first and change only the second, and you get\nanother take of the same song.\n\nBoth are set to **fixed** here, so Run twice returns the same song\ninstead of spending the time on a different one.\n\n## Where to go next\n\n- **2 - A song from style and lyrics** -- the singer on its own, when you\n  would rather write the words yourself.\n- **3 - A longer song** -- length, guidance, the decoder and the rest.\n- **5 - Four scores, one song** -- several tunes for one set of words."
+      ],
+      "widgets_values_named": {
+        "text": "# 1 - A song from one line\n\nOne sentence saying what the song is about, and a finished 48 kHz stereo\nsong comes out the other end. Nothing else has to be written.\n\n## What it needs\n\nTwo downloads, both on the first run and both automatic:\n\n- **Qwen3.5-4B**, 2.7 GB, which writes the style line and the lyrics. Any\n  instruction-following GGUF already on this machine is used instead -- the\n  **model** list shows what was found, with its size, wherever it lives:\n  ComfyUI's model folders, the Hugging Face cache, Ollama's own store.\n- **YuE2-3B**, 7.26 GB, which sings them.\n\nIf `llama-cpp-python` is not installed, about 32 MB of official llama.cpp\nbinaries are fetched as well and the writer runs through those. Either way\nthere is nothing to install by hand and no path to fill in.\n\n## How to use it\n\n1. Put one line into **idea**: what it is about and whose voice.\n   *a quiet song about coming home in winter, female voice* is enough.\n   Any language works -- leave **language** on `auto` and the idea's own\n   language is used.\n2. **length** is how many sung lines to ask for: 8, 16, 24 or 32.\n3. Run. What the writer produced is on the right, and the song is built\n   from exactly that text.\n\n**instructions** is optional and in your own words -- *no chorus*, *first\nperson*, *end on a question*. It wins wherever it disagrees with the\nwriting rules.\n\n## The two seeds are not the same seed\n\nThe writer's seed decides the words. The singer's seed decides the\nperformance. Hold the first and change only the second, and you get\nanother take of the same song.\n\nBoth are set to **fixed** here, so Run twice returns the same song\ninstead of spending the time on a different one.\n\n## Where to go next\n\n- **2 - A song from style and lyrics** -- the singer on its own, when you\n  would rather write the words yourself.\n- **3 - A longer song** -- length, guidance, the decoder and the rest.\n- **5 - Four scores, one song** -- several tunes for one set of words."
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      1,
+      "STRING"
+    ],
+    [
+      2,
+      1,
+      1,
+      2,
+      2,
+      "STRING"
+    ],
+    [
+      3,
+      2,
+      0,
+      3,
+      0,
+      "AUDIO"
+    ],
+    [
+      4,
+      1,
+      0,
+      4,
+      0,
+      "STRING"
+    ],
+    [
+      5,
+      1,
+      1,
+      5,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        710.6,
+        139.4
+      ]
+    }
+  },
+  "version": 0.4
+}

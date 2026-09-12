@@ -19,7 +19,7 @@ import unicodedata
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-SCANNED_DIRS = ("yue2_comfy", "tests", ".github")
+SCANNED_DIRS = ("yue2_comfy", "tests", ".github", "example_workflows")
 SCANNED_FILES = ("README.md", "NOTICE.md", "LICENSE", "pyproject.toml",
                  "requirements.txt", "__init__.py")
 SUFFIXES = {".py", ".toml", ".txt", ".json", ".yml", ".yaml", ".md"}

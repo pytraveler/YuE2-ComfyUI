@@ -1,0 +1,263 @@
+{
+  "id": "45d7a851-51bf-4589-860b-e4834f47ef02",
+  "revision": 0,
+  "last_node_id": 4,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "YuE2GenerateSong",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        430,
+        640
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "widget": {
+            "name": "style"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "widget": {
+            "name": "lyrics"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            1
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "title": "Write the song",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2GenerateSong"
+      },
+      "widgets_values": [
+        "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        831001,
+        "fixed"
+      ],
+      "widgets_values_named": {
+        "style": "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "lyrics": "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        "seed": 831001,
+        "control_after_generate": "fixed"
+      }
+    },
+    {
+      "id": 2,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        490,
+        0
+      ],
+      "size": [
+        400,
+        140
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 1
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "The song",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2",
+        "format": "flac"
+      }
+    },
+    {
+      "id": 3,
+      "type": "PreviewAny",
+      "pos": [
+        490,
+        220
+      ],
+      "size": [
+        400,
+        400
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "STRING",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "The score it sang",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 4,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        740
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 2 - A song from style and lyrics\n\nOne node. Describe the sound, write the words, press Run, and a finished\n48 kHz stereo song comes out.\n\n## What it needs\n\nThe YuE2-3B weights: 7.26 GB, fetched on the first run. Nothing to install\nand no path to fill in -- the node downloads what is missing and draws the\nprogress on itself.\n\nAbout **7.1 GiB of VRAM** for a short song and **11 GiB** for three and a\nhalf minutes. A smaller card still finishes; it offloads and takes longer.\n\n## How to use it\n\n1. **style** is a description, not tags. Language, genre, voice,\n   instruments, tempo: *English, warm piano pop, expressive female voice,\n   88 BPM* beats *pop, piano, female*.\n2. **lyrics** want a section marker on a line of its own -- `[Verse]`,\n   `[Chorus]`, `[Bridge]`, `[Outro]`. Leave the box empty for an\n   instrumental and you get three minutes of music with no voice.\n3. Run. The song is as long as the lyrics need; template 3 is where you\n   set a length yourself.\n\nThe same seed with the same settings gives the same song, byte for byte.\nThe first run also downloads the weights, so it is the slow one.\n\n## What the score on the right is\n\nThe model writes a readable ABC score and then sings it. That score is\nthe **score_abc** output -- the tune, before any sound exists. It can be\nedited and sung back, which is template 4.\n\n## Where to go next\n\n- **1 - A song from one line** -- when you would rather not write the\n  style and the lyrics yourself.\n- **3 - A longer song** -- length, guidance, the decoder and the rest.\n- **4 - The score first** -- write the score, edit it, sing your edit."
+      ],
+      "widgets_values_named": {
+        "text": "# 2 - A song from style and lyrics\n\nOne node. Describe the sound, write the words, press Run, and a finished\n48 kHz stereo song comes out.\n\n## What it needs\n\nThe YuE2-3B weights: 7.26 GB, fetched on the first run. Nothing to install\nand no path to fill in -- the node downloads what is missing and draws the\nprogress on itself.\n\nAbout **7.1 GiB of VRAM** for a short song and **11 GiB** for three and a\nhalf minutes. A smaller card still finishes; it offloads and takes longer.\n\n## How to use it\n\n1. **style** is a description, not tags. Language, genre, voice,\n   instruments, tempo: *English, warm piano pop, expressive female voice,\n   88 BPM* beats *pop, piano, female*.\n2. **lyrics** want a section marker on a line of its own -- `[Verse]`,\n   `[Chorus]`, `[Bridge]`, `[Outro]`. Leave the box empty for an\n   instrumental and you get three minutes of music with no voice.\n3. Run. The song is as long as the lyrics need; template 3 is where you\n   set a length yourself.\n\nThe same seed with the same settings gives the same song, byte for byte.\nThe first run also downloads the weights, so it is the slow one.\n\n## What the score on the right is\n\nThe model writes a readable ABC score and then sings it. That score is\nthe **score_abc** output -- the tune, before any sound exists. It can be\nedited and sung back, which is template 4.\n\n## Where to go next\n\n- **1 - A song from one line** -- when you would rather not write the\n  style and the lyrics yourself.\n- **3 - A longer song** -- length, guidance, the decoder and the rest.\n- **4 - The score first** -- write the score, edit it, sing your edit."
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "AUDIO"
+    ],
+    [
+      2,
+      1,
+      1,
+      3,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        710.6,
+        159.4
+      ]
+    }
+  },
+  "version": 0.4
+}

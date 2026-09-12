@@ -1,0 +1,467 @@
+{
+  "id": "5d8cfe0d-29a5-4f7d-9cb2-b6d3ac25b3ba",
+  "revision": 0,
+  "last_node_id": 7,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "YuE2PlanBatch",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        430,
+        660
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "widget": {
+            "name": "style"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "widget": {
+            "name": "lyrics"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "count",
+          "name": "count",
+          "type": "INT",
+          "widget": {
+            "name": "count"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "plans",
+          "name": "plans",
+          "type": "YUE2_PLANS",
+          "links": [
+            2
+          ]
+        },
+        {
+          "localized_name": "scores",
+          "name": "scores",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "Write four scores",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2PlanBatch"
+      },
+      "widgets_values": [
+        "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        831001,
+        "fixed",
+        4
+      ],
+      "widgets_values_named": {
+        "style": "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "lyrics": "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        "seed": 831001,
+        "control_after_generate": "fixed",
+        "count": 4
+      }
+    },
+    {
+      "id": 2,
+      "type": "PreviewAny",
+      "pos": [
+        490,
+        0
+      ],
+      "size": [
+        420,
+        660
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "STRING",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "All four, to read side by side",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 3,
+      "type": "YuE2SelectPlan",
+      "pos": [
+        960,
+        0
+      ],
+      "size": [
+        400,
+        120
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "plans",
+          "name": "plans",
+          "type": "YUE2_PLANS",
+          "link": 2
+        },
+        {
+          "localized_name": "index",
+          "name": "index",
+          "type": "INT",
+          "widget": {
+            "name": "index"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "plan",
+          "name": "plan",
+          "type": "YUE2_PLAN",
+          "links": [
+            4
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Pick one",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2SelectPlan"
+      },
+      "widgets_values": [
+        0
+      ],
+      "widgets_values_named": {
+        "index": 0
+      }
+    },
+    {
+      "id": 4,
+      "type": "PreviewAny",
+      "pos": [
+        960,
+        160
+      ],
+      "size": [
+        400,
+        520
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "STRING",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "The one you picked",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 5,
+      "type": "YuE2RenderPlan",
+      "pos": [
+        1420,
+        0
+      ],
+      "size": [
+        430,
+        420
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "plan",
+          "name": "plan",
+          "type": "YUE2_PLAN",
+          "link": 4
+        },
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "score_abc"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            5
+          ]
+        },
+        {
+          "localized_name": "latents",
+          "name": "latents",
+          "type": "YUE2_LATENTS",
+          "links": null
+        }
+      ],
+      "title": "Sing that one",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2RenderPlan"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "widgets_values_named": {
+        "score_abc": ""
+      }
+    },
+    {
+      "id": 6,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        1900,
+        0
+      ],
+      "size": [
+        400,
+        160
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 5
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "The song",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2",
+        "format": "flac"
+      }
+    },
+    {
+      "id": 7,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        820
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 5 - Four scores, one song\n\n**YuE2 Plan Batch** writes several scores for the same words, one per\nconsecutive seed. **YuE2 Select Plan** takes one of them by number.\n\n## What it needs\n\nThe same YuE2-3B weights as template 2, 7.26 GB. Nothing extra.\n\n## Why it is two nodes and not one\n\nChanging a number on the batch node would change that node's inputs, and\nComfyUI would rewrite all four scores. Picking is a separate node so that\nchanging the index leaves the batch alone: the scores above it stay cached\nand only the singing runs again.\n\nMeasured on an RTX 5090, two lines of lyrics, a 40-second ceiling: four\nscores cost 8.8 s against 35.7 s for four whole songs.\n\n## How to use it\n\n1. Run. All four scores land in the preview, each headed with its index\n   and the seed that wrote it.\n2. Read them, set **index** on **Pick one** -- 0, 1, 2 or 3 -- and run\n   again. Only the chosen score is sung.\n3. **count** decides how many to write. The seeds run consecutively from\n   the one on the batch node.\n\nAn index past the end is clamped to the last score and the node says so,\nrather than failing halfway through.\n\n## Where to go next\n\n- **4 - The score first** -- one score, and how to edit it by hand.\n- **2 - A song from style and lyrics** -- the whole thing in one node."
+      ],
+      "widgets_values_named": {
+        "text": "placeholder"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      1,
+      2,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      1,
+      0,
+      3,
+      0,
+      "YUE2_PLANS"
+    ],
+    [
+      3,
+      3,
+      1,
+      4,
+      0,
+      "STRING"
+    ],
+    [
+      4,
+      3,
+      0,
+      5,
+      0,
+      "YUE2_PLAN"
+    ],
+    [
+      5,
+      5,
+      0,
+      6,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.629,
+      "offset": [
+        735.4,
+        305.4
+      ]
+    }
+  },
+  "version": 0.4
+}

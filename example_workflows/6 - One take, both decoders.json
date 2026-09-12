@@ -1,0 +1,672 @@
+{
+  "id": "eb887dfe-dc48-4b47-8454-6ca098c74412",
+  "revision": 0,
+  "last_node_id": 7,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "YuE2Plan",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        430,
+        640
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "widget": {
+            "name": "style"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "widget": {
+            "name": "lyrics"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "plan",
+          "name": "plan",
+          "type": "YUE2_PLAN",
+          "links": [
+            1
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Write the score",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2Plan"
+      },
+      "widgets_values": [
+        "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        831001,
+        "fixed"
+      ],
+      "widgets_values_named": {
+        "style": "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "lyrics": "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        "seed": 831001,
+        "control_after_generate": "fixed"
+      }
+    },
+    {
+      "id": 2,
+      "type": "YuE2Options",
+      "pos": [
+        960,
+        220
+      ],
+      "size": [
+        430,
+        470
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "cot",
+          "name": "cot",
+          "type": "COMBO",
+          "widget": {
+            "name": "cot"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "max_seconds",
+          "name": "max_seconds",
+          "type": "FLOAT",
+          "widget": {
+            "name": "max_seconds"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "keep_model_loaded",
+          "name": "keep_model_loaded",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "keep_model_loaded"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg_scale",
+          "name": "cfg_scale",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg_scale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "vae"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "attention_backend",
+          "name": "attention_backend",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "attention_backend"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "download",
+          "name": "download",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "download"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "quantization",
+          "name": "quantization",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "quantization"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ode_steps",
+          "name": "ode_steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "ode_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_temperature",
+          "name": "abc_temperature",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "abc_temperature"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_top_p",
+          "name": "abc_top_p",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "abc_top_p"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_top_k",
+          "name": "abc_top_k",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "abc_top_k"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "temperature",
+          "name": "temperature",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "temperature"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "top_p",
+          "name": "top_p",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "top_p"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "top_k",
+          "name": "top_k",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "top_k"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "repetition_penalty",
+          "name": "repetition_penalty",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "repetition_penalty"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "type": "YUE2_OPTIONS",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "The legacy decoder",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2Options"
+      },
+      "widgets_values": [
+        "full",
+        0,
+        false,
+        0,
+        "legacy",
+        "auto",
+        "sdpa",
+        "auto",
+        "bf16",
+        32,
+        0.7,
+        0.9,
+        30,
+        1,
+        0.95,
+        100,
+        1.2
+      ],
+      "widgets_values_named": {
+        "cot": "full",
+        "max_seconds": 0,
+        "keep_model_loaded": false,
+        "cfg_scale": 0,
+        "vae": "legacy",
+        "device": "auto",
+        "attention_backend": "sdpa",
+        "download": "auto",
+        "quantization": "bf16",
+        "ode_steps": 32,
+        "abc_temperature": 0.7,
+        "abc_top_p": 0.9,
+        "abc_top_k": 30,
+        "temperature": 1,
+        "top_p": 0.95,
+        "top_k": 100,
+        "repetition_penalty": 1.2
+      }
+    },
+    {
+      "id": 3,
+      "type": "YuE2RenderPlan",
+      "pos": [
+        490,
+        0
+      ],
+      "size": [
+        430,
+        420
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "plan",
+          "name": "plan",
+          "type": "YUE2_PLAN",
+          "link": 1
+        },
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "score_abc"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            2
+          ]
+        },
+        {
+          "localized_name": "latents",
+          "name": "latents",
+          "type": "YUE2_LATENTS",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Sing it once",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2RenderPlan"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "widgets_values_named": {
+        "score_abc": ""
+      }
+    },
+    {
+      "id": 4,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        960,
+        0
+      ],
+      "size": [
+        400,
+        160
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 2
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "Standard decoder",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2-standard",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2-standard",
+        "format": "flac"
+      }
+    },
+    {
+      "id": 5,
+      "type": "YuE2DecodeLatents",
+      "pos": [
+        1430,
+        0
+      ],
+      "size": [
+        400,
+        120
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "latents",
+          "name": "latents",
+          "type": "YUE2_LATENTS",
+          "link": 3
+        },
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "title": "Decode the same take again",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2DecodeLatents"
+      }
+    },
+    {
+      "id": 6,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        1900,
+        0
+      ],
+      "size": [
+        400,
+        160
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 5
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "Legacy decoder",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2-legacy",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2-legacy",
+        "format": "flac"
+      }
+    },
+    {
+      "id": 7,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        820
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 6 - One take, both decoders\n\nSinging and decoding are different steps. **YuE2 Render Plan** hands out\nits **latents** as well as its audio, and **YuE2 Decode Latents** turns\nthose back into sound without singing anything again.\n\n## What it needs\n\nThe YuE2-3B weights, 7.26 GB, and the legacy decoder -- a separate 0.53 GB\ndownload, fetched the first time `vae` is set to `legacy`.\n\n## What you are listening for\n\n`standard` and `legacy` are different weights, and one performance through\neach does not sound the same. `standard` is the one to listen to; `legacy`\nis what the published benchmark numbers were measured on.\n\nThe two files land side by side in ComfyUI's output folder, as\n`YuE2-standard_*.flac` and `YuE2-legacy_*.flac`.\n\n## How to use it\n\n1. Run. The song is sung once. The second decode sings nothing: what it\n   costs is the weights being loaded back plus a fraction of a second of\n   decoding. Measured here, a 35-second song went through the whole\n   template in 32 s and the decode node accounted for 5 s of that.\n2. Set `vae` on **The legacy decoder** back to `standard` and the two files\n   become the same audio. That is the check that nothing else on the\n   options node is quietly changing the sound.\n\nThe options node overrides everything the latents carried, so leave the\nrest of it alone unless you mean it. `device` is the other one worth\ntouching here, when the decode should happen somewhere else.\n\n## Where to go next\n\n- **4 - The score first** -- where the latents come from.\n- **3 - A longer song** -- the rest of what the options node holds."
+      ],
+      "widgets_values_named": {
+        "text": "placeholder"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "YUE2_PLAN"
+    ],
+    [
+      2,
+      3,
+      0,
+      4,
+      0,
+      "AUDIO"
+    ],
+    [
+      3,
+      3,
+      1,
+      5,
+      0,
+      "YUE2_LATENTS"
+    ],
+    [
+      4,
+      2,
+      0,
+      5,
+      1,
+      "YUE2_OPTIONS"
+    ],
+    [
+      5,
+      5,
+      0,
+      6,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.629,
+      "offset": [
+        735.4,
+        305.4
+      ]
+    }
+  },
+  "version": 0.4
+}

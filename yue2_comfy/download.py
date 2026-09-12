@@ -513,6 +513,22 @@ def fetch_repack(quantization: str, progress=None) -> str:
     return list(wanted.values())[0]
 
 
+def verify_folder(directory: str, progress=None) -> None:
+    """Check a folder against the manifest that came down with it.
+
+    Only the released layout has one, so this is silently nothing for the
+    repack. The failure it reports is raised as a DownloadError because that is
+    what the node already catches, and to a person a file that arrived wrong is
+    a download that went wrong however the machine chooses to file it.
+    """
+    from . import manifest
+
+    try:
+        manifest.check(directory, progress, lambda: bool(_interrupted()))
+    except manifest.Corrupt as error:
+        raise DownloadError(str(error)) from error
+
+
 def fetch_original(variant: str, progress=None) -> None:
     """The released files, into ComfyUI/models/YuE2 under their published names.
 
@@ -524,12 +540,14 @@ def fetch_original(variant: str, progress=None) -> None:
     lm_dir = os.path.join(root, LM_DIRNAME)
     fetch(LM_REPO, {name: os.path.join(lm_dir, name) for name in LM_ALLOW},
           "Downloading YuE2-3B (6.76 GB)", progress)
+    verify_folder(lm_dir, progress)
 
     legacy = variant == "legacy"
     vae_dir = os.path.join(root, VAE_LEGACY_DIRNAME if legacy else VAE_DIRNAME)
     fetch(VAE_LEGACY_REPO if legacy else VAE_REPO,
           {name: os.path.join(vae_dir, name) for name in VAE_ALLOW},
           "Downloading the VAE decoder (0.49 GB)", progress)
+    verify_folder(vae_dir, progress)
 
 
 def writer_wanted() -> dict:

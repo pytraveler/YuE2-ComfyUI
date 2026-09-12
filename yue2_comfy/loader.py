@@ -165,12 +165,28 @@ def load_repack(path: str, device, variant: str = "standard", progress=None):
     checked tensor by tensor against the released checkpoints, and what
     ultimately guards it here is the same strict load the ordinary path uses:
     a mistake in the rebuild is a loud mismatch, not a quiet wrong model.
+
+    Both builds of that file are read. The INT8 one is restored to BF16 first,
+    because this pack's linear layers are ordinary torch ones -- so it saves
+    half the download and none of the VRAM, and it is a different model to
+    within the quantization error rather than the same one. Its decoder is
+    stored FP16 and is widened, since the decoder runs in FP32 either way.
     """
+    import torch
+
     from . import paths, repack
 
+    quantized = any(key.endswith(repack.QUANT_SUFFIX) for key in tensor_names(path))
     if progress is not None:
-        progress.text("Reading the repacked checkpoint (7.8 GB)")
+        progress.text("Reading the repacked checkpoint ({:.2f} GB)".format(
+            os.path.getsize(path) / 1024 ** 3))
     state = _read_state(path)
+
+    if quantized:
+        if progress is not None:
+            progress.text("Restoring the INT8 weights to BF16")
+        repack.dequantize(state)
+        log.info("[yue2_comfy.loader] INT8 checkpoint restored to BF16")
 
     if progress is not None:
         progress.text("Rebuilding the 3B backbone")
@@ -179,7 +195,11 @@ def load_repack(path: str, device, variant: str = "standard", progress=None):
 
     if progress is not None:
         progress.text("Rebuilding the VAE decoder")
-    vae, release, count = _build_vae(repack.vae_state(state), {}, variant)
+    decoder = repack.vae_state(state)
+    if any(value.dtype != torch.float32 for value in decoder.values()):
+        decoder = {key: value.to(torch.float32) for key, value in decoder.items()}
+        log.info("[yue2_comfy.loader] VAE: widened to FP32, which is what it runs in")
+    vae, release, count = _build_vae(decoder, {}, variant)
     log.info("[yue2_comfy.loader] VAE (%s): %d tensors from the repack", release, count)
 
     if progress is not None:

@@ -138,9 +138,9 @@ def test_locate_names_every_missing_file(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError) as error:
         loader.locate("legacy")
     message = str(error.value)
-    assert message.count("model.safetensors") == 2
+    assert os.path.join("YuE2-3B", "model.safetensors") in message
+    assert os.path.join("YuE2-Vae-legacy", "model.safetensors") in message
     assert "qwen.tiktoken" in message
-    assert "YuE2-Vae-legacy" in message
 
 
 def test_unload_is_safe_when_nothing_is_loaded():

@@ -1,1 +1,2 @@
 tiktoken>=0.7
+requests>=2.28

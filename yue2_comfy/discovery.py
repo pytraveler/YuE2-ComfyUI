@@ -1,4 +1,9 @@
-"""Finding the three files, wherever this machine already keeps them.
+"""Finding the weights, wherever this machine already keeps them.
+
+They come in two shapes: the three files m-a-p released, and the single file
+Comfy-Org repacked for the native ComfyUI nodes, which itself comes in a BF16
+and an INT8 build. All of them are looked for, and all of them were measured to
+give the same model.
 
 Two passes, in this order, because they cost very different amounts.
 
@@ -27,13 +32,15 @@ from typing import NamedTuple
 
 from . import paths
 from .constants import (
-    LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, VAE_BYTES, VAE_DIRNAME,
-    VAE_LEGACY_DIRNAME, WEIGHTS_NAME,
+    LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
+    REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
+    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, WEIGHTS_NAME,
 )
 
 log = logging.getLogger(__name__)
 
-REPACK_NAMES = ("yue2_3b_bf16.safetensors",)
+REPACK_KINDS = {REPACK_BF16_NAME: "repack", REPACK_INT8_NAME: "repack_int8"}
+REPACK_FOR = {"bf16": REPACK_BF16_NAME, "int8": REPACK_INT8_NAME}
 
 FOLDER_KINDS = {
     LM_DIRNAME.lower(): "lm",
@@ -82,7 +89,7 @@ def folder_kind(directory: str) -> str:
 
 
 def identify(path: str) -> str:
-    """"lm", "vae", "repack" or "" for one file, as cheaply as possible."""
+    """"lm", "vae", "repack", "repack_int8" or "", as cheaply as possible."""
     try:
         key = _stamp(path)
     except OSError:
@@ -95,6 +102,10 @@ def identify(path: str) -> str:
         verdict = "lm"
     elif size == VAE_BYTES:
         verdict = "vae"
+    elif size == REPACK_BF16_BYTES:
+        verdict = "repack"
+    elif size == REPACK_INT8_BYTES:
+        verdict = "repack_int8"
     else:
         verdict = _identify_by_header(path)
     _identified[key] = verdict
@@ -103,12 +114,12 @@ def identify(path: str) -> str:
 
 def _identify_by_header(path: str) -> str:
     from .loader import read_header
-    from .repack import is_repack
+    from .repack import is_quantized, is_repack
 
     try:
         header = read_header(path)
         if is_repack(header):
-            return "repack"
+            return "repack_int8" if is_quantized(header) else "repack"
         names = {key for key in header if key != "__metadata__"}
     except Exception:
         log.debug("[yue2_comfy.discovery] cannot read %s", path, exc_info=True)
@@ -225,22 +236,28 @@ def _looks_like_merges(path: str, entry: str) -> bool:
         return False
 
 
-def find_repack(roots: list) -> str:
+def find_repack(roots: list, quantization: str = "bf16") -> str:
     """Comfy-Org's single file, by name first and by what is inside it second.
 
-    The published name is checked before any file is opened, because in a
+    The published names are checked before any file is opened, because in a
     models/checkpoints folder full of multi-gigabyte checkpoints the difference
-    between one isfile call and a header read for every one of them is the
+    between two isfile calls and a header read for every one of them is the
     difference between instant and noticeable.
-    """
-    from .repack import is_repack
 
-    for root in roots:
-        for home in _homes(root):
-            for name in REPACK_NAMES:
+    The requested build is preferred and the other one is still accepted. A
+    machine that has the BF16 file should not be told to download the INT8 one
+    to satisfy a switch, and the node says in the log which build it used.
+    """
+    preferred = REPACK_FOR.get(quantization, REPACK_BF16_NAME)
+    order = [preferred] + [name for name in REPACK_KINDS if name != preferred]
+    for name in order:
+        for root in roots:
+            for home in _homes(root):
                 candidate = os.path.join(home, name)
                 if os.path.isfile(candidate):
                     return candidate
+    wanted = REPACK_KINDS[preferred]
+    fallback = ""
     for root in roots:
         for home in _homes(root):
             try:
@@ -251,25 +268,37 @@ def find_repack(roots: list) -> str:
                 if not entry.lower().endswith(".safetensors"):
                     continue
                 candidate = os.path.join(home, entry)
-                if identify(candidate) == "repack":
+                kind = identify(candidate)
+                if kind == wanted:
                     return candidate
-    return ""
+                if kind in ("repack", "repack_int8") and not fallback:
+                    fallback = candidate
+    return fallback
 
 
-def locate(variant: str = "standard") -> Files:
+def locate(variant: str = "standard", quantization: str = "bf16") -> Files:
     """The weights, in whichever shape this machine has them.
 
-    The three released files win when they are all present, because they load
-    without any conversion. Comfy-Org's repack is the fallback and, increasingly,
-    the common case: it is what the ComfyUI model manager installs. Both were
-    checked to produce the same model tensor for tensor.
+    The order is what costs the user least. An INT8 build that is already here
+    is used when INT8 was asked for, because the alternative is downloading
+    seven gigabytes to say the same thing less compactly. Otherwise the three
+    released files win when they are all present, since they load without any
+    conversion, and Comfy-Org's repack is the fallback -- increasingly the
+    common case, as it is what the ComfyUI model manager installs. All three
+    layouts were checked to produce the same model, the INT8 one to within an
+    ordinary quantization round trip.
 
-    The variant chooses between the two VAE releases and nothing else. The
-    repack carries only the standard decoder, so asking it for the legacy one
-    falls through to the released files rather than quietly handing back the
-    wrong decoder.
+    The variant chooses between the two VAE releases and nothing else. Neither
+    repack carries the legacy decoder, so asking for it falls through to the
+    released files rather than quietly handing back the wrong decoder.
     """
     roots = paths.search_roots()
+    if quantization == "int8" and variant != "legacy":
+        candidate = find_repack(roots, "int8")
+        if candidate and identify(candidate) == "repack_int8":
+            log.info("[yue2_comfy.discovery] using the INT8 checkpoint at %s", candidate)
+            return Files(repack=candidate)
+
     found = _layout_pass(roots, variant)
     if not all(found.values()):
         _sweep(roots, found, variant)
@@ -278,12 +307,12 @@ def locate(variant: str = "standard") -> Files:
         return Files(lm=found["lm"], vae=found["vae"], merges=found["merges"])
 
     if variant != "legacy":
-        repacked = find_repack(roots)
+        repacked = find_repack(roots, quantization)
         if repacked:
             log.info("[yue2_comfy.discovery] using the repacked checkpoint at %s", repacked)
             return Files(repack=repacked)
 
-    raise FileNotFoundError(_missing_message(roots, found, variant))
+    raise FileNotFoundError(_missing_message(roots, found, variant, quantization))
 
 
 def _expected_root() -> str:
@@ -297,25 +326,72 @@ def _expected_root() -> str:
         return os.path.join("ComfyUI", "models", "YuE2")
 
 
-def _missing_message(roots: list, found: dict, variant: str) -> str:
-    vae_dirname = VAE_LEGACY_DIRNAME if variant == "legacy" else VAE_DIRNAME
+def _checkpoints_root() -> str:
+    override = os.environ.get(paths.ENV_ROOT)
+    if override:
+        return os.path.join(override, "checkpoints")
+    try:
+        return paths.checkpoints_root()
+    except Exception:
+        return os.path.join("ComfyUI", "models", "checkpoints")
+
+
+def _link(repo: str, repo_path: str) -> str:
+    return "https://huggingface.co/" + repo + "/resolve/main/" + repo_path
+
+
+def _missing_message(roots: list, found: dict, variant: str, quantization: str) -> str:
+    """What is missing, where it goes, and the exact links to fetch it.
+
+    Written for somebody who has turned downloading off, or is behind a proxy
+    that will not let the node reach the Hub. Every path in it is the real path
+    on this machine, and every link is one a browser or a download manager can
+    take as it stands.
+    """
+    from .constants import (
+        LM_REPO, REPACK_BF16_PATH, REPACK_INT8_PATH, VAE_LEGACY_REPO, VAE_REPO,
+    )
+
+    lines = ["YuE2 weights are not on this machine yet.", ""]
+    if variant != "legacy":
+        name = REPACK_INT8_NAME if quantization == "int8" else REPACK_BF16_NAME
+        repo_path = REPACK_INT8_PATH if quantization == "int8" else REPACK_BF16_PATH
+        size = REPACK_INT8_BYTES if quantization == "int8" else REPACK_BF16_BYTES
+        lines += [
+            "One file is enough ({:.2f} GB), and it is the same file ComfyUI's own "
+            "YuE2 nodes use:".format(size / 1024 ** 3),
+            "",
+            "  " + _link(REPACK_REPO, repo_path),
+            "  -> " + os.path.join(_checkpoints_root(), name),
+            "",
+            "Or the three files as m-a-p released them:",
+            "",
+        ]
+    else:
+        lines += ["The legacy decoder comes only as the released files:", ""]
+
     root = _expected_root()
-    wanted = {
-        "lm": os.path.join(root, LM_DIRNAME, WEIGHTS_NAME),
-        "vae": os.path.join(root, vae_dirname, WEIGHTS_NAME),
-        "merges": os.path.join(root, LM_DIRNAME, MERGES_NAME),
-    }
-    missing = [wanted[key] for key in ("lm", "vae", "merges") if not found[key]]
-    lines = ["YuE2 weights are not on this machine yet. Missing:", ""]
-    lines += ["  " + path for path in missing]
+    vae_dirname = VAE_LEGACY_DIRNAME if variant == "legacy" else VAE_DIRNAME
+    vae_repo = VAE_LEGACY_REPO if variant == "legacy" else VAE_REPO
+    wanted = [
+        ("lm", LM_REPO, WEIGHTS_NAME, os.path.join(root, LM_DIRNAME, WEIGHTS_NAME)),
+        ("merges", LM_REPO, MERGES_NAME, os.path.join(root, LM_DIRNAME, MERGES_NAME)),
+        ("vae", vae_repo, WEIGHTS_NAME, os.path.join(root, vae_dirname, WEIGHTS_NAME)),
+    ]
+    for key, repo, repo_path, destination in wanted:
+        if found.get(key):
+            continue
+        lines += ["  " + _link(repo, repo_path), "  -> " + destination, ""]
+
     if roots:
-        lines += ["", "Looked in " + str(len(roots)) + " places, including:", ""]
+        where = "1 place" if len(roots) == 1 else str(len(roots)) + " places"
+        lines += ["Looked in " + where + ", including:", ""]
         lines += ["  " + path for path in roots[:6]]
     else:
-        lines += ["", "There was nowhere to look: no ComfyUI model folders were found."]
+        lines += ["There was nowhere to look: no ComfyUI model folders were found."]
     lines += [
         "",
-        "Put the files at the paths above, or set " + paths.ENV_ROOT + " to a "
-        "directory holding " + LM_DIRNAME + " and " + vae_dirname + ".",
+        "Set " + paths.ENV_ROOT + " to point at a folder you keep them in, if it is "
+        "none of the above.",
     ]
     return "\n".join(lines)

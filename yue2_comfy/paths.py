@@ -18,7 +18,7 @@ import logging
 import os
 import re
 
-from .constants import MODELS_SUBDIR
+from .constants import CHECKPOINTS_SUBDIR, MODELS_SUBDIR
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +91,40 @@ def models_root() -> str:
         folder_paths.add_model_folder_path(MODELS_SUBDIR, root)
     except Exception:
         log.debug("[yue2_comfy.paths] could not register %s", MODELS_SUBDIR, exc_info=True)
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def checkpoints_root() -> str:
+    """ComfyUI/models/checkpoints, where Comfy-Org's single file belongs.
+
+    Their repository says to put it there, ComfyUI's own model manager puts it
+    there, and the native YuE2 nodes read it from there. Writing it anywhere
+    else would give a machine two copies of eight gigabytes, so this pack uses
+    the same folder rather than its own.
+
+    An existing registered path wins over a computed one, because a user who
+    redirected checkpoints in extra_model_paths.yaml did it to keep large files
+    off this drive. Without ComfyUI -- in the tests, or a bare interpreter --
+    there is no checkpoints folder to speak of, so the pack's own root is used.
+    """
+    folder_paths = _folder_paths()
+    if folder_paths is None:
+        return models_root()
+    try:
+        registered = [path for path in folder_paths.get_folder_paths(CHECKPOINTS_SUBDIR)]
+    except KeyError:
+        registered = []
+    for path in registered:
+        try:
+            if os.path.isdir(path):
+                return path
+        except OSError:
+            continue
+    if registered:
+        os.makedirs(registered[0], exist_ok=True)
+        return registered[0]
+    root = os.path.join(folder_paths.models_dir, CHECKPOINTS_SUBDIR)
     os.makedirs(root, exist_ok=True)
     return root
 

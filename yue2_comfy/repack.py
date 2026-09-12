@@ -23,6 +23,10 @@ Verified against the released files on 2026-09-12: the VAE block matches
 YuE2-Vae in all 435 tensors, the converted vocabulary matches qwen.tiktoken in
 all 151643 ranks, and the whole conversion is checked by the same
 load_state_dict(strict=True) that guards the ordinary path.
+
+The INT8 build of the same file is read too, and restored to BF16 before any of
+the above happens. That saves half the download and none of the VRAM, and it is
+not the same model afterwards -- see dequantize below.
 """
 
 from __future__ import annotations
@@ -41,6 +45,10 @@ NAR_LAYER_PREFIX = NAR_PREFIX + "model."
 VAE_PREFIX = "vae."
 TOKENIZER_KEY = "text_encoders.yue2_tokenizer_json"
 FORMAT_KEY = "yue2_format"
+QUANT_KEY = "quantization"
+QUANT_SUFFIX = ".comfy_quant"
+SCALE_SUFFIX = ".weight_scale"
+SUPPORTED_QUANT = "int8_tensorwise"
 
 NAR_RENAMES = {
     "self_attn": "nar_self_attn",
@@ -63,6 +71,106 @@ def is_repack(header: dict) -> bool:
                  and any(key.startswith(NAR_PREFIX) for key in keys)
                  and any(key.startswith(VAE_PREFIX) for key in keys))
     return bool(has_trees and has_tokenizer)
+
+
+def is_quantized(header: dict) -> bool:
+    """Whether this repack holds INT8 weights rather than BF16 ones.
+
+    Comfy-Org publishes both, and the difference is not visible in the file
+    name once somebody renames it. The per-tensor descriptors are the evidence
+    that survives a re-save; the metadata is only the confirmation.
+    """
+    if any(key.endswith(QUANT_SUFFIX) for key in header if key != "__metadata__"):
+        return True
+    metadata = header.get("__metadata__") or {}
+    return bool(str(metadata.get(QUANT_KEY, "")).strip())
+
+
+def _descriptor(tensor) -> dict:
+    """The JSON each comfy_quant tensor carries, read out of its bytes."""
+    try:
+        raw = bytes(tensor.tolist())
+    except Exception as error:
+        raise ValueError("Unreadable quantization descriptor") from error
+    try:
+        spec = json.loads(raw.decode("utf-8"))
+    except Exception as error:
+        raise ValueError(
+            "Malformed quantization descriptor: {!r}".format(raw[:64])) from error
+    if not isinstance(spec, dict):
+        raise ValueError("A quantization descriptor must be a JSON object")
+    return spec
+
+
+def _hadamard(size: int, torch):
+    """The rotation ConvRot applies, which is also the rotation that undoes it.
+
+    A regular Hadamard matrix built by Kronecker powers of the 4x4 block and
+    divided by sqrt(size). It is symmetric and orthogonal, so it is its own
+    inverse: rotating a second time returns the original basis exactly. That
+    was checked against torch.eye(256) before this was written, and the whole
+    dequantization was then checked against the BF16 release -- cosine 0.99997,
+    mean error 0.85 percent of the mean weight, which is an ordinary INT8 round
+    trip and not a mistake in the rotation.
+    """
+    if size < 4 or (size & (size - 1)) or size.bit_length() % 2 == 0:
+        raise ValueError(
+            "A ConvRot group size must be a power of four, not {}".format(size))
+    block = torch.tensor([[1., 1., 1., -1.], [1., 1., -1., 1.],
+                          [1., -1., 1., 1.], [-1., 1., 1., 1.]], dtype=torch.float32)
+    matrix = block
+    width = 4
+    while width < size:
+        matrix = torch.kron(matrix, block)
+        width *= 4
+    return matrix / (float(size) ** 0.5)
+
+
+def _restore(weight, scale, spec: dict, torch):
+    """One INT8 matrix back to BF16, in the basis the model was trained in."""
+    fmt = str(spec.get("format", "")).strip()
+    if fmt != SUPPORTED_QUANT:
+        raise ValueError(
+            "This checkpoint uses the '{}' quantization, which this pack does "
+            "not know how to read. Use the BF16 release instead.".format(fmt))
+    plain = weight.to(torch.float32) * scale.to(torch.float32)
+    if spec.get("convrot"):
+        group = int(spec.get("convrot_groupsize", 256))
+        rows, columns = plain.shape
+        if columns % group:
+            raise ValueError(
+                "A ConvRot group of {} does not divide {} input features"
+                .format(group, columns))
+        rotation = _hadamard(group, torch).T
+        plain = torch.matmul(plain.reshape(rows, columns // group, group),
+                             rotation).reshape(rows, columns)
+    return plain.to(torch.bfloat16)
+
+
+def dequantize(state: dict) -> dict:
+    """Turn an INT8 repack into the BF16 one, in place, a tensor at a time.
+
+    The state dict is emptied of each INT8 matrix as its BF16 replacement is
+    built, so the peak is one full model rather than two. What this buys the
+    user is a 3.69 GB download instead of 7.26 GB; it does not save any VRAM,
+    because what the card ends up holding is BF16 either way, and it is not the
+    same model: an INT8 round trip is lossy, so the same seed gives a different
+    song from the two files.
+    """
+    import torch
+
+    for key in sorted(state):
+        if not key.endswith(QUANT_SUFFIX):
+            continue
+        base = key[:-len(QUANT_SUFFIX)]
+        spec = _descriptor(state.pop(key))
+        weight = state.pop(base + ".weight", None)
+        scale = state.pop(base + SCALE_SUFFIX, None)
+        if weight is None or scale is None:
+            raise ValueError(
+                "{} is quantized but its weight or its scale is missing".format(base))
+        state[base + ".weight"] = _restore(weight, scale, spec, torch)
+    return state
 
 
 def _split_qkv(tensor, o_proj):

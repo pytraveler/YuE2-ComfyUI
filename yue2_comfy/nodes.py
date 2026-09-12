@@ -13,7 +13,8 @@ import logging
 from . import devices
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_LYRICS, DEFAULT_OPTIONS,
-    DEFAULT_STYLE, MAX_SECONDS, OPTIONS_TYPE, SAMPLE_RATE, VAE_CHOICES,
+    DEFAULT_STYLE, DOWNLOAD_CHOICES, MAX_SECONDS, OPTIONS_TYPE,
+    QUANTIZATION_CHOICES, SAMPLE_RATE, VAE_CHOICES,
 )
 from .progress import NodeProgress, refuse
 
@@ -89,11 +90,28 @@ ATTENTION_TOOLTIP = (
     "exploring and do not need to come back to a result."
 )
 
-AUTO_DOWNLOAD_TOOLTIP = (
-    "Fetch the model files from Hugging Face when they are not on disk.\n\n"
-    "That is 7.26 GB on the first run, and the queue is busy until it finishes. Turn "
-    "it off to get a message listing the three files, their direct links and the exact "
-    "folder, so you can download them with anything you like."
+DOWNLOAD_TOOLTIP = (
+    "Where to get the weights when they are not on this machine yet.\n\n"
+    "'auto' fetches Comfy-Org's single checkpoint into ComfyUI/models/checkpoints. "
+    "That is the same file ComfyUI's own YuE2 nodes read, so one download serves "
+    "both, and the model manager may well have put it there already.\n\n"
+    "'original' fetches the three files m-a-p released, into ComfyUI/models/YuE2. "
+    "It is the only source of the legacy decoder, and 'auto' switches to it by "
+    "itself when 'vae' is 'legacy'.\n\n"
+    "'off' downloads nothing and says instead which files are missing, the direct "
+    "link to each, and the exact folder to put it in."
+)
+
+QUANTIZATION_TOOLTIP = (
+    "Which build of the checkpoint to download.\n\n"
+    "'bf16' is the model as released. 'int8' is Comfy-Org's quantized build: 3.69 GB "
+    "to fetch instead of 7.26 GB.\n\n"
+    "It saves the download and not the VRAM. This pack's layers are ordinary torch "
+    "linears, so an INT8 file is restored to BF16 as it loads and the card holds the "
+    "same 6.8 GB either way. It is also not quite the same model -- the round trip "
+    "costs about a percent of each weight -- so the same seed gives a different song "
+    "from the two files.\n\n"
+    "Whatever is already on disk is used before anything is downloaded."
 )
 
 ODE_TOOLTIP = (
@@ -135,8 +153,11 @@ class YuE2Options:
                 "attention_backend": (list(ATTENTION_CHOICES),
                                       {"default": d["attention_backend"],
                                        "tooltip": ATTENTION_TOOLTIP}),
-                "auto_download": ("BOOLEAN", {"default": d["auto_download"],
-                                              "tooltip": AUTO_DOWNLOAD_TOOLTIP}),
+                "download": (list(DOWNLOAD_CHOICES), {"default": d["download"],
+                                                      "tooltip": DOWNLOAD_TOOLTIP}),
+                "quantization": (list(QUANTIZATION_CHOICES),
+                                 {"default": d["quantization"],
+                                  "tooltip": QUANTIZATION_TOOLTIP}),
                 "ode_steps": ("INT", {"default": d["ode_steps"], "min": 8, "max": 64,
                                       "tooltip": ODE_TOOLTIP}),
                 "abc_temperature": ("FLOAT", {"default": d["abc_temperature"], "min": 0.0,
@@ -259,11 +280,11 @@ class YuE2GenerateSong:
         except (ValueError, RuntimeError) as error:
             refuse(unique_id, str(error))
 
-        from . import generate, loader
+        from . import download, generate, loader
 
         try:
-            files = loader.locate(settings["vae"])
-        except FileNotFoundError as error:
+            files = download.ensure(settings, progress)
+        except (FileNotFoundError, download.DownloadError) as error:
             refuse(unique_id, str(error))
 
         try:

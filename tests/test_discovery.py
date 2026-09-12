@@ -170,10 +170,11 @@ def test_the_refusal_names_all_three_files_and_where_it_looked(tmp_path, monkeyp
         discovery.locate("legacy")
 
     message = str(error.value)
-    assert message.count(WEIGHTS_NAME) == 2
+    assert message.count(os.path.join(LM_DIRNAME, WEIGHTS_NAME)) == 1
+    assert message.count(os.path.join(VAE_LEGACY_DIRNAME, WEIGHTS_NAME)) == 1
     assert MERGES_NAME in message
-    assert VAE_LEGACY_DIRNAME in message
     assert str(tmp_path) in message
+    assert message.count("https://huggingface.co/") == 3
 
 
 def test_a_network_root_is_refused_rather_than_contacted(monkeypatch):

@@ -31,20 +31,29 @@ AUTO_INSTRUMENTAL_SECONDS = 180.0
 LM_REPO = "m-a-p/YuE2-3B"
 VAE_REPO = "m-a-p/YuE2-Vae"
 VAE_LEGACY_REPO = "m-a-p/YuE2-Vae-legacy"
+REPACK_REPO = "Comfy-Org/YuE2"
 
 MODELS_SUBDIR = "YuE2"
 LM_DIRNAME = "YuE2-3B"
 VAE_DIRNAME = "YuE2-Vae"
 VAE_LEGACY_DIRNAME = "YuE2-Vae-legacy"
+CHECKPOINTS_SUBDIR = "checkpoints"
 
 WEIGHTS_NAME = "model.safetensors"
 MERGES_NAME = "qwen.tiktoken"
 MANIFEST_NAME = "weights_manifest.json"
 CONFIG_NAME = "config.json"
 
+REPACK_BF16_NAME = "yue2_3b_bf16.safetensors"
+REPACK_INT8_NAME = "yue2_3b_int8_convrot.safetensors"
+REPACK_BF16_PATH = "checkpoints/" + REPACK_BF16_NAME
+REPACK_INT8_PATH = "checkpoints/" + REPACK_INT8_NAME
+
 LM_BYTES = 7261441640
 VAE_BYTES = 530512720
 MERGES_BYTES = 2561218
+REPACK_BF16_BYTES = 7799983228
+REPACK_INT8_BYTES = 3960938800
 
 LM_ALLOW = (WEIGHTS_NAME, MERGES_NAME, CONFIG_NAME, MANIFEST_NAME)
 VAE_ALLOW = (WEIGHTS_NAME, CONFIG_NAME, MANIFEST_NAME)
@@ -52,6 +61,8 @@ VAE_ALLOW = (WEIGHTS_NAME, CONFIG_NAME, MANIFEST_NAME)
 COT_CHOICES = ("full", "melody", "off")
 VAE_CHOICES = ("standard", "legacy")
 ATTENTION_CHOICES = ("sdpa", "cudnn")
+DOWNLOAD_CHOICES = ("auto", "comfy-org", "original", "off")
+QUANTIZATION_CHOICES = ("bf16", "int8")
 
 ABC_TEMPERATURE = 0.7
 ABC_TOP_P = 0.9
@@ -70,7 +81,8 @@ DEFAULT_OPTIONS = {
     "device": "auto",
     "keep_model_loaded": False,
     "attention_backend": "sdpa",
-    "auto_download": True,
+    "download": "auto",
+    "quantization": "bf16",
     "ode_steps": 32,
     "abc_temperature": ABC_TEMPERATURE,
     "abc_top_p": ABC_TOP_P,

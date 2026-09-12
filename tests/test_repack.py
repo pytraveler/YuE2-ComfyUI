@@ -96,6 +96,38 @@ def write_repack(path, vocab):
     return str(path)
 
 
+def write_marker_file(path, quantized=False):
+    """A safetensors header with the keys that identify a repack, and no data.
+
+    Enough for anything that reads headers, which is everything in discovery.
+    The tensors are never mapped, so the offsets do not have to lead anywhere.
+    """
+    entry = {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}
+    header = {
+        "vae.decoder.layers.0.weight": dict(entry),
+        repack.AR_PREFIX + "layers.0.mlp.down_proj.weight": dict(entry),
+        repack.NAR_PREFIX + "model.layers.0.mlp.down_proj.weight": dict(entry),
+        repack.TOKENIZER_KEY: dict(entry),
+    }
+    if quantized:
+        header[repack.AR_PREFIX + "layers.0.mlp.down_proj.comfy_quant"] = dict(entry)
+        header["__metadata__"] = {"quantization": "convrot_int8"}
+    body = json.dumps(header).encode("utf-8")
+    with open(str(path), "wb") as handle:
+        handle.write(struct.pack("<Q", len(body)))
+        handle.write(body)
+        handle.write(b"\0\0\0\0")
+    return str(path)
+
+
+@pytest.fixture(autouse=True)
+def forget_identifications():
+    """The identification cache is keyed on path, and tmp_path gets reused."""
+    discovery._identified.clear()
+    yield
+    discovery._identified.clear()
+
+
 def test_a_repack_needs_all_three_trees_and_the_vocabulary():
     """Any one of them alone is some other checkpoint that happens to share a prefix."""
     full = {"vae.a": {}, "text_encoders.model.a": {}, "model.diffusion_model.a": {},
@@ -241,3 +273,51 @@ def test_the_legacy_decoder_is_not_taken_from_a_repack(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         discovery.locate("legacy")
+
+
+def test_a_quantized_repack_is_told_apart_from_the_released_one(tmp_path):
+    """Loading one as the other is 1355 tensor mismatches, so name it early."""
+    plain = write_marker_file(tmp_path / "plain.safetensors")
+    quantized = write_marker_file(tmp_path / "quantized.safetensors", quantized=True)
+
+    assert discovery.identify(plain) == "repack"
+    assert discovery.identify(quantized) == "repack_int8"
+
+
+def test_the_marker_survives_a_file_that_lost_its_metadata():
+    """Metadata is the first thing a re-saving tool drops; the keys are not."""
+    assert repack.is_quantized({"a.comfy_quant": {}})
+    assert repack.is_quantized({"__metadata__": {"quantization": "convrot_int8"}})
+    assert not repack.is_quantized({"a.weight": {}, "__metadata__": {"format": "pt"}})
+
+
+def test_the_requested_build_wins_when_both_are_on_disk(tmp_path, monkeypatch):
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    (checkpoints / "yue2_3b_bf16.safetensors").write_bytes(b"placeholder")
+    (checkpoints / "yue2_3b_int8_convrot.safetensors").write_bytes(b"placeholder")
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    assert discovery.locate("standard", "bf16").repack.endswith("bf16.safetensors")
+    assert discovery.locate("standard", "int8").repack.endswith("int8_convrot.safetensors")
+
+
+def test_asking_for_int8_does_not_refuse_the_file_that_is_here(tmp_path, monkeypatch):
+    """Downloading seven gigabytes to honour a switch would serve nobody."""
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    (checkpoints / "yue2_3b_bf16.safetensors").write_bytes(b"placeholder")
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    assert discovery.locate("standard", "int8").repack.endswith("bf16.safetensors")
+
+
+def test_a_missing_checkpoint_is_reported_with_the_link_to_the_build_asked_for(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    with pytest.raises(FileNotFoundError) as error:
+        discovery.locate("standard", "int8")
+    message = str(error.value)
+    assert "yue2_3b_int8_convrot.safetensors" in message
+    assert "yue2_3b_bf16.safetensors" not in message

@@ -10,6 +10,9 @@ dependencies = [
     "requests>=2.28",
 ]
 
+[project.optional-dependencies]
+writer = ["llama-cpp-python>=0.3"]
+
 [project.urls]
 Repository = "https://github.com/pytraveler/YuE2-ComfyUI"
 

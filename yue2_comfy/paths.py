@@ -18,11 +18,14 @@ import logging
 import os
 import re
 
-from .constants import CHECKPOINTS_SUBDIR, MODELS_SUBDIR
+from .constants import CHECKPOINTS_SUBDIR, MODELS_SUBDIR, WRITER_SUBDIR
 
 log = logging.getLogger(__name__)
 
 SCAN_FOLDERS = (MODELS_SUBDIR, "diffusion_models", "vae", "LLM", "checkpoints")
+
+GGUF_SUBDIR = WRITER_SUBDIR
+GGUF_FOLDERS = (WRITER_SUBDIR, "llm", "text_encoders", "clip")
 
 ENV_ROOT = "YUE2_MODELS_ROOT"
 
@@ -157,6 +160,35 @@ def comfy_roots() -> list:
     if folder_paths is None:
         return roots
     for name in SCAN_FOLDERS:
+        try:
+            registered = list(folder_paths.get_folder_paths(name))
+        except KeyError:
+            registered = []
+        for path in registered:
+            _add(roots, path)
+        try:
+            _add(roots, os.path.join(folder_paths.models_dir, name))
+        except Exception:
+            log.debug("[yue2_comfy.paths] no models_dir", exc_info=True)
+    return roots
+
+
+def gguf_roots() -> list:
+    """Where a GGUF plausibly lives, which is not everywhere models live.
+
+    The weight search below sweeps Hugging Face cache snapshots as well.
+    Repeating that here would walk every cached repository on the machine
+    looking for a file type almost none of them hold, every time ComfyUI builds
+    its node list -- so the writer's search stays inside the folders people
+    actually keep language models in.
+    """
+    roots: list = []
+    folder_paths = _folder_paths()
+    if folder_paths is None:
+        root = os.path.join(models_root(), GGUF_SUBDIR)
+        _add(roots, root)
+        return roots
+    for name in GGUF_FOLDERS:
         try:
             registered = list(folder_paths.get_folder_paths(name))
         except KeyError:

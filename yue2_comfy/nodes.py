@@ -9,14 +9,17 @@ node's execution.
 from __future__ import annotations
 
 import logging
+import os
 
 from . import devices
 from .constants import (
-    ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_LYRICS, DEFAULT_OPTIONS,
-    DEFAULT_STYLE, DOWNLOAD_CHOICES, MAX_SECONDS, OPTIONS_TYPE,
-    QUANTIZATION_CHOICES, SAMPLE_RATE, VAE_CHOICES,
+    ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
+    DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
+    MAX_SECONDS, OPTIONS_TYPE, QUANTIZATION_CHOICES, SAMPLE_RATE, VAE_CHOICES,
+    WRITER_AUTO, WRITER_MAX_NEW_TOKENS, WRITER_REPETITION_PENALTY,
+    WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P, writer_lines,
 )
-from .progress import NodeProgress, refuse
+from .progress import NodeProgress, announce, refuse
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +39,49 @@ LYRICS_TOOLTIP = (
 SEED_TOOLTIP = (
     "The same seed with the same settings gives the same song, byte for byte.\n\n"
     "That holds only while 'attention_backend' is 'sdpa', which is the default."
+)
+
+IDEA_TOOLTIP = (
+    "What the song is about, in one line. 'a sad song about winter, female vocal' is "
+    "enough, and so is the same sentence in your own language.\n\n"
+    "Everything the style line needs -- genre, voice, instruments, tempo -- is written "
+    "for you, so you only have to say what you cannot be bothered to look up."
+)
+
+WRITER_MODEL_TOOLTIP = (
+    "The language model that does the writing. '" + WRITER_AUTO + "' uses a GGUF you "
+    "already have and downloads a 2.7 GB one only if you have none.\n\n"
+    "The other entries are the GGUFs found in your ComfyUI model folders. LoRA adapters "
+    "and mmproj files are left out: they cannot answer on their own."
+)
+
+LANGUAGE_TOOLTIP = (
+    "What language the song is sung in. 'auto' lets the writer follow whatever language "
+    "your idea is written in, which is usually what you meant."
+)
+
+WRITER_SECONDS_TOOLTIP = (
+    "Roughly how long the song should be, which sets how many lines get written. 0 asks "
+    "for about twelve lines, which is a normal short song.\n\n"
+    "It is an aim, not a promise: a small model writes somewhat more or fewer lines than "
+    "asked, and the node says how many it got. Leave 'max_seconds' at 0 in the options "
+    "and the generate node will work the ceiling out from the lyrics it receives."
+)
+
+WRITER_SEED_TOOLTIP = (
+    "The same seed with the same idea gives the same words. Change it for another take "
+    "on the same idea."
+)
+
+WRITER_KEEP_TOOLTIP = (
+    "Keep the writer in VRAM after it has written. Leave this off when YuE2 generates on "
+    "the same card afterwards, or the song model has less room to work in."
+)
+
+INSTRUCTIONS_TOOLTIP = (
+    "Anything extra for the writer, in your own words: 'no chorus', 'keep it funny', "
+    "'first person', 'end on a question'.\n\n"
+    "This goes after the writing rules, so it wins where the two disagree."
 )
 
 COT_TOOLTIP = (
@@ -315,12 +361,123 @@ class YuE2GenerateSong:
         return ({"waveform": waveform, "sample_rate": SAMPLE_RATE}, score)
 
 
+class YuE2WriteSong:
+    """One line of intent in, a style line and lyrics out."""
+
+    DESCRIPTION = (
+        "Turns a one-line idea into the style description and the tagged lyrics that "
+        "YuE2 Generate Song wants, so nobody has to learn the prompt format to get a "
+        "song. Any instruction-following GGUF does the writing -- a 4B on an 8 GB card "
+        "is enough -- and one is downloaded on first use if the machine has none.\n\n"
+        "Needs llama-cpp-python. The writer model is a separate download from YuE2 "
+        "itself and carries its own licence."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        from . import llm
+
+        return {
+            "required": {
+                "idea": ("STRING", {"multiline": True, "default": DEFAULT_IDEA,
+                                    "tooltip": IDEA_TOOLTIP}),
+                "model": (llm.choices(), {"tooltip": WRITER_MODEL_TOOLTIP}),
+                "language": (list(LANGUAGE_CHOICES), {"default": LANGUAGE_CHOICES[0],
+                                                      "tooltip": LANGUAGE_TOOLTIP}),
+                "seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": MAX_SECONDS,
+                                      "step": 5.0, "tooltip": WRITER_SECONDS_TOOLTIP}),
+                "seed": ("INT", {"default": 831001, "min": 0, "max": (1 << 63) - 1,
+                                 "control_after_generate": True,
+                                 "tooltip": WRITER_SEED_TOOLTIP}),
+                "keep_model_loaded": ("BOOLEAN", {"default": False,
+                                                  "tooltip": WRITER_KEEP_TOOLTIP}),
+            },
+            "optional": {
+                "instructions": ("STRING", {"multiline": True, "default": "",
+                                            "tooltip": INSTRUCTIONS_TOOLTIP}),
+                "options": (OPTIONS_TYPE,),
+            },
+            "hidden": {"unique_id": "UNIQUE_ID"},
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("style", "lyrics")
+    FUNCTION = "write"
+    CATEGORY = CATEGORY
+
+    def write(self, idea, model, language, seconds, seed, keep_model_loaded,
+              instructions="", options=None, unique_id=None):
+        from . import download, llm, writer
+
+        settings = dict(DEFAULT_OPTIONS)
+        if options:
+            settings.update(options)
+        progress = NodeProgress(unique_id)
+
+        idea = (idea or "").strip()
+        if not idea:
+            refuse(unique_id, "Write a line saying what the song is about. "
+                              "'a sad song about winter, female vocal' is enough.")
+        if not llm.available():
+            refuse(unique_id, llm.install_hint())
+        try:
+            settings["device"] = devices.validate(settings["device"])
+        except (ValueError, RuntimeError) as error:
+            refuse(unique_id, str(error))
+
+        lines = writer_lines(seconds)
+        try:
+            path = llm.resolve(model, settings, progress)
+        except (FileNotFoundError, download.DownloadError) as error:
+            refuse(unique_id, str(error))
+
+        style, lyrics, raw = "", "", ""
+        try:
+            for repair in (False, True):
+                messages = writer.build_messages(idea, language, lines, instructions, repair)
+                raw = llm.run(
+                    path, messages, seed + (1 if repair else 0),
+                    writer.context_needed(messages, WRITER_MAX_NEW_TOKENS),
+                    settings["device"], keep_loaded=True, progress=progress,
+                    greedy=False, max_new_tokens=WRITER_MAX_NEW_TOKENS,
+                    temperature=WRITER_TEMPERATURE, top_p=WRITER_TOP_P,
+                    top_k=WRITER_TOP_K, repetition_penalty=WRITER_REPETITION_PENALTY,
+                )
+                style, lyrics = writer.split(raw)
+                if writer.complete(style, lyrics):
+                    break
+                log.warning("[yue2_comfy] the writer answered without a usable style or "
+                            "lyrics, asking once more")
+                progress.text("That answer had no lyrics in it, asking again", force=True)
+        except InterruptedError:
+            _translate_interrupt()
+            raise
+        finally:
+            if not keep_model_loaded:
+                llm.unload()
+
+        if not writer.complete(style, lyrics):
+            refuse(unique_id,
+                   "The writer did not answer with a style and lyrics, twice. This is "
+                   "what it said:\n\n" + (raw.strip()[:600] or "<nothing>")
+                   + "\n\nA bigger model, or a more instruction-following one, usually "
+                     "fixes it. So does saying what you want in 'instructions'.")
+
+        announce(unique_id, writer.findings(style, lyrics, lines))
+        log.info("[yue2_comfy] wrote %d sung lines from %s | seed %s",
+                 writer.sung(lyrics), os.path.basename(path), seed)
+        progress.finish("{} sung lines".format(writer.sung(lyrics)))
+        return (style, lyrics)
+
+
 NODE_CLASS_MAPPINGS = {
     "YuE2GenerateSong": YuE2GenerateSong,
+    "YuE2WriteSong": YuE2WriteSong,
     "YuE2Options": YuE2Options,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
+    "YuE2WriteSong": "YuE2 Write Song",
     "YuE2Options": "YuE2 Options",
 }

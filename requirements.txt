@@ -1,2 +1,8 @@
 tiktoken>=0.7
 requests>=2.28
+
+# YuE2 Write Song also needs llama-cpp-python, which is deliberately not listed
+# above: on Windows it builds from source, and a pack that takes ten minutes to
+# install -- or fails to -- for one optional node is not worth it. The node says
+# so and gives the right pip line. Prebuilt CUDA and Vulkan wheels are at
+# https://github.com/abetlen/llama-cpp-python/releases

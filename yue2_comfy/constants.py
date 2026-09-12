@@ -32,12 +32,14 @@ LM_REPO = "m-a-p/YuE2-3B"
 VAE_REPO = "m-a-p/YuE2-Vae"
 VAE_LEGACY_REPO = "m-a-p/YuE2-Vae-legacy"
 REPACK_REPO = "Comfy-Org/YuE2"
+WRITER_REPO = "unsloth/Qwen3.5-4B-GGUF"
 
 MODELS_SUBDIR = "YuE2"
 LM_DIRNAME = "YuE2-3B"
 VAE_DIRNAME = "YuE2-Vae"
 VAE_LEGACY_DIRNAME = "YuE2-Vae-legacy"
 CHECKPOINTS_SUBDIR = "checkpoints"
+WRITER_SUBDIR = "LLM"
 
 WEIGHTS_NAME = "model.safetensors"
 MERGES_NAME = "qwen.tiktoken"
@@ -48,6 +50,10 @@ REPACK_BF16_NAME = "yue2_3b_bf16.safetensors"
 REPACK_INT8_NAME = "yue2_3b_int8_convrot.safetensors"
 REPACK_BF16_PATH = "checkpoints/" + REPACK_BF16_NAME
 REPACK_INT8_PATH = "checkpoints/" + REPACK_INT8_NAME
+
+WRITER_NAME = "Qwen3.5-4B-Q4_K_M.gguf"
+WRITER_PATH = WRITER_NAME
+WRITER_BYTES = 2740937888
 
 LM_BYTES = 7261441640
 VAE_BYTES = 530512720
@@ -63,6 +69,23 @@ VAE_CHOICES = ("standard", "legacy")
 ATTENTION_CHOICES = ("sdpa", "cudnn")
 DOWNLOAD_CHOICES = ("auto", "comfy-org", "original", "off")
 QUANTIZATION_CHOICES = ("bf16", "int8")
+
+WRITER_AUTO = "auto"
+LANGUAGE_CHOICES = (
+    "auto", "English", "Russian", "Chinese", "Japanese", "Korean",
+    "Spanish", "French", "German", "Italian", "Portuguese",
+)
+
+WRITER_LINES = 12
+WRITER_MIN_LINES = 2
+WRITER_MAX_LINES = 40
+WRITER_MAX_NEW_TOKENS = 900
+WRITER_CONTEXT_MARGIN = 512
+
+WRITER_TEMPERATURE = 0.9
+WRITER_TOP_P = 0.95
+WRITER_TOP_K = 40
+WRITER_REPETITION_PENALTY = 1.05
 
 ABC_TEMPERATURE = 0.7
 ABC_TOP_P = 0.9
@@ -93,6 +116,7 @@ DEFAULT_OPTIONS = {
     "repetition_penalty": SEMANTIC_REPETITION_PENALTY,
 }
 
+DEFAULT_IDEA = "a quiet song about coming home in winter, female voice"
 DEFAULT_STYLE = "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM"
 DEFAULT_LYRICS = "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you"
 
@@ -140,6 +164,21 @@ def auto_seconds(lyrics: str) -> float:
         return AUTO_INSTRUMENTAL_SECONDS
     seconds = AUTO_BASE_SECONDS + AUTO_SECONDS_PER_LINE * lines
     return min(MAX_SECONDS, max(AUTO_MIN_SECONDS, seconds))
+
+
+def writer_lines(seconds: float) -> int:
+    """How many sung lines to ask for, so the song comes out near this length.
+
+    The inverse of auto_seconds, and deliberately so: the writer node and the
+    generate node have to agree, or asking for two minutes writes lyrics that
+    the length ceiling then cuts off at one. 0 means "do not aim at a length",
+    which is what someone gets when they leave both widgets alone.
+    """
+    seconds = float(seconds or 0)
+    if seconds <= 0:
+        return WRITER_LINES
+    lines = round((seconds - AUTO_BASE_SECONDS) / AUTO_SECONDS_PER_LINE)
+    return int(min(WRITER_MAX_LINES, max(WRITER_MIN_LINES, lines)))
 
 
 def seconds_to_tokens(seconds: float) -> int:

@@ -34,7 +34,8 @@ from .constants import (
     LM_ALLOW, LM_DIRNAME, LM_REPO, PACK, REPACK_BF16_BYTES, REPACK_BF16_NAME,
     REPACK_BF16_PATH, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_INT8_PATH,
     REPACK_REPO, VAE_ALLOW, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_LEGACY_REPO,
-    VAE_REPO, install_command,
+    VAE_REPO, WRITER_AUTO, WRITER_BYTES, WRITER_NAME, WRITER_PATH, WRITER_REPO,
+    WRITER_SUBDIR, install_command,
 )
 
 log = logging.getLogger(__name__)
@@ -478,6 +479,49 @@ def fetch_original(variant: str, progress=None) -> None:
     fetch(VAE_LEGACY_REPO if legacy else VAE_REPO,
           {name: os.path.join(vae_dir, name) for name in VAE_ALLOW},
           "Downloading the VAE decoder (0.49 GB)", progress)
+
+
+def writer_wanted() -> dict:
+    """The default writer model, and where a GGUF belongs on this machine."""
+    root = os.path.join(paths.models_root(), WRITER_SUBDIR)
+    folder_paths = paths._folder_paths()
+    if folder_paths is not None:
+        try:
+            registered = [path for path in folder_paths.get_folder_paths(WRITER_SUBDIR)
+                          if os.path.isdir(path)]
+        except KeyError:
+            registered = []
+        if registered:
+            root = registered[0]
+        else:
+            root = os.path.join(folder_paths.models_dir, WRITER_SUBDIR)
+    return {WRITER_PATH: os.path.join(root, WRITER_NAME)}
+
+
+def fetch_writer(settings: dict, progress=None) -> str:
+    """The writer's language model, when the machine has no GGUF of its own.
+
+    Refused outright when downloading is off, and the refusal names the file
+    rather than the repository: someone who keeps their models by hand wants a
+    link and a folder, not an apology.
+    """
+    if settings.get("download", "auto") == "off":
+        wanted = writer_wanted()
+        destination = list(wanted.values())[0]
+        raise FileNotFoundError(
+            "The writer found no language model on this machine, and 'download' in YuE2 "
+            "Options is 'off'.\n\n"
+            "Put any instruction-following GGUF into your ComfyUI models folder, or fetch "
+            "this one:\n\n"
+            + endpoint() + "/" + WRITER_REPO + "/resolve/main/" + WRITER_PATH
+            + "\n  -> " + destination
+            + "\n\nThen pick it in the model widget, or leave that widget on '"
+            + WRITER_AUTO + "'.")
+
+    wanted = writer_wanted()
+    fetch(WRITER_REPO, wanted,
+          "Downloading the writer model ({})".format(human_size(WRITER_BYTES)), progress)
+    return list(wanted.values())[0]
 
 
 def source_for(settings: dict) -> str:

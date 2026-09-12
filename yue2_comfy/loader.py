@@ -26,6 +26,7 @@ from typing import NamedTuple
 
 from . import devices
 from .constants import install_command
+from .discovery import Files, locate  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -193,40 +194,6 @@ def load_tokenizer(merges_path: str):
             "YuE2 needs tiktoken to read the lyrics, and it is not installed in "
             "this Python.\n\nInstall it with:\n\n" + install_command("tiktoken>=0.7")
         ) from error
-
-
-class Files(NamedTuple):
-    lm: str
-    vae: str
-    merges: str
-
-
-def locate(variant: str = "standard") -> Files:
-    """Where the three files are. A placeholder with an expiry date.
-
-    M4 replaces this with a real search over the ComfyUI model roots and the
-    Hugging Face cache. Until then it honours YUE2_MODELS_ROOT and otherwise
-    looks in the models directory beside this checkout, which is where they
-    were downloaded by hand.
-    """
-    here = os.path.realpath(__file__)
-    root = os.environ.get("YUE2_MODELS_ROOT") or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(here))), "models")
-    vae_dir = "YuE2-Vae-legacy" if variant == "legacy" else "YuE2-Vae"
-    found = Files(
-        lm=os.path.join(root, "YuE2-3B", "model.safetensors"),
-        vae=os.path.join(root, vae_dir, "model.safetensors"),
-        merges=os.path.join(root, "YuE2-3B", "qwen.tiktoken"),
-    )
-    missing = [path for path in found if not os.path.isfile(path)]
-    if missing:
-        raise FileNotFoundError(
-            "YuE2 weights are not where this build expects them yet:\n  "
-            + "\n  ".join(missing)
-            + "\n\nSet YUE2_MODELS_ROOT to the directory holding YuE2-3B and "
-            + vae_dir + ", or wait for the download support."
-        )
-    return found
 
 
 def _stamp(path: str):

@@ -14,7 +14,17 @@ import sys
 
 PACK = "YuE2-ComfyUI"
 CATEGORY = "YuE2"
+ADVANCED_CATEGORY = CATEGORY + "/Advanced"
+"""The staged nodes sit one level down, which is what makes them optional.
+
+Someone who opens the YuE2 menu sees three nodes and can write a song. The four
+that split a run into its stages are one click further in, where they cost
+nothing to the person who does not want them."""
+
 OPTIONS_TYPE = "YUE2_OPTIONS"
+PLAN_TYPE = "YUE2_PLAN"
+PLANS_TYPE = "YUE2_PLANS"
+LATENTS_TYPE = "YUE2_LATENTS"
 
 SAMPLE_RATE = 48000
 LATENT_DIM = 64
@@ -128,6 +138,27 @@ DEFAULT_OPTIONS = {
 DEFAULT_IDEA = "a quiet song about coming home in winter, female voice"
 DEFAULT_STYLE = "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM"
 DEFAULT_LYRICS = "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you"
+
+STYLE_TOOLTIP = (
+    "What the song should sound like: language, genre, voice, instruments, tempo.\n\n"
+    "This is a description, not a list of tags. 'English, warm piano pop, expressive "
+    "female voice, 88 BPM' works better than 'pop, piano, female'."
+)
+
+LYRICS_TOOLTIP = (
+    "The words to sing, with section markers on their own lines: [Verse], [Chorus], "
+    "[Bridge], [Outro].\n\n"
+    "Leave it empty for an instrumental. Long lyrics eat into the context the song "
+    "itself needs, so a very long text lowers the ceiling on 'max_seconds'."
+)
+
+SEED_TOOLTIP = (
+    "The same seed with the same settings gives the same song, byte for byte.\n\n"
+    "That holds only while 'attention_backend' is 'sdpa', which is the default."
+)
+"""These three describe the same inputs on the plain node and on the staged ones,
+so they live here rather than in either module. A song and the score it grew from
+answer to one seed, and saying so twice in two wordings is how they stop agreeing."""
 
 
 def install_command(package: str) -> str:

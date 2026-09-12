@@ -28,7 +28,16 @@ DECODE_RESERVE_BYTES = 512 * 1024 ** 2 + 2 * 1024 ** 3
 
 
 class Stages:
-    """Where each stage sits on a 0..100 bar, and what it is called."""
+    """Where each stage sits on a 0..100 bar, and what it is called.
+
+    The shares are not a measurement and cannot be one, because they move with
+    the length of the song. Measured on a 5090 on 2026-09-13, two lines of
+    lyrics and a 40-second ceiling: score 2.5 s, semantic 4.3 s, acoustic 1.9 s,
+    decode 0.3 s -- the score stage a quarter of the run. The semantic stage is
+    the one that grows with length, so at the 360-second ceiling it dominates
+    and the score stage falls to a few percent. These numbers sit between the
+    two cases; a bar that is honest at one length is wrong at the other.
+    """
 
     ABC = (0.0, 10.0, "Writing the score")
     SEMANTIC = (10.0, 55.0, "Composing")
@@ -43,6 +52,33 @@ def _band(progress, stage, done, total, suffix="") -> None:
     low, high, title = stage
     share = 0.0 if total <= 0 else max(0.0, min(1.0, float(done) / float(total)))
     progress.update(low + (high - low) * share, title + suffix)
+
+
+def alone(*stages):
+    """The same stages rescaled to fill a progress bar by themselves.
+
+    A staged node runs one or two of the four and still owns a whole bar.
+    Deriving its bands from the table above, instead of writing a second table
+    beside it, keeps one set of proportions: editing Stages moves every bar.
+    """
+    low, high = stages[0][0], stages[-1][1]
+    span = (high - low) or 1.0
+    return tuple((100.0 * (a - low) / span, 100.0 * (b - low) / span, title)
+                 for a, b, title in stages)
+
+
+def _request(style, lyrics, seed, settings, abc=None):
+    """The upstream request for these inputs, checked by its own rules.
+
+    Empty ABC text is passed as None rather than as an empty string: upstream
+    refuses the empty string, and the two mean the same thing here.
+    """
+    from .vendor.yue2.protocol import SongRequest
+
+    cfg_scale = float(settings["cfg_scale"]) or None
+    return SongRequest(style=style, lyrics=lyrics, cot=settings["cot"],
+                       seed=normalize_seed(seed), cfg_scale=cfg_scale,
+                       abc=(abc or "").strip() or None)
 
 
 def _override(sampling, **fields):
@@ -64,30 +100,75 @@ def _budget_message(prefix_tokens: int, max_tokens: int) -> str:
              max_tokens * FRAME_SECONDS, room * FRAME_SECONDS)
 
 
-def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
-    """One song. Returns (waveform, abc_text, timing).
+def write_score(models, style, lyrics, seed, settings, progress=None,
+                cancelled=None, stages=None):
+    """Stage one: the readable score, before a note of audio exists.
 
-    The waveform is exactly what ComfyUI's AUDIO type wants: float32 [1, 2, S]
-    on the CPU. decode_tiled already allocates that shape, so nothing here
-    transposes or copies the song again.
+    Returns ``(text, ids, timing)``, and both forms of the score come back on
+    purpose. The ids are what the next stage is really conditioned on, so a
+    score nobody edited travels forward exactly as the model wrote it instead
+    of being re-encoded from its own printed form.
+
+    An empty score is the honest answer for cot='off', which goes straight from
+    the lyrics to audio and never writes one.
     """
-    from .vendor.yue2 import nar
-    from .vendor.yue2.protocol import (
-        CODEC_OFFSET, GenerationConfig, SongRequest, negative_prefix, token_prefixes,
-    )
+    from .vendor.yue2.protocol import GenerationConfig, token_prefixes
     from .vendor.yue2.sampling import generate_tokens
 
+    band = (stages or (Stages.ABC,))[0]
+    request = _request(style, lyrics, seed, settings)
+    if request.cot == "off":
+        return "", [], {}
+
+    sampling = _override(GenerationConfig().abc,
+                         temperature=float(settings["abc_temperature"]),
+                         top_p=float(settings["abc_top_p"]),
+                         top_k=int(settings["abc_top_k"]))
+    with runtime.deterministic_math(), \
+            runtime.pinned_attention(settings["attention_backend"]):
+        ids, spent, truncated = generate_tokens(
+            models.lm, token_prefixes(request, models.tokenizer), sampling,
+            request.seed, "abc", cancelled=cancelled,
+            on_token=_counter(progress, band, sampling.max_tokens))
+    if truncated:
+        log.warning("[yue2_comfy.generate] the score hit its token budget")
+    return models.tokenizer.decode(ids), list(ids), {"abc": spent}
+
+
+def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
+         progress=None, cancelled=None, stages=None):
+    """Stages two and three: a score becomes acoustic latents.
+
+    ``abc_ids`` wins when it is given, and ``abc`` is encoded when it is not,
+    which is how an edited score re-enters the pipeline. Choosing between them
+    is the caller's job, because only the caller knows whether the text in its
+    hands is still the text those ids were decoded from.
+
+    The two torch-backed modules are imported below the check rather than at
+    the top, so a graph with nothing connected to its plan input is told what
+    is missing instead of being told about torch.
+    """
+    from .vendor.yue2.protocol import (
+        CODEC_OFFSET, GenerationConfig, negative_prefix, token_prefixes,
+    )
+
+    bands = stages or (Stages.SEMANTIC, Stages.ACOUSTIC)
     defaults = GenerationConfig()
-    lm, vae, tokenizer, device = models.lm, models.vae, models.tokenizer, models.device
+    request = _request(style, lyrics, seed, settings)
 
-    cfg_scale = float(settings["cfg_scale"]) or None
-    request = SongRequest(style=style, lyrics=lyrics, cot=settings["cot"],
-                          seed=normalize_seed(seed), cfg_scale=cfg_scale)
+    ids = None if abc_ids is None else [int(token) for token in abc_ids]
+    if request.cot != "off" and ids is None:
+        if not (abc or "").strip():
+            raise ValueError(
+                "There is no score to sing. Connect a 'YuE2 Plan' node to the "
+                "'plan' input, or set 'cot' to 'off' in the options to go "
+                "straight from the lyrics to audio."
+            )
+        ids = list(models.tokenizer.encode(abc))
 
-    abc_sampling = _override(defaults.abc,
-                             temperature=float(settings["abc_temperature"]),
-                             top_p=float(settings["abc_top_p"]),
-                             top_k=int(settings["abc_top_k"]))
+    from .vendor.yue2 import nar
+    from .vendor.yue2.sampling import generate_tokens
+
     requested = float(settings["max_seconds"])
     automatic = requested <= 0
     seconds = auto_seconds(lyrics) if automatic else requested
@@ -96,50 +177,39 @@ def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
                  seconds, sung_lines(lyrics))
 
     budget = seconds_to_tokens(seconds)
-    semantic_sampling = _override(defaults.semantic,
-                                  temperature=float(settings["temperature"]),
-                                  top_p=float(settings["top_p"]),
-                                  top_k=int(settings["top_k"]),
-                                  repetition_penalty=float(settings["repetition_penalty"]),
-                                  min_tokens=min(defaults.semantic.min_tokens, budget),
-                                  max_tokens=budget)
+    sampling = _override(defaults.semantic,
+                         temperature=float(settings["temperature"]),
+                         top_p=float(settings["top_p"]),
+                         top_k=int(settings["top_k"]),
+                         repetition_penalty=float(settings["repetition_penalty"]),
+                         min_tokens=min(defaults.semantic.min_tokens, budget),
+                         max_tokens=budget)
 
     timing = {}
-    started = time.perf_counter()
+    with runtime.deterministic_math(), \
+            runtime.pinned_attention(settings["attention_backend"]):
+        prefix = token_prefixes(request, models.tokenizer, ids)
 
-    with runtime.deterministic_math(), runtime.pinned_attention(settings["attention_backend"]):
-        prefix = token_prefixes(request, tokenizer)
-        abc_ids, abc_text = [], ""
-        if request.cot != "off":
-            abc_ids, timing["abc"], truncated = generate_tokens(
-                lm, prefix, abc_sampling, request.seed, "abc", cancelled=cancelled,
-                on_token=_counter(progress, Stages.ABC, abc_sampling.max_tokens))
-            abc_text = tokenizer.decode(abc_ids)
-            if truncated:
-                log.warning("[yue2_comfy.generate] the score hit its token budget")
-            prefix = token_prefixes(request, tokenizer, abc_ids)
-
-        if len(prefix) + semantic_sampling.max_tokens > CONTEXT:
+        if len(prefix) + sampling.max_tokens > CONTEXT:
             room = max(0, CONTEXT - len(prefix))
             if not automatic or room < seconds_to_tokens(AUTO_MIN_SECONDS):
-                raise ValueError(_budget_message(len(prefix), semantic_sampling.max_tokens))
+                raise ValueError(_budget_message(len(prefix), sampling.max_tokens))
             log.info("[yue2_comfy.generate] length ceiling cut to %.0f s by the prompt",
                      room * FRAME_SECONDS)
-            semantic_sampling = dataclasses.replace(
-                semantic_sampling, max_tokens=room,
-                min_tokens=min(semantic_sampling.min_tokens, room))
+            sampling = dataclasses.replace(
+                sampling, max_tokens=room,
+                min_tokens=min(sampling.min_tokens, room))
 
         negative = None
         if request.guidance != 1:
             negative = negative_prefix(
-                request, tokenizer, None if request.cot == "off" else abc_ids)
+                request, models.tokenizer, None if request.cot == "off" else ids)
 
         semantic_ids, timing["semantic"], truncated = generate_tokens(
-            lm, prefix, semantic_sampling, request.seed, "semantic",
+            models.lm, prefix, sampling, request.seed, "semantic",
             negative=negative, cfg_scale=request.guidance,
             legacy_off=request.cot == "off", cancelled=cancelled,
-            on_token=_counter(progress, Stages.SEMANTIC, semantic_sampling.max_tokens,
-                              seconds=True))
+            on_token=_counter(progress, bands[0], sampling.max_tokens, seconds=True))
         if truncated:
             log.info("[yue2_comfy.generate] the song ran to the full length budget")
 
@@ -152,15 +222,45 @@ def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
 
         start = time.perf_counter()
         latents = nar.synthesize(
-            lm, prefix, codec, request.seed, steps=int(settings["ode_steps"]),
+            models.lm, prefix, codec, request.seed, steps=int(settings["ode_steps"]),
             context=CONTEXT, attention="sdpa", cancelled=cancelled,
-            on_progress=lambda done, total: _band(progress, Stages.ACOUSTIC, done, total))
+            on_progress=lambda done, total: _band(progress, bands[1], done, total))
         timing["acoustic"] = {"seconds": time.perf_counter() - start,
                               "frames": int(latents.shape[0])}
+    return latents, timing
 
-    waveform = _decode(vae, lm, latents, device, progress, cancelled, timing)
-    timing["total_seconds"] = time.perf_counter() - started
+
+def decode(models, latents, progress=None, cancelled=None, stages=None):
+    """Stage four: latents to a waveform, in the layout ComfyUI's AUDIO wants."""
+    band = (stages or (Stages.DECODE,))[0]
+    timing = {}
+    waveform = _decode(models.vae, models.lm, latents, models.device,
+                       progress, cancelled, timing, band)
     timing["seconds_of_audio"] = waveform.shape[-1] / SAMPLE_RATE
+    return waveform, timing
+
+
+def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
+    """One song. Returns (waveform, abc_text, timing).
+
+    The waveform is exactly what ComfyUI's AUDIO type wants: float32 [1, 2, S]
+    on the CPU. decode_tiled already allocates that shape, so nothing here
+    transposes or copies the song again.
+
+    The three calls below are the same three the staged nodes make one at a
+    time. Keeping this node on the same path is the point: whatever the staged
+    ones can do, this one has already done, and there is no second pipeline to
+    keep in step.
+    """
+    started = time.perf_counter()
+    abc_text, abc_ids, timing = write_score(
+        models, style, lyrics, seed, settings, progress, cancelled)
+    latents, spent = sing(models, style, lyrics, seed, settings, abc_ids,
+                          progress=progress, cancelled=cancelled)
+    timing.update(spent)
+    waveform, spent = decode(models, latents, progress, cancelled)
+    timing.update(spent)
+    timing["total_seconds"] = time.perf_counter() - started
     return waveform, abc_text, timing
 
 
@@ -179,7 +279,7 @@ def _counter(progress, stage, total, seconds: bool = False):
     return on_token
 
 
-def _decode(vae, lm, latents, device, progress, cancelled, timing):
+def _decode(vae, lm, latents, device, progress, cancelled, timing, band=None):
     """Latents to a waveform, with the VAE on the card only for as long as it takes."""
     import torch
 
@@ -195,7 +295,7 @@ def _decode(vae, lm, latents, device, progress, cancelled, timing):
     try:
         for position, core in enumerate(sizes):
             try:
-                audio = _decode_tiled(vae, z, core, progress, cancelled)
+                audio = _decode_tiled(vae, z, core, progress, cancelled, band)
                 break
             except torch.cuda.OutOfMemoryError:
                 if position == len(sizes) - 1:
@@ -220,17 +320,19 @@ def _decode(vae, lm, latents, device, progress, cancelled, timing):
     return audio.clone().float().clamp_(-1, 1)
 
 
-def _decode_tiled(vae, z, core_frames, progress, cancelled):
+def _decode_tiled(vae, z, core_frames, progress, cancelled, band=None):
     """One decode pass, with cancellation checked between tiles.
 
     decode_tiled takes no cancelled parameter, so the progress callback carries
     the check. Raising InterruptedError from it lands in the same place as a
     cancellation from any other stage.
     """
+    stage = band or Stages.DECODE
+
     def report(done, total):
         if cancelled is not None and cancelled():
             raise InterruptedError("Cancelled during decode")
-        _band(progress, Stages.DECODE, done, total)
+        _band(progress, stage, done, total)
 
     return vae.decode_tiled(z, core_frames=core_frames,
                             halo_frames=int(vae.config.decode_halo_frames),

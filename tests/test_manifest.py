@@ -3,6 +3,10 @@
 The schema is the one m-a-p ships: read off the three manifests on this machine
 on 2026-09-13, all of them ``{"schema": 1, "files": {name: {bytes, sha256}}}``
 with a single ``model.safetensors`` entry each.
+
+Two other shapes turned up the same day and are pinned down below. YuE2's own
+``copy_model_files`` writes the same body with the schema label left off, and
+MERT-v2-FullSong ships a document with a checksum but no per-file list at all.
 """
 
 from __future__ import annotations
@@ -26,7 +30,10 @@ def write_model(folder, name="model.safetensors", body=BODY):
 
 
 def write_manifest(folder, files, schema=1):
-    document = {"schema": schema, "files": files}
+    """``schema=None`` leaves the label off, the way YuE2's exporter does."""
+    document = {"files": files}
+    if schema is not None:
+        document = {"schema": schema, "files": files}
     (folder / MANIFEST_NAME).write_text(json.dumps(document), encoding="utf-8")
 
 
@@ -64,6 +71,42 @@ def test_a_folder_with_no_manifest_is_not_a_failure(tmp_path):
 def test_an_unknown_schema_is_declined_rather_than_guessed_at(tmp_path):
     write_model(tmp_path)
     write_manifest(tmp_path, {"model.safetensors": entry()}, schema=2)
+    assert manifest.read(str(tmp_path)) == {}
+    assert manifest.verify(str(tmp_path)) == []
+
+
+def test_a_manifest_without_a_schema_key_is_read_as_schema_one(tmp_path):
+    """A folder re-saved through YuE2's own save_pretrained arrives like this.
+
+    ``copy_model_files`` ends on ``write_json(..., {"files": weights["files"]})``
+    over entries this reader already understands. Declining it would leave the
+    model's own export unverifiable for no reason anybody could act on.
+    """
+    write_model(tmp_path)
+    write_manifest(tmp_path, {"model.safetensors": entry()}, schema=None)
+    assert list(manifest.read(str(tmp_path))) == ["model.safetensors"]
+    assert manifest.verify(str(tmp_path)) == []
+
+
+def test_an_unlabelled_manifest_still_catches_a_rewritten_file(tmp_path):
+    """Reading one would be worth nothing if it could not also refuse."""
+    write_model(tmp_path, body=b"q" * len(BODY))
+    write_manifest(tmp_path, {"model.safetensors": entry()}, schema=None)
+    assert manifest.verify(str(tmp_path)) == ["model.safetensors"]
+
+
+def test_a_manifest_of_another_shape_is_declined(tmp_path):
+    """MERT-v2-FullSong publishes a checksum, but not as a list of files.
+
+    It is a real document, not a damaged one, so the answer is to say nothing
+    was checked rather than to hunt for a checksum under some other key.
+    """
+    write_model(tmp_path)
+    (tmp_path / MANIFEST_NAME).write_text(
+        json.dumps({"format": "safetensors",
+                    "filename": "model.safetensors",
+                    "sha256": hashlib.sha256(BODY).hexdigest()}),
+        encoding="utf-8")
     assert manifest.read(str(tmp_path)) == {}
     assert manifest.verify(str(tmp_path)) == []
 

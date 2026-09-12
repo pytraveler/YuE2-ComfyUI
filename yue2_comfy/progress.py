@@ -18,6 +18,43 @@ TEXT_MIN_INTERVAL = 0.25
 NOTICES_EVENT = "yue2_comfy.notices"
 
 
+def interrupted() -> bool:
+    """ComfyUI's cancel flag, read without clearing it.
+
+    processing_interrupted is the non-consuming reader.
+    throw_exception_if_processing_interrupted is the consuming one, and calling
+    that from inside a generation loop would clear the flag on the first stage
+    that noticed, leaving the later stages to run on.
+    """
+    try:
+        import comfy.model_management as mm
+
+        return bool(mm.processing_interrupted())
+    except Exception:
+        return False
+
+
+def translate_interrupt() -> None:
+    """Hand a cancelled run back to ComfyUI as its own interrupt.
+
+    Upstream raises InterruptedError. ComfyUI wants InterruptProcessingException,
+    and throw_exception_if_processing_interrupted is the only function that
+    clears the flag on the way, so it is called rather than constructing the
+    exception directly. If someone else already consumed the flag it returns
+    quietly, and the exception is raised by hand.
+
+    Note that InterruptProcessingException derives from BaseException, not
+    Exception, which is why nothing around the generation is wrapped in a bare
+    'except Exception'.
+    """
+    try:
+        import comfy.model_management as mm
+    except Exception:
+        return
+    mm.throw_exception_if_processing_interrupted()
+    raise mm.InterruptProcessingException()
+
+
 def refuse(node_id, message: str):
     """Say it on screen, then raise it.
 

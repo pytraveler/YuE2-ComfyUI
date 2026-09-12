@@ -1,8 +1,8 @@
 """Checking weight files against the checksums published beside them.
 
-m-a-p ships a ``weights_manifest.json`` next to each release: a schema number
-and, per file, its size and its SHA-256. Size is checked on every run because it
-costs a directory listing. This is the other half, and it costs real time --
+m-a-p ships a ``weights_manifest.json`` next to each release: usually a schema
+number, and per file its size and its SHA-256. Size is checked on every run
+because it costs a directory listing. This is the other half, and it costs time --
 5.4 s over 7.8 GB, measured -- so it runs once, right after a download, and not
 again on every graph execution.
 
@@ -43,6 +43,14 @@ def read(directory: str) -> dict:
     Empty for a folder that has no manifest, and empty for one this code does
     not understand: guessing at an unknown schema is how a checker starts
     reporting failures that are its own fault rather than the file's.
+
+    A missing ``schema`` key counts as schema 1 rather than as unknown. YuE2's
+    own exporter writes the file that way: ``copy_model_files`` in
+    ``yue2/storage.py`` ends on ``{"files": ...}`` with no label, over entries
+    of exactly the shape below, so a folder re-saved through the model's own
+    code would otherwise arrive unverifiable. A document that names a different
+    schema is still declined -- unlabelled and labelled as something else are
+    different claims, and only the second one says this reader is out of date.
     """
     path = os.path.join(directory, MANIFEST_NAME)
     try:
@@ -54,13 +62,19 @@ def read(directory: str) -> dict:
     except (OSError, ValueError, UnicodeDecodeError):
         return {}
 
-    if not isinstance(document, dict) or document.get("schema") != SCHEMA:
+    if not isinstance(document, dict):
+        return {}
+
+    declared = document.get("schema", SCHEMA)
+    if declared != SCHEMA:
         log.warning("[yue2_comfy.manifest] %s is schema %r, not %d; not checking",
-                    path, (document or {}).get("schema"), SCHEMA)
+                    path, declared, SCHEMA)
         return {}
 
     files = document.get("files")
     if not isinstance(files, dict):
+        log.warning("[yue2_comfy.manifest] %s lists no files this code can read; "
+                    "not checking", path)
         return {}
 
     listed = {}

@@ -12,10 +12,26 @@ def node_classes():
 @pytest.mark.parametrize("name,cls", node_classes())
 def test_every_node_is_wired(name, cls):
     assert name in nodes.NODE_DISPLAY_NAME_MAPPINGS, "no display name"
-    assert cls.CATEGORY == constants.CATEGORY
+    assert cls.CATEGORY in (constants.CATEGORY, constants.ADVANCED_CATEGORY)
     assert len(cls.RETURN_TYPES) == len(cls.RETURN_NAMES)
     assert hasattr(cls, cls.FUNCTION)
     assert cls.DESCRIPTION.strip()
+
+
+def test_the_menu_offers_three_nodes_and_hides_the_rest_one_level_down():
+    """The whole product is that someone can write a song without reading.
+
+    Eight nodes in one menu is the pack this one was written not to be. The
+    staged four and their selector earn their place by being one click further
+    in, so demoting a headline node or promoting a staged one has to be done on
+    purpose rather than by editing a class and not noticing.
+    """
+    plain = {name for name, cls in node_classes()
+             if cls.CATEGORY == constants.CATEGORY}
+    advanced = {name for name, cls in node_classes()
+                if cls.CATEGORY == constants.ADVANCED_CATEGORY}
+    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options"}
+    assert advanced == set(nodes.STAGED_CLASSES)
 
 
 @pytest.mark.parametrize("name,cls", node_classes())

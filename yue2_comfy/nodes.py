@@ -15,32 +15,17 @@ from . import devices
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
-    MAX_SECONDS, OPTIONS_TYPE, QUANTIZATION_CHOICES, SAMPLE_RATE, VAE_CHOICES,
-    WRITER_AUTO, WRITER_LENGTH_CHOICES, WRITER_LENGTH_DEFAULT,
-    WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS, WRITER_REPETITION_PENALTY,
-    WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P, auto_seconds, length_lines,
+    LYRICS_TOOLTIP, MAX_SECONDS, OPTIONS_TYPE, QUANTIZATION_CHOICES, SAMPLE_RATE,
+    SEED_TOOLTIP, STYLE_TOOLTIP, VAE_CHOICES, WRITER_AUTO, WRITER_LENGTH_CHOICES,
+    WRITER_LENGTH_DEFAULT, WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS,
+    WRITER_REPETITION_PENALTY, WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P,
+    auto_seconds, length_lines,
 )
-from .progress import NodeProgress, announce, refuse
+from .progress import (NodeProgress, announce, interrupted, refuse,
+                       translate_interrupt)
+from .staged import (STAGED_CLASSES, STAGED_NAMES, resolve, session, words)
 
 log = logging.getLogger(__name__)
-
-STYLE_TOOLTIP = (
-    "What the song should sound like: language, genre, voice, instruments, tempo.\n\n"
-    "This is a description, not a list of tags. 'English, warm piano pop, expressive "
-    "female voice, 88 BPM' works better than 'pop, piano, female'."
-)
-
-LYRICS_TOOLTIP = (
-    "The words to sing, with section markers on their own lines: [Verse], [Chorus], "
-    "[Bridge], [Outro].\n\n"
-    "Leave it empty for an instrumental. Long lyrics eat into the context the song "
-    "itself needs, so a very long text lowers the ceiling on 'max_seconds'."
-)
-
-SEED_TOOLTIP = (
-    "The same seed with the same settings gives the same song, byte for byte.\n\n"
-    "That holds only while 'attention_backend' is 'sdpa', which is the default."
-)
 
 IDEA_TOOLTIP = (
     "What the song is about, in one line. 'a sad song about winter, female vocal' is "
@@ -254,43 +239,6 @@ class YuE2Options:
 
 
 
-def _interrupted() -> bool:
-    """ComfyUI's cancel flag, read without clearing it.
-
-    processing_interrupted is the non-consuming reader.
-    throw_exception_if_processing_interrupted is the consuming one, and calling
-    that from inside a generation loop would clear the flag on the first stage
-    that noticed, leaving the later stages to run on.
-    """
-    try:
-        import comfy.model_management as mm
-
-        return bool(mm.processing_interrupted())
-    except Exception:
-        return False
-
-
-def _translate_interrupt() -> None:
-    """Hand a cancelled run back to ComfyUI as its own interrupt.
-
-    Upstream raises InterruptedError. ComfyUI wants InterruptProcessingException,
-    and throw_exception_if_processing_interrupted is the only function that
-    clears the flag on the way, so it is called rather than constructing the
-    exception directly. If someone else already consumed the flag it returns
-    quietly, and the exception is raised by hand.
-
-    Note that InterruptProcessingException derives from BaseException, not
-    Exception, which is why nothing around the generation is wrapped in a bare
-    'except Exception'.
-    """
-    try:
-        import comfy.model_management as mm
-    except Exception:
-        return
-    mm.throw_exception_if_processing_interrupted()
-    raise mm.InterruptProcessingException()
-
-
 class YuE2GenerateSong:
     """Style and lyrics in, a finished song out."""
 
@@ -325,44 +273,17 @@ class YuE2GenerateSong:
     CATEGORY = CATEGORY
 
     def generate(self, style, lyrics, seed, options=None, unique_id=None):
-        settings = dict(DEFAULT_OPTIONS)
-        if options:
-            settings.update(options)
+        from . import generate
+
         progress = NodeProgress(unique_id)
+        style, lyrics = words(style, lyrics, unique_id)
+        settings = resolve(options)
 
-        style = (style or "").strip()
-        lyrics = (lyrics or "").strip()
-        if not style and not lyrics:
-            refuse(unique_id, "Give a style, lyrics, or both. With neither there is "
-                              "nothing to write a song from.")
-        try:
-            settings["device"] = devices.validate(settings["device"])
-        except (ValueError, RuntimeError) as error:
-            refuse(unique_id, str(error))
-
-        from . import download, generate, loader
-
-        try:
-            files = download.ensure(settings, progress)
-        except (FileNotFoundError, download.DownloadError) as error:
-            refuse(unique_id, str(error))
-
-        try:
-            models = loader.acquire(
-                files, settings["device"], settings["vae"], progress,
-            )
+        with session(settings, unique_id, progress) as models:
             waveform, score, timing = generate.run(
                 models, style, lyrics, seed, settings,
-                progress=progress, cancelled=_interrupted,
+                progress=progress, cancelled=interrupted,
             )
-        except InterruptedError:
-            _translate_interrupt()
-            raise
-        except ValueError as error:
-            refuse(unique_id, str(error))
-        finally:
-            if not settings["keep_model_loaded"]:
-                loader.unload()
 
         log.info(
             "[yue2_comfy] %.1f s of audio in %.1f s | %d semantic tokens at %.1f tok/s "
@@ -466,7 +387,7 @@ class YuE2WriteSong:
                             "lyrics, asking once more")
                 progress.text("That answer had no lyrics in it, asking again", force=True)
         except InterruptedError:
-            _translate_interrupt()
+            translate_interrupt()
             raise
         finally:
             if not keep_model_loaded:
@@ -497,9 +418,16 @@ NODE_CLASS_MAPPINGS = {
     "YuE2WriteSong": YuE2WriteSong,
     "YuE2Options": YuE2Options,
 }
+NODE_CLASS_MAPPINGS.update(STAGED_CLASSES)
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
     "YuE2WriteSong": "YuE2 Write Song",
     "YuE2Options": "YuE2 Options",
 }
+NODE_DISPLAY_NAME_MAPPINGS.update(STAGED_NAMES)
+"""One registry, so that whatever reads this module sees every node.
+
+The release workflow and the tests both import these two names to check that
+the pack loads. A staged node registered anywhere else would be absent from
+both and nobody would find out until it was shipped."""

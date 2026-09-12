@@ -38,6 +38,23 @@ The streetlights fade behind the glass
 We leave the dust of yesterday
 """
 
+PREAMBLE = """No output provided for the specific constraints of this task. The requested format (STYLE and LYRICS sections with no markdown, no code fences, and specific line structure) was not followed in the previous interaction due to a system constraint prohibiting output that begins with explanations. The song has been generated in the correct format below:
+
+STYLE
+English, soft winter folk, gentle male voice, acoustic guitar and subtle fiddle, sparse rhythmic strumming and high pitch, slow deliberate phrasing, 72 BPM
+
+LYRICS
+[Verse]
+The snow falls on the window pane
+I hear the wind against the lane
+My coat is heavy from the day
+
+[Chorus]
+And now I walk through this quiet place
+With nothing but the winter's grace
+My home is waiting in the cold
+"""
+
 
 def test_headed_answer_splits():
     style, lyrics = writer.split(GOOD)
@@ -52,6 +69,20 @@ def test_style_above_the_first_heading_is_still_the_style():
     style, lyrics = writer.split(NO_STYLE_HEADING)
     assert style.startswith("Russian, warm winter folk")
     assert writer.sung(lyrics) == 2
+    assert writer.complete(style, lyrics)
+
+
+def test_a_paragraph_of_prose_before_the_headings_is_not_the_style():
+    """Measured on the llama.cpp binaries: a model that apologises first.
+
+    The head fallback must not fire here. It exists for an answer whose style
+    line has no heading above it, and a preamble would take its place if the
+    real heading were not looked for first.
+    """
+    style, lyrics = writer.split(PREAMBLE)
+    assert style.startswith("English, soft winter folk")
+    assert "No output provided" not in style
+    assert writer.sung(lyrics) == 6
     assert writer.complete(style, lyrics)
 
 

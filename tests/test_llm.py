@@ -42,7 +42,11 @@ def write_gguf(path, kind="model", arch="qwen35", chat=True, truncated=False):
 
 
 @pytest.fixture(autouse=True)
-def forget_models():
+def forget_models(monkeypatch):
+    """No cache between tests, and no Ollama store on the machine running them."""
+    from yue2_comfy import ollama
+
+    monkeypatch.setattr(ollama, "roots", lambda: [])
     llm._HEADERS.clear()
     llm._CATALOGUE.update({"roots": None, "entries": []})
     yield
@@ -54,6 +58,11 @@ def forget_models():
 def folder(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "gguf_roots", lambda: [str(tmp_path)])
     return tmp_path
+
+
+def labels() -> list:
+    """Catalogue labels without their sizes, which most of these do not test."""
+    return [name.split(" (")[0] for name, _path in llm.catalogue()]
 
 
 def test_a_model_with_a_chat_template_is_runnable(tmp_path):
@@ -92,20 +101,20 @@ def test_the_catalogue_lists_only_what_can_write(folder):
     write_gguf(folder / "writer.gguf")
     write_gguf(folder / "lora.gguf", kind="adapter", chat=False)
     write_gguf(folder / "mmproj.gguf", kind="mmproj", arch="clip", chat=False)
-    assert [name for name, _path in llm.catalogue()] == ["writer.gguf"]
+    assert labels() == ["writer.gguf"]
 
 
 def test_the_catalogue_looks_inside_subfolders(folder):
     (folder / "nested").mkdir()
     write_gguf(folder / "nested" / "writer.gguf")
-    assert [name for name, _path in llm.catalogue()] == ["writer.gguf"]
+    assert labels() == ["writer.gguf"]
 
 
 def test_two_files_of_the_same_name_stay_tellable_apart(folder):
     for parent in ("q4", "q8"):
         (folder / parent).mkdir()
         write_gguf(folder / parent / "same.gguf")
-    assert sorted(name for name, _path in llm.catalogue()) == ["q4/same.gguf", "q8/same.gguf"]
+    assert sorted(labels()) == ["q4/same.gguf", "q8/same.gguf"]
 
 
 def test_the_search_is_bounded_in_depth(folder):
@@ -114,7 +123,7 @@ def test_the_search_is_bounded_in_depth(folder):
     deep.mkdir(parents=True)
     write_gguf(deep / "buried.gguf")
     write_gguf(folder / "one" / "shallow.gguf")
-    assert [name for name, _path in llm.catalogue()] == ["shallow.gguf"]
+    assert labels() == ["shallow.gguf"]
 
 
 def test_only_the_first_shard_of_a_split_model_is_offered(folder):
@@ -125,7 +134,7 @@ def test_only_the_first_shard_of_a_split_model_is_offered(folder):
     """
     write_gguf(folder / "model-00001-of-00002.gguf")
     write_gguf(folder / "model-00002-of-00002.gguf", chat=False)
-    assert [name for name, _path in llm.catalogue()] == ["model-00001-of-00002.gguf"]
+    assert labels() == ["model-00001-of-00002.gguf"]
 
 
 def test_a_cache_copy_is_named_by_repository_not_by_commit(tmp_path, monkeypatch):
@@ -136,13 +145,25 @@ def test_a_cache_copy_is_named_by_repository_not_by_commit(tmp_path, monkeypatch
     (tmp_path / "LLM").mkdir()
     write_gguf(tmp_path / "LLM" / "same.gguf")
     monkeypatch.setattr(paths, "gguf_roots", lambda: [str(tmp_path / "LLM"), str(snapshot)])
-    assert sorted(name for name, _path in llm.catalogue()) == [
+    assert sorted(labels()) == [
         "LLM/same.gguf", "Qwen/Qwen3-VL-8B-Instruct-GGUF/same.gguf"]
 
 
 def test_choices_start_with_auto(folder):
     write_gguf(folder / "writer.gguf")
-    assert llm.choices() == ["auto", "writer.gguf"]
+    assert [choice.split(" (")[0] for choice in llm.choices()] == ["auto", "writer.gguf"]
+
+
+def test_the_label_says_how_big_the_file_is(folder):
+    """A dropdown of names asks somebody with an 8 GB card to guess."""
+    write_gguf(folder / "writer.gguf")
+    assert llm.catalogue()[0][0].endswith(" KB)")
+
+
+def test_a_workflow_saved_against_another_quant_of_the_same_name_still_runs(folder):
+    """The size is cosmetic, so it must not be what a saved graph hangs on."""
+    wanted = write_gguf(folder / "writer.gguf")
+    assert llm.resolve("writer.gguf (7.77 GB)", {}, None) == wanted
 
 
 def test_auto_prefers_the_default_model(folder):

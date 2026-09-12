@@ -11,9 +11,17 @@ in a real model folder -- and only a ``model`` with a chat template inside it ca
 answer a chat turn on its own. A LoRA offered in the list would load, produce
 nothing, and look like the writer was simply bad at its job.
 
-llama-cpp-python is an optional dependency. Without it the node says so and
-names the command to install it into this interpreter, rather than failing on an
-ImportError deep inside a load.
+llama-cpp-python is an optional dependency, and nothing waits for it. When the
+wheel is importable the model is loaded in this process, which is the fast path
+and the only one that can hold a model between runs; when it is not, the same
+GGUF is run by the official llama.cpp binaries in a subprocess, fetched on first
+use. That second road exists because the wheel is not installable everywhere --
+see ``llamacpp.py`` -- and because "install this and try again" is a poor answer
+from a node whose point is not having to set anything up.
+
+Both roads render the prompt from the same chat template, with the same sampler
+settings and the same seed, so which one a machine takes is a question of speed
+rather than of what comes out.
 """
 
 from __future__ import annotations
@@ -29,8 +37,11 @@ from .constants import (WRITER_AUTO, WRITER_MAX_NEW_TOKENS, WRITER_NAME,
 log = logging.getLogger(__name__)
 
 PACKAGE = "llama-cpp-python"
+WHEEL = PACKAGE
+BINARY = "llama.cpp binary"
 SUFFIX = ".gguf"
 RUNNABLE = "model"
+OLLAMA_PREFIX = "ollama: "
 HEADER_KEYS = ("general.architecture", "general.type", "tokenizer.chat_template")
 
 DEFAULT_GPU_LAYERS = -1
@@ -44,22 +55,38 @@ _CATALOGUE: dict = {"roots": None, "entries": []}
 
 
 def install_hint() -> str:
-    """How to get the runtime, for the interpreter that is actually running."""
-    return ("The writer needs " + PACKAGE + ", which is not installed here.\n\n"
-            + install_command(PACKAGE)
+    """The other road, for the interpreter that is actually running.
+
+    Only reached when the binaries could not be had either, so it is an
+    alternative rather than an instruction: the node does not ask anybody to
+    install anything before it will write a song.
+    """
+    return ("The other way to run a writer model is " + PACKAGE + ", installed into "
+            "the Python that runs ComfyUI:\n\n" + install_command(PACKAGE)
             + "\n\nPrebuilt wheels for CUDA and Vulkan are published at "
               "https://github.com/abetlen/llama-cpp-python/releases -- on Windows the "
               "plain command above usually builds from source, which needs a compiler.")
 
 
 def available() -> bool:
+    """Whether the in-process backend, llama-cpp-python, can be imported here."""
     import importlib.util
 
     return importlib.util.find_spec("llama_cpp") is not None
 
 
+def backend() -> str:
+    """Which of the two ways to run a GGUF this machine takes, as a label."""
+    return WHEEL if available() else BINARY
+
+
 def _kind(path: str) -> dict:
-    """``{"type", "arch", "chat"}`` for one GGUF, cached per file identity."""
+    """``{"type", "arch", "chat"}`` for one GGUF, cached per file identity.
+
+    ``chat`` is the template itself, not a flag. Both backends need the text --
+    the subprocess one has no model object to ask afterwards -- and it was read
+    out of the header anyway to decide whether the file can write at all.
+    """
     try:
         stat = os.stat(path)
     except OSError:
@@ -74,7 +101,7 @@ def _kind(path: str) -> dict:
         found = {
             "type": str(header.get("general.type") or RUNNABLE),
             "arch": str(header.get("general.architecture") or ""),
-            "chat": bool(header.get("tokenizer.chat_template")),
+            "chat": str(header.get("tokenizer.chat_template") or ""),
         }
     except Exception as error:
         log.debug("[yue2_comfy.llm] %s is not a usable GGUF (%s)", path, error)
@@ -85,7 +112,12 @@ def _kind(path: str) -> dict:
 def runnable(path: str) -> bool:
     """Whether this file is a model that can answer on its own."""
     found = _kind(path)
-    return bool(found) and found.get("type") == RUNNABLE and found.get("chat")
+    return bool(found) and found.get("type") == RUNNABLE and bool(found.get("chat"))
+
+
+def template(path: str) -> str:
+    """The chat template inside a GGUF, or "" if it carries none."""
+    return _kind(path).get("chat", "")
 
 
 def _sweep(root: str, depth: int = 0) -> list:
@@ -122,6 +154,21 @@ def _where(path: str) -> str:
     return paths.hf_repo_for(path) or os.path.basename(os.path.dirname(path))
 
 
+def _sized(label: str, path: str) -> str:
+    """The label with the file's size on it, since that is the deciding fact.
+
+    A dropdown of file names asks somebody with an 8 GB card to guess which of
+    them fits. The size is the one number that answers it, and it costs a stat.
+    """
+    from . import download
+
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return label
+    return (label + " (" + download.human_size(size) + ")") if size else label
+
+
 def catalogue(refresh: bool = False) -> list:
     """Every GGUF on this machine that could write a song, as (label, path).
 
@@ -129,9 +176,16 @@ def catalogue(refresh: bool = False) -> list:
     folder. A name that appears twice keeps where it came from as well, so the
     copy in a model folder and the copy in the Hugging Face cache stay tellable
     apart -- by repository, not by the commit hash the cache names things with.
+
+    Ollama's store is read too, and its models are marked. Everything in this
+    list is on disk, so "on disk" would mark nothing; what is worth saying is
+    which store a file lives in, and only one of them is not a model folder.
     """
+    from . import ollama
+
     roots = paths.gguf_roots()
-    if not refresh and _CATALOGUE["roots"] == roots:
+    key = (tuple(roots), tuple(ollama.roots()))
+    if not refresh and _CATALOGUE["roots"] == key:
         return list(_CATALOGUE["entries"])
 
     files: list = []
@@ -152,10 +206,17 @@ def catalogue(refresh: bool = False) -> list:
         name = os.path.basename(path)
         if counts.get(name, 0) > 1:
             name = _where(path) + "/" + name
-        entries.append((name, path))
+        entries.append((_sized(name, path), path))
+
+    seen = {os.path.normcase(path) for _label, path in entries}
+    for name, path in ollama.entries():
+        if os.path.normcase(path) in seen or not runnable(path):
+            continue
+        entries.append((_sized(OLLAMA_PREFIX + name, path), path))
+
     entries.sort(key=lambda entry: entry[0].lower())
 
-    _CATALOGUE["roots"] = roots
+    _CATALOGUE["roots"] = key
     _CATALOGUE["entries"] = entries
     return list(entries)
 
@@ -181,6 +242,10 @@ def resolve(choice: str, settings: dict, progress=None) -> str:
     download. Anything else is a name from the list, which is resolved against
     the list rather than treated as a path -- the widget is not a text box, and
     a stale workflow naming a file that has since been deleted should say so.
+
+    The size in a label is cosmetic, so a saved workflow is matched without it
+    too. Replacing a quant with a different one of the same name changes the
+    label and must not break a graph that was working yesterday.
     """
     from . import download
 
@@ -189,6 +254,10 @@ def resolve(choice: str, settings: dict, progress=None) -> str:
     if wanted and wanted != WRITER_AUTO:
         for name, path in entries:
             if name == wanted:
+                return path
+        stem = wanted.split(" (")[0]
+        for name, path in entries:
+            if name.split(" (")[0] == stem:
                 return path
         known = ", ".join(name for name, _path in entries) or "nothing"
         raise FileNotFoundError(
@@ -202,8 +271,13 @@ def resolve(choice: str, settings: dict, progress=None) -> str:
     return download.fetch_writer(settings, progress)
 
 
-def _free_comfy_vram(spec: str) -> None:
-    """Evict ComfyUI's own models when the writer wants the same card."""
+def free_comfy_vram(spec: str) -> None:
+    """Evict ComfyUI's own models when the writer wants the same card.
+
+    Making room is right when both want the same card and actively harmful when
+    they do not: on a second GPU, unloading the song model costs a full reload
+    and buys nothing.
+    """
     if not devices.shares_comfy_device(spec):
         return
     try:
@@ -239,7 +313,7 @@ def load(path: str, n_ctx: int, device: str, progress=None):
 
         from llama_cpp import Llama
 
-        _free_comfy_vram(device)
+        free_comfy_vram(device)
         gpu_layers = 0 if devices.is_cpu(device) else DEFAULT_GPU_LAYERS
         main_gpu = devices.index(device) or 0
         if progress is not None:
@@ -327,8 +401,22 @@ def generate(llama, messages: list, seed: int, greedy: bool = True,
 
 
 def run(path: str, messages: list, seed: int, n_ctx: int, device: str,
-        keep_loaded: bool = False, progress=None, **sampling) -> str:
-    """Load, answer once, and let go again unless asked to hold on."""
+        keep_loaded: bool = False, progress=None, settings=None, **sampling) -> str:
+    """One answer, by whichever backend this machine has.
+
+    The wheel wins when it is importable: it is faster per run and it is the
+    only one that can hold a model between runs, which is what
+    ``keep_model_loaded`` is for. Otherwise the binaries run the same file in a
+    subprocess. Nothing here asks the user which; a widget for that would be a
+    question about llama.cpp builds, and this node is for people who would
+    rather think about the song.
+    """
+    if not available():
+        from . import cli
+
+        return cli.run(path, messages, seed, n_ctx, device, keep_loaded, progress,
+                       settings, **sampling)
+
     llama = load(path, n_ctx, device, progress)
     try:
         return generate(llama, messages, seed, progress=progress, **sampling)

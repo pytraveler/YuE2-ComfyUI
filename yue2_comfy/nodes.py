@@ -369,8 +369,10 @@ class YuE2WriteSong:
         "YuE2 Generate Song wants, so nobody has to learn the prompt format to get a "
         "song. Any instruction-following GGUF does the writing -- a 4B on an 8 GB card "
         "is enough -- and one is downloaded on first use if the machine has none.\n\n"
-        "Needs llama-cpp-python. The writer model is a separate download from YuE2 "
-        "itself and carries its own licence."
+        "Runs the model through llama-cpp-python when that is installed and through "
+        "the official llama.cpp binaries when it is not, fetching about 32 MB of them "
+        "the first time. The writer model is a separate download from YuE2 itself and "
+        "carries its own licence."
     )
 
     @classmethod
@@ -418,8 +420,6 @@ class YuE2WriteSong:
         if not idea:
             refuse(unique_id, "Write a line saying what the song is about. "
                               "'a sad song about winter, female vocal' is enough.")
-        if not llm.available():
-            refuse(unique_id, llm.install_hint())
         try:
             settings["device"] = devices.validate(settings["device"])
         except (ValueError, RuntimeError) as error:
@@ -439,6 +439,7 @@ class YuE2WriteSong:
                     path, messages, seed + (1 if repair else 0),
                     writer.context_needed(messages, WRITER_MAX_NEW_TOKENS),
                     settings["device"], keep_loaded=True, progress=progress,
+                    settings=settings,
                     greedy=False, max_new_tokens=WRITER_MAX_NEW_TOKENS,
                     temperature=WRITER_TEMPERATURE, top_p=WRITER_TOP_P,
                     top_k=WRITER_TOP_K, repetition_penalty=WRITER_REPETITION_PENALTY,
@@ -463,9 +464,15 @@ class YuE2WriteSong:
                    + "\n\nA bigger model, or a more instruction-following one, usually "
                      "fixes it. So does saying what you want in 'instructions'.")
 
-        announce(unique_id, writer.findings(style, lyrics, lines))
-        log.info("[yue2_comfy] wrote %d sung lines from %s | seed %s",
-                 writer.sung(lyrics), os.path.basename(path), seed)
+        notes = writer.findings(style, lyrics, lines)
+        if keep_model_loaded and not llm.available():
+            notes.append(
+                "'keep_model_loaded' did nothing: without llama-cpp-python the model "
+                "runs in a subprocess and leaves with it. Every run reloads it from "
+                "the page cache, which costs seconds rather than a download.")
+        announce(unique_id, notes)
+        log.info("[yue2_comfy] wrote %d sung lines from %s via %s | seed %s",
+                 writer.sung(lyrics), os.path.basename(path), llm.backend(), seed)
         progress.finish("{} sung lines".format(writer.sung(lyrics)))
         return (style, lyrics)
 

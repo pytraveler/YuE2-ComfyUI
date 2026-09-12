@@ -1,13 +1,14 @@
 # Licenses and provenance
 
-This pack carries four kinds of material under four different terms.
+This pack carries five kinds of material under five different terms.
 
 ## The pack's own code
 
 Apache-2.0. See LICENSE.
 
-`yue2_comfy/gguf_meta.py`, `yue2_comfy/chat_template.py` and
-`yue2_comfy/progress.py` were written for
+`yue2_comfy/gguf_meta.py`, `yue2_comfy/chat_template.py`,
+`yue2_comfy/progress.py`, `yue2_comfy/llamacpp.py`, `yue2_comfy/child.py` and
+`yue2_comfy/cli.py` were written for
 [MiniMax-H3-Prompt-Rewriter-ComfyUI](https://github.com/pytraveler/MiniMax-H3-Prompt-Rewriter-ComfyUI)
 by the same author and carried over. Same licence, same terms.
 
@@ -51,3 +52,14 @@ downloads it and does not redistribute it.
 
 A model you supply yourself carries whatever licence it came with, which this
 pack neither reads nor enforces.
+
+## The llama.cpp binaries
+
+**MIT.** Copyright (c) 2023-2024 The ggml authors.
+
+When `llama-cpp-python` is not installed, `YuE2 Write Song` downloads an
+official release archive of [llama.cpp](https://github.com/ggml-org/llama.cpp)
+and runs the writer model through it. Nothing from that archive is redistributed
+here: the pack fetches it from the upstream release page at run time, pinned to
+one tag, and unpacks it into ComfyUI's user folder. An llama.cpp you built or
+installed yourself is used as it is and nothing is downloaded at all.

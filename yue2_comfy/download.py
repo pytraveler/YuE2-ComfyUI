@@ -125,16 +125,16 @@ def _session(os_trust: bool):
     return _SESSIONS[key]
 
 
-def _get(url: str, headers: dict, stream: bool = False):
-    """One GET, retried against the system trust store if certifi refuses.
+def _request(method: str, url: str, headers: dict, stream: bool = False):
+    """One request, retried against the system trust store if certifi refuses.
 
     The switch is remembered, so a machine behind an inspecting proxy pays the
     failed handshake once rather than once per file.
     """
     requests = _requests()
     try:
-        return _session(_OS_TRUST["on"]).get(
-            url, headers=headers, stream=stream, allow_redirects=True,
+        return _session(_OS_TRUST["on"]).request(
+            method, url, headers=headers, stream=stream, allow_redirects=True,
             timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     except requests.exceptions.SSLError:
         if _OS_TRUST["on"]:
@@ -142,9 +142,32 @@ def _get(url: str, headers: dict, stream: bool = False):
         _OS_TRUST["on"] = True
         log.warning("[yue2_comfy.download] the certificate chain was not one certifi "
                     "knows, retrying against this machine's own trust store")
-        return _session(True).get(
-            url, headers=headers, stream=stream, allow_redirects=True,
+        return _session(True).request(
+            method, url, headers=headers, stream=stream, allow_redirects=True,
             timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+
+
+def _get(url: str, headers: dict, stream: bool = False):
+    return _request("GET", url, headers, stream)
+
+
+def content_length(url: str) -> int:
+    """How big one file is, asked of the host that serves it, or 0 if it will not say.
+
+    A HEAD rather than a releases API call. GitHub's API allows sixty anonymous
+    requests an hour per address and answers 403 with no sizes at all once that
+    is spent, which would leave a progress bar without a denominator exactly
+    when a half-gigabyte download makes one worth having. This follows the
+    redirect to wherever the bytes come from and carries no such limit.
+    """
+    try:
+        response = _request("HEAD", url, _headers(None))
+        if response.status_code >= 400:
+            return 0
+        return int(response.headers.get("Content-Length") or 0)
+    except Exception:
+        log.debug("[yue2_comfy.download] HEAD %s failed", url, exc_info=True)
+        return 0
 
 
 def _ssl_advice(error) -> str:
@@ -378,6 +401,34 @@ def fetch_item(repo_id: str, item: Item, revision: str, token, base: int,
     raise DownloadError(
         "Gave up on '" + item.repo_path + "' after {} attempts: {}".format(
             MAX_ATTEMPTS, last_error))
+
+
+def fetch_url(url: str, dest: str, size: int = 0, base: int = 0,
+              on_progress=None, label: str = "") -> int:
+    """One file from a plain URL, with the same resume and retries as a Hub file.
+
+    The llama.cpp runtime does not come from the Hub, and that is the only
+    difference: it wants the resumed .part file, the backoff, the system trust
+    store and the cancellable chunk loop just as much as a model does. No token
+    is sent -- a Hub credential has no business travelling to another host.
+    """
+    item = Item(label or os.path.basename(dest), dest, int(size or 0))
+    report = on_progress if on_progress is not None else _silent
+    last_error = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return _stream_to_part(item, url, None, base, report)
+        except _Retryable as error:
+            last_error = error
+            log.warning("[yue2_comfy.download] %s failed on attempt %d/%d: %s",
+                        item.repo_path, attempt, MAX_ATTEMPTS, error)
+            if attempt < MAX_ATTEMPTS:
+                time.sleep(_pause(attempt))
+        except OSError as error:
+            raise DownloadError(
+                "Could not write '" + dest + "': " + str(error)) from error
+    raise DownloadError(
+        "Gave up on '" + url + "' after {} attempts: {}".format(MAX_ATTEMPTS, last_error))
 
 
 def fetch(repo_id: str, wanted: dict, title: str, progress=None,

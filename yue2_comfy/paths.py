@@ -30,6 +30,7 @@ GGUF_FOLDERS = (WRITER_SUBDIR, "llm", "text_encoders", "clip", "transformers",
 GGUF_DEPTH = 2
 
 ENV_ROOT = "YUE2_MODELS_ROOT"
+USER_SUBDIR = __name__.split(".")[0]
 
 _EXTENDED_LOCAL = re.compile(r"^\\\\[?.]\\[A-Za-z]:")
 
@@ -98,6 +99,27 @@ def models_root() -> str:
         log.debug("[yue2_comfy.paths] could not register %s", MODELS_SUBDIR, exc_info=True)
     os.makedirs(root, exist_ok=True)
     return root
+
+
+def user_dir() -> str:
+    """ComfyUI/user/yue2_comfy: what the pack keeps that is not a model.
+
+    Not the pack's own folder, and that is the whole point of it being separate.
+    ComfyUI Manager replaces a custom node directory wholesale when it updates
+    one, which would throw away a runtime that took a download to get; the user
+    directory survives that, and it is also what gets backed up when somebody
+    moves an install.
+    """
+    folder_paths = _folder_paths()
+    base = ""
+    if folder_paths is not None:
+        try:
+            base = folder_paths.get_user_directory()
+        except Exception:
+            log.debug("[yue2_comfy.paths] no user directory from ComfyUI", exc_info=True)
+    if not base:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_user")
+    return os.path.join(base, USER_SUBDIR)
 
 
 def checkpoints_root() -> str:

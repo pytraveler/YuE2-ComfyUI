@@ -158,6 +158,24 @@ def resolve(spec: str):
     return torch.device("cpu")
 
 
+def llama_arguments(spec: str) -> list:
+    """The device part of an llama.cpp command line.
+
+    'auto' adds nothing at all, which lets llama.cpp make its own choice -- it
+    is the only one of the three that knows whether this build has a Vulkan
+    device, a CUDA one or neither.
+    """
+    if is_cpu(spec):
+        return ["--device", "none"]
+    ordinal = index(spec)
+    return ["--device", "CUDA{}".format(ordinal)] if ordinal is not None else []
+
+
+def layers_for(spec: str, gpu_layers: int) -> int:
+    """The offload count once the device has had its say."""
+    return 0 if is_cpu(spec) else int(gpu_layers)
+
+
 def shares_comfy_device(spec: str) -> bool:
     """Would this run compete with ComfyUI's own models for VRAM?
 

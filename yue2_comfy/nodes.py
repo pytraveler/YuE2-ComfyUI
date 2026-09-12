@@ -16,8 +16,9 @@ from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
     MAX_SECONDS, OPTIONS_TYPE, QUANTIZATION_CHOICES, SAMPLE_RATE, VAE_CHOICES,
-    WRITER_AUTO, WRITER_MAX_NEW_TOKENS, WRITER_REPETITION_PENALTY,
-    WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P, writer_lines,
+    WRITER_AUTO, WRITER_LENGTH_CHOICES, WRITER_LENGTH_DEFAULT,
+    WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS, WRITER_REPETITION_PENALTY,
+    WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P, auto_seconds, length_lines,
 )
 from .progress import NodeProgress, announce, refuse
 
@@ -60,13 +61,26 @@ LANGUAGE_TOOLTIP = (
     "your idea is written in, which is usually what you meant."
 )
 
-WRITER_SECONDS_TOOLTIP = (
-    "Roughly how long the song should be, which sets how many lines get written. 0 asks "
-    "for about twelve lines, which is a normal short song.\n\n"
-    "It is an aim, not a promise: a small model writes somewhat more or fewer lines than "
-    "asked, and the node says how many it got. Leave 'max_seconds' at 0 in the options "
-    "and the generate node will work the ceiling out from the lyrics it receives."
-)
+def _length_tooltip() -> str:
+    """The length widget's tooltip, written from the table it describes.
+
+    Spelling the numbers out by hand would let the tooltip and the table drift
+    apart the first time one of them was edited, and the tooltip is the only
+    place a person ever sees them.
+    """
+    rows = ["'{}' -- {} sung lines, around {:.0f} seconds of singing".format(
+        name, lines, auto_seconds("x\n" * lines))
+        for name, lines in WRITER_LENGTH_LINES.items()]
+    return (
+        "How long the song should be.\n\n" + "\n".join(rows) + "\n\n"
+        "It is an aim, not a promise: a small model writes somewhat more or fewer "
+        "lines than asked, and the node says how many it got. 'very long' is about "
+        "as much as YuE2 sings in one pass.\n\n"
+        "Leave 'max_seconds' at 0 in the options and the generate node works the "
+        "ceiling out from the lyrics it receives, whichever length you pick here.")
+
+
+WRITER_LENGTH_TOOLTIP = _length_tooltip()
 
 WRITER_SEED_TOOLTIP = (
     "The same seed with the same idea gives the same words. Change it for another take "
@@ -386,8 +400,9 @@ class YuE2WriteSong:
                 "model": (llm.choices(), {"tooltip": WRITER_MODEL_TOOLTIP}),
                 "language": (list(LANGUAGE_CHOICES), {"default": LANGUAGE_CHOICES[0],
                                                       "tooltip": LANGUAGE_TOOLTIP}),
-                "seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": MAX_SECONDS,
-                                      "step": 5.0, "tooltip": WRITER_SECONDS_TOOLTIP}),
+                "length": (list(WRITER_LENGTH_CHOICES),
+                           {"default": WRITER_LENGTH_DEFAULT,
+                            "tooltip": WRITER_LENGTH_TOOLTIP}),
                 "seed": ("INT", {"default": 831001, "min": 0, "max": (1 << 63) - 1,
                                  "control_after_generate": True,
                                  "tooltip": WRITER_SEED_TOOLTIP}),
@@ -407,7 +422,7 @@ class YuE2WriteSong:
     FUNCTION = "write"
     CATEGORY = CATEGORY
 
-    def write(self, idea, model, language, seconds, seed, keep_model_loaded,
+    def write(self, idea, model, language, length, seed, keep_model_loaded,
               instructions="", options=None, unique_id=None):
         from . import download, llm, writer
 
@@ -425,7 +440,7 @@ class YuE2WriteSong:
         except (ValueError, RuntimeError) as error:
             refuse(unique_id, str(error))
 
-        lines = writer_lines(seconds)
+        lines = length_lines(length)
         try:
             path = llm.resolve(model, settings, progress)
         except (FileNotFoundError, download.DownloadError) as error:

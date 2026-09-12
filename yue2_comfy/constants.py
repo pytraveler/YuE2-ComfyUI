@@ -76,7 +76,16 @@ LANGUAGE_CHOICES = (
     "Spanish", "French", "German", "Italian", "Portuguese",
 )
 
-WRITER_LINES = 12
+WRITER_LENGTH_LINES = {
+    "short": 8,
+    "normal": 16,
+    "long": 24,
+    "very long": 32,
+}
+WRITER_LENGTH_CHOICES = tuple(WRITER_LENGTH_LINES)
+WRITER_LENGTH_DEFAULT = "normal"
+
+WRITER_LINES = WRITER_LENGTH_LINES[WRITER_LENGTH_DEFAULT]
 WRITER_MIN_LINES = 2
 WRITER_MAX_LINES = 40
 WRITER_MAX_NEW_TOKENS = 900
@@ -166,19 +175,23 @@ def auto_seconds(lyrics: str) -> float:
     return min(MAX_SECONDS, max(AUTO_MIN_SECONDS, seconds))
 
 
-def writer_lines(seconds: float) -> int:
-    """How many sung lines to ask for, so the song comes out near this length.
+def length_lines(choice) -> int:
+    """How many sung lines a length word asks for.
 
-    The inverse of auto_seconds, and deliberately so: the writer node and the
-    generate node have to agree, or asking for two minutes writes lyrics that
-    the length ceiling then cuts off at one. 0 means "do not aim at a length",
-    which is what someone gets when they leave both widgets alone.
+    This widget used to be a number of seconds, and it was measured to run
+    backwards over most of its travel: 0 meant twelve lines, and every value
+    from one second to a hundred and fifty-five asked for fewer than that, so
+    someone who wanted a longer song and typed 120 got nine lines instead of
+    twelve. Twelve seconds a line is also an invention -- near enough at 88 BPM,
+    wrong by half at 140 -- which made the number on the widget one nobody could
+    check against the song they got. Words cannot run backwards, and they
+    promise nothing the tempo is able to break.
+
+    An unknown word is the default rather than an error: the only way to get one
+    is to hand-edit a workflow, and a song is a better answer than a refusal.
     """
-    seconds = float(seconds or 0)
-    if seconds <= 0:
-        return WRITER_LINES
-    lines = round((seconds - AUTO_BASE_SECONDS) / AUTO_SECONDS_PER_LINE)
-    return int(min(WRITER_MAX_LINES, max(WRITER_MIN_LINES, lines)))
+    return WRITER_LENGTH_LINES.get(str(choice or "").strip().lower(),
+                                   WRITER_LENGTH_LINES[WRITER_LENGTH_DEFAULT])
 
 
 def seconds_to_tokens(seconds: float) -> int:

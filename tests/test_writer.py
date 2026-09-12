@@ -8,7 +8,9 @@ with no STYLE heading, and one that welds its section tags to the line above.
 import pytest
 
 from yue2_comfy import writer
-from yue2_comfy.constants import WRITER_LINES, writer_lines
+from yue2_comfy.constants import (MAX_SECONDS, WRITER_LENGTH_CHOICES,
+                                  WRITER_LENGTH_DEFAULT, WRITER_LINES,
+                                  auto_seconds, length_lines)
 
 GOOD = """STYLE
 Russian, winter folk ballad, warm female voice, acoustic guitar and harp, gentle melody, slow phrasing, 72 BPM
@@ -188,19 +190,43 @@ def test_context_grows_with_the_prompt():
     assert writer.context_needed(long, 900) > writer.context_needed(short, 900) + 500
 
 
-def test_seconds_become_lines_the_generate_node_agrees_with():
-    """auto_seconds and writer_lines are inverses, or asking for two minutes
-    writes lyrics the length ceiling then cuts off at one."""
-    from yue2_comfy.constants import auto_seconds
+def test_a_longer_word_never_asks_for_fewer_lines():
+    """The bug this widget replaced: as a number of seconds it ran backwards.
 
-    for seconds in (60.0, 120.0, 240.0):
-        lyrics = "\n".join(["line"] * writer_lines(seconds))
-        assert abs(auto_seconds(lyrics) - seconds) <= 12.0
+    0 meant twelve lines and 120 meant nine, so reaching for a longer song by
+    typing a bigger number got a shorter one. A scale of words is only worth
+    having if it is monotone, which is what this asserts.
+    """
+    counts = [length_lines(name) for name in WRITER_LENGTH_CHOICES]
+    assert counts == sorted(counts)
+    assert len(set(counts)) == len(counts)
 
 
-def test_zero_seconds_is_the_default_length():
-    assert writer_lines(0) == WRITER_LINES
-    assert writer_lines(-5) == WRITER_LINES
+def test_every_length_can_actually_be_sung_in_one_pass():
+    """YuE2 sings 9000 codec tokens and not one more, which is 360 seconds.
+
+    Asserting against auto_seconds would prove nothing, since it clamps to that
+    same number by construction. The question worth asking is whether the words
+    fit: four sung lines were measured at 34 seconds before the model stopped on
+    its own, so a line runs about eight and a half. auto_seconds hands out twelve
+    because it is a ceiling and not a prediction.
+    """
+    measured = 34.0 / 4.0
+    for name in WRITER_LENGTH_CHOICES:
+        assert length_lines(name) * measured < MAX_SECONDS, name
+        assert auto_seconds("\n".join(["line"] * length_lines(name))) > 0
+
+
+def test_the_default_length_is_what_the_prompt_falls_back_to():
+    assert length_lines(WRITER_LENGTH_DEFAULT) == WRITER_LINES
+
+
+def test_a_hand_edited_workflow_gets_a_song_rather_than_a_refusal():
+    """The widget is a list, so anything else was typed into the JSON by hand."""
+    assert length_lines("epic") == WRITER_LINES
+    assert length_lines("") == WRITER_LINES
+    assert length_lines(None) == WRITER_LINES
+    assert length_lines("Very Long") == length_lines("very long")
 
 
 def test_findings_report_rather_than_rewrite():

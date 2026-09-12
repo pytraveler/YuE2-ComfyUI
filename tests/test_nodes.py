@@ -123,3 +123,18 @@ def test_max_seconds_widget_offers_the_automatic_zero():
     entry = options_widgets()["max_seconds"]
     assert entry[1]["min"] == 0.0
     assert entry[1]["max"] == constants.MAX_SECONDS
+
+
+def test_song_length_is_chosen_by_word_rather_than_by_number():
+    """Seconds were a unit nobody could check against the song they got."""
+    entry = nodes.YuE2WriteSong.INPUT_TYPES()["required"]["length"]
+    assert entry[0] == list(constants.WRITER_LENGTH_CHOICES)
+    assert entry[1]["default"] == constants.WRITER_LENGTH_DEFAULT
+    assert entry[1]["default"] in entry[0]
+
+
+def test_the_length_tooltip_names_every_choice_and_its_size():
+    tooltip = nodes.WRITER_LENGTH_TOOLTIP
+    for name, lines in constants.WRITER_LENGTH_LINES.items():
+        assert "'" + name + "'" in tooltip
+        assert "{} sung lines".format(lines) in tooltip

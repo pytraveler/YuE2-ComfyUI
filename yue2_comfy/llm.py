@@ -88,21 +88,47 @@ def runnable(path: str) -> bool:
     return bool(found) and found.get("type") == RUNNABLE and found.get("chat")
 
 
-def _sweep(root: str) -> list:
+def _sweep(root: str, depth: int = 0) -> list:
+    """Every .gguf at most ``paths.GGUF_DEPTH`` levels under one root.
+
+    Bounded rather than a full walk: ``checkpoints`` is in the search now, and
+    on a working install that is a large tree whose every subdirectory would
+    otherwise be listed each time ComfyUI rebuilds its node list. Two levels
+    covers the two layouts that exist -- a flat folder of quants, and a folder
+    per model -- and nothing is gained by going deeper.
+    """
     found: list = []
-    for directory, _subdirs, names in os.walk(root):
-        for name in sorted(names):
-            if name.lower().endswith(SUFFIX):
-                found.append(os.path.join(directory, name))
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return found
+    with_dirs = []
+    for entry in entries:
+        try:
+            if entry.is_file() and entry.name.lower().endswith(SUFFIX):
+                found.append(entry.path)
+            elif entry.is_dir(follow_symlinks=False):
+                with_dirs.append(entry.path)
+        except OSError:
+            continue
+    if depth + 1 < paths.GGUF_DEPTH:
+        for path in with_dirs:
+            found.extend(_sweep(path, depth + 1))
     return found
+
+
+def _where(path: str) -> str:
+    """A short, human name for the place a file came from."""
+    return paths.hf_repo_for(path) or os.path.basename(os.path.dirname(path))
 
 
 def catalogue(refresh: bool = False) -> list:
     """Every GGUF on this machine that could write a song, as (label, path).
 
     Labelled by file name, because that is what the person sees in their own
-    folder. A name that appears twice keeps its parent directory as well, so
-    two quants of the same model in different folders stay tellable apart.
+    folder. A name that appears twice keeps where it came from as well, so the
+    copy in a model folder and the copy in the Hugging Face cache stay tellable
+    apart -- by repository, not by the commit hash the cache names things with.
     """
     roots = paths.gguf_roots()
     if not refresh and _CATALOGUE["roots"] == roots:
@@ -125,7 +151,7 @@ def catalogue(refresh: bool = False) -> list:
             continue
         name = os.path.basename(path)
         if counts.get(name, 0) > 1:
-            name = os.path.basename(os.path.dirname(path)) + "/" + name
+            name = _where(path) + "/" + name
         entries.append((name, path))
     entries.sort(key=lambda entry: entry[0].lower())
 

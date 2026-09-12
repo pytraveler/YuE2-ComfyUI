@@ -25,7 +25,9 @@ log = logging.getLogger(__name__)
 SCAN_FOLDERS = (MODELS_SUBDIR, "diffusion_models", "vae", "LLM", "checkpoints")
 
 GGUF_SUBDIR = WRITER_SUBDIR
-GGUF_FOLDERS = (WRITER_SUBDIR, "llm", "text_encoders", "clip")
+GGUF_FOLDERS = (WRITER_SUBDIR, "llm", "text_encoders", "clip", "transformers",
+                "diffusion_models", "unet", "unet_gguf", "checkpoints")
+GGUF_DEPTH = 2
 
 ENV_ROOT = "YUE2_MODELS_ROOT"
 
@@ -176,29 +178,43 @@ def comfy_roots() -> list:
 def gguf_roots() -> list:
     """Where a GGUF plausibly lives, which is not everywhere models live.
 
-    The weight search below sweeps Hugging Face cache snapshots as well.
-    Repeating that here would walk every cached repository on the machine
-    looking for a file type almost none of them hold, every time ComfyUI builds
-    its node list -- so the writer's search stays inside the folders people
-    actually keep language models in.
+    Most of these names ComfyUI does not register: a stock install knows
+    twenty-seven folders and ``LLM`` is not one of them, nor ``llm``, ``clip``
+    or ``unet_gguf``. That is why every name is also tried under ``models_dir``
+    directly -- on a real install that fallback, not the registry, is what finds
+    the language models. The registered spellings are still asked for first, so
+    a folder redirected in extra_model_paths.yaml is followed.
+
+    The list is wider than it looks reasonable because people put GGUFs
+    wherever their last node pack told them to. Breadth is cheap here: the
+    search is bounded to GGUF_DEPTH levels, only ``.gguf`` names go any
+    further, and a header is read at most once per file.
+
+    The Hugging Face cache is swept too, which is where ``huggingface-cli
+    download`` leaves a GGUF. It was left out at first on the assumption that
+    reaching it meant walking every cached repository; measured, it does not --
+    ``snapshot_dirs`` already narrows to ``models--*/snapshots/*``, and on a
+    machine with nineteen of them the whole sweep cost four milliseconds.
     """
     roots: list = []
     folder_paths = _folder_paths()
     if folder_paths is None:
-        root = os.path.join(models_root(), GGUF_SUBDIR)
-        _add(roots, root)
-        return roots
-    for name in GGUF_FOLDERS:
-        try:
-            registered = list(folder_paths.get_folder_paths(name))
-        except KeyError:
-            registered = []
-        for path in registered:
-            _add(roots, path)
-        try:
-            _add(roots, os.path.join(folder_paths.models_dir, name))
-        except Exception:
-            log.debug("[yue2_comfy.paths] no models_dir", exc_info=True)
+        _add(roots, os.path.join(models_root(), GGUF_SUBDIR))
+    else:
+        for name in GGUF_FOLDERS:
+            try:
+                registered = list(folder_paths.get_folder_paths(name))
+            except KeyError:
+                registered = []
+            for path in registered:
+                _add(roots, path)
+            try:
+                _add(roots, os.path.join(folder_paths.models_dir, name))
+            except Exception:
+                log.debug("[yue2_comfy.paths] no models_dir", exc_info=True)
+    for cache_root in hf_cache_roots():
+        for snapshot in snapshot_dirs(cache_root):
+            _add(roots, snapshot)
     return roots
 
 
@@ -246,6 +262,27 @@ def repo_label(snapshot: str) -> str:
     repo = os.path.basename(os.path.dirname(os.path.dirname(snapshot)))
     pretty = repo.replace("models--", "", 1).replace("--", "/")
     return "HF cache: " + pretty + "@" + os.path.basename(snapshot)[:8]
+
+
+def hf_repo_for(path: str) -> str:
+    """'Qwen/Qwen3-VL-8B-Instruct-GGUF' for a file inside the HF cache, else "".
+
+    A cache snapshot is named by its commit hash, so using the parent directory
+    to tell two files of the same name apart would offer somebody a choice
+    between their model and 'f982a07559d4a2f6c8744d840bf6fccab30eea96'.
+    """
+    walk = os.path.dirname(os.path.abspath(path))
+    for _ in range(GGUF_DEPTH + 2):
+        parent = os.path.dirname(walk)
+        if os.path.basename(parent) == "snapshots":
+            repo = os.path.basename(os.path.dirname(parent))
+            if repo.startswith("models--"):
+                return repo.replace("models--", "", 1).replace("--", "/")
+            return ""
+        if parent == walk:
+            return ""
+        walk = parent
+    return ""
 
 
 def checkout_sibling_root() -> str:

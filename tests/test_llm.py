@@ -108,6 +108,38 @@ def test_two_files_of_the_same_name_stay_tellable_apart(folder):
     assert sorted(name for name, _path in llm.catalogue()) == ["q4/same.gguf", "q8/same.gguf"]
 
 
+def test_the_search_is_bounded_in_depth(folder):
+    """`checkpoints` is in the search now, and it is a large tree."""
+    deep = folder / "one" / "two" / "three"
+    deep.mkdir(parents=True)
+    write_gguf(deep / "buried.gguf")
+    write_gguf(folder / "one" / "shallow.gguf")
+    assert [name for name, _path in llm.catalogue()] == ["shallow.gguf"]
+
+
+def test_only_the_first_shard_of_a_split_model_is_offered(folder):
+    """Measured: llama.cpp loads the siblings itself, given the first shard.
+
+    The later shards carry no chat template, which is what keeps them out --
+    offering them would hand somebody half a model.
+    """
+    write_gguf(folder / "model-00001-of-00002.gguf")
+    write_gguf(folder / "model-00002-of-00002.gguf", chat=False)
+    assert [name for name, _path in llm.catalogue()] == ["model-00001-of-00002.gguf"]
+
+
+def test_a_cache_copy_is_named_by_repository_not_by_commit(tmp_path, monkeypatch):
+    """A snapshot directory is a commit hash, which is no use as a label."""
+    snapshot = tmp_path / "models--Qwen--Qwen3-VL-8B-Instruct-GGUF" / "snapshots" / "f982a075"
+    snapshot.mkdir(parents=True)
+    write_gguf(snapshot / "same.gguf")
+    (tmp_path / "LLM").mkdir()
+    write_gguf(tmp_path / "LLM" / "same.gguf")
+    monkeypatch.setattr(paths, "gguf_roots", lambda: [str(tmp_path / "LLM"), str(snapshot)])
+    assert sorted(name for name, _path in llm.catalogue()) == [
+        "LLM/same.gguf", "Qwen/Qwen3-VL-8B-Instruct-GGUF/same.gguf"]
+
+
 def test_choices_start_with_auto(folder):
     write_gguf(folder / "writer.gguf")
     assert llm.choices() == ["auto", "writer.gguf"]

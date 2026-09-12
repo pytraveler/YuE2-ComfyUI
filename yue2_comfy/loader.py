@@ -116,6 +116,79 @@ def _config_dict(weights_path: str) -> dict:
     return loaded
 
 
+def _build_lm(state: dict, settings: dict, device):
+    """Fill the backbone from a state dict that is already in released layout.
+
+    Shared by the ordinary path and the repack path, so that a checkpoint
+    rebuilt from Comfy-Org's single file goes through exactly the same
+    constructor and the same strict load as one read straight off disk.
+    """
+    import torch
+
+    from .vendor.yue2.modeling_yue2 import YuE2Config, YuE2ForCausalLM
+
+    config = YuE2Config(**settings)
+    with torch.device("meta"):
+        model = YuE2ForCausalLM(config)
+    model.load_state_dict(state, strict=True, assign=True)
+    model.eval().requires_grad_(False)
+    model.to(device)
+    return model
+
+
+def _build_vae(state: dict, settings: dict, variant: str):
+    """Fill the decoder from a state dict already in released layout."""
+    import torch
+
+    from .vendor.yue2.modeling_vae import YuE2VAE, YuE2VAEConfig
+
+    settings = dict(settings)
+    settings.setdefault("release_variant", variant)
+    config = YuE2VAEConfig(**settings)
+    model = YuE2VAE(config, decoder_only=True)
+    decoder = {key: value for key, value in state.items() if key.startswith("decoder.")}
+    off = sorted(key for key, value in decoder.items() if value.dtype != torch.float32)
+    if off:
+        raise ValueError(
+            "The VAE decoder has to stay FP32; these tensors are not: "
+            + ", ".join(off[:4]) + (" ..." if len(off) > 4 else "")
+        )
+    model.load_state_dict(decoder, strict=True)
+    model.eval().requires_grad_(False)
+    return model, config.release_variant, len(decoder)
+
+
+def load_repack(path: str, device, variant: str = "standard", progress=None):
+    """The backbone, decoder and vocabulary from Comfy-Org's single file.
+
+    One read of the file yields all three. The conversion in repack.py was
+    checked tensor by tensor against the released checkpoints, and what
+    ultimately guards it here is the same strict load the ordinary path uses:
+    a mistake in the rebuild is a loud mismatch, not a quiet wrong model.
+    """
+    from . import paths, repack
+
+    if progress is not None:
+        progress.text("Reading the repacked checkpoint (7.8 GB)")
+    state = _read_state(path)
+
+    if progress is not None:
+        progress.text("Rebuilding the 3B backbone")
+    lm = _build_lm(repack.lm_state(state), _config_dict(path), device)
+    log.info("[yue2_comfy.loader] LM: rebuilt from the repack at %s", path)
+
+    if progress is not None:
+        progress.text("Rebuilding the VAE decoder")
+    vae, release, count = _build_vae(repack.vae_state(state), {}, variant)
+    log.info("[yue2_comfy.loader] VAE (%s): %d tensors from the repack", release, count)
+
+    if progress is not None:
+        progress.text("Reading the embedded vocabulary")
+    cache = os.path.join(paths.models_root(), ".vocabulary")
+    tokenizer = load_tokenizer(repack.merges_beside(path, cache))
+    return lm, vae, tokenizer
+
+
 def load_lm(weights_path: str, device):
     """The 3B mixture-of-transformers backbone, in the dtype the file carries.
 
@@ -209,6 +282,8 @@ def _cache_key(files: Files, device, variant: str):
     property of a run, not of the loaded weights: putting it in the key would
     make toggling it in the options node evict and reload for nothing.
     """
+    if files.repack:
+        return (_stamp(files.repack), str(device), variant)
     return (_stamp(files.lm), _stamp(files.vae), _stamp(files.merges),
             str(device), variant)
 
@@ -273,15 +348,18 @@ def acquire(files: Files, device_spec: str = "auto", variant: str = "standard",
 
         unload()
         _free_comfy_vram(device_spec)
-        if progress is not None:
-            progress.text("Loading the tokenizer")
-        tokenizer = load_tokenizer(files.merges)
-        if progress is not None:
-            progress.text("Loading the 3B backbone (7.3 GB)")
-        lm = load_lm(files.lm, device)
-        if progress is not None:
-            progress.text("Loading the VAE decoder")
-        vae = load_vae(files.vae, variant)
+        if files.repack:
+            lm, vae, tokenizer = load_repack(files.repack, device, variant, progress)
+        else:
+            if progress is not None:
+                progress.text("Loading the tokenizer")
+            tokenizer = load_tokenizer(files.merges)
+            if progress is not None:
+                progress.text("Loading the 3B backbone (7.3 GB)")
+            lm = load_lm(files.lm, device)
+            if progress is not None:
+                progress.text("Loading the VAE decoder")
+            vae = load_vae(files.vae, variant)
         _STATE.update(key=key, lm=lm, vae=vae, tokenizer=tokenizer)
         log.info("[yue2_comfy.loader] resident on %s%s", device, _vram_suffix(device))
         return Models(lm, vae, tokenizer, device)

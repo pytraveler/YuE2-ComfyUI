@@ -33,6 +33,8 @@ from .constants import (
 
 log = logging.getLogger(__name__)
 
+REPACK_NAMES = ("yue2_3b_bf16.safetensors",)
+
 FOLDER_KINDS = {
     LM_DIRNAME.lower(): "lm",
     VAE_DIRNAME.lower(): "standard",
@@ -46,9 +48,17 @@ _identified: dict = {}
 
 
 class Files(NamedTuple):
-    lm: str
-    vae: str
-    merges: str
+    """Where the weights are, in one of the two shapes they come in.
+
+    Either three released files, or the one repacked file Comfy-Org publishes
+    for the native ComfyUI nodes. When repack is set the other three are empty:
+    that file carries the backbone, the decoder and the vocabulary together.
+    """
+
+    lm: str = ""
+    vae: str = ""
+    merges: str = ""
+    repack: str = ""
 
 
 def _stamp(path: str):
@@ -72,7 +82,7 @@ def folder_kind(directory: str) -> str:
 
 
 def identify(path: str) -> str:
-    """"lm", "vae" or "" for one safetensors file, as cheaply as possible."""
+    """"lm", "vae", "repack" or "" for one file, as cheaply as possible."""
     try:
         key = _stamp(path)
     except OSError:
@@ -92,10 +102,14 @@ def identify(path: str) -> str:
 
 
 def _identify_by_header(path: str) -> str:
-    from .loader import tensor_names
+    from .loader import read_header
+    from .repack import is_repack
 
     try:
-        names = set(tensor_names(path))
+        header = read_header(path)
+        if is_repack(header):
+            return "repack"
+        names = {key for key in header if key != "__metadata__"}
     except Exception:
         log.debug("[yue2_comfy.discovery] cannot read %s", path, exc_info=True)
         return ""
@@ -211,11 +225,49 @@ def _looks_like_merges(path: str, entry: str) -> bool:
         return False
 
 
-def locate(variant: str = "standard") -> Files:
-    """The three files, or a refusal that says where it looked.
+def find_repack(roots: list) -> str:
+    """Comfy-Org's single file, by name first and by what is inside it second.
 
-    The variant chooses between the two VAE releases and nothing else; the
-    language model and its vocabulary are the same either way.
+    The published name is checked before any file is opened, because in a
+    models/checkpoints folder full of multi-gigabyte checkpoints the difference
+    between one isfile call and a header read for every one of them is the
+    difference between instant and noticeable.
+    """
+    from .repack import is_repack
+
+    for root in roots:
+        for home in _homes(root):
+            for name in REPACK_NAMES:
+                candidate = os.path.join(home, name)
+                if os.path.isfile(candidate):
+                    return candidate
+    for root in roots:
+        for home in _homes(root):
+            try:
+                entries = sorted(os.listdir(home))
+            except OSError:
+                continue
+            for entry in entries:
+                if not entry.lower().endswith(".safetensors"):
+                    continue
+                candidate = os.path.join(home, entry)
+                if identify(candidate) == "repack":
+                    return candidate
+    return ""
+
+
+def locate(variant: str = "standard") -> Files:
+    """The weights, in whichever shape this machine has them.
+
+    The three released files win when they are all present, because they load
+    without any conversion. Comfy-Org's repack is the fallback and, increasingly,
+    the common case: it is what the ComfyUI model manager installs. Both were
+    checked to produce the same model tensor for tensor.
+
+    The variant chooses between the two VAE releases and nothing else. The
+    repack carries only the standard decoder, so asking it for the legacy one
+    falls through to the released files rather than quietly handing back the
+    wrong decoder.
     """
     roots = paths.search_roots()
     found = _layout_pass(roots, variant)
@@ -224,6 +276,13 @@ def locate(variant: str = "standard") -> Files:
     if all(found.values()):
         log.info("[yue2_comfy.discovery] weights found: %s", os.path.dirname(found["lm"]))
         return Files(lm=found["lm"], vae=found["vae"], merges=found["merges"])
+
+    if variant != "legacy":
+        repacked = find_repack(roots)
+        if repacked:
+            log.info("[yue2_comfy.discovery] using the repacked checkpoint at %s", repacked)
+            return Files(repack=repacked)
+
     raise FileNotFoundError(_missing_message(roots, found, variant))
 
 

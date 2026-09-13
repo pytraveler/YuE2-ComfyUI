@@ -7,7 +7,7 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
-## 0.3.0 - 2026-09-13
+## 0.3.0 - 2026-09-14
 
 ### Added
 

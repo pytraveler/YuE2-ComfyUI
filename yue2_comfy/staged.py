@@ -389,6 +389,13 @@ class YuE2RenderPlan:
         progress = NodeProgress(unique_id)
         settings = _settings(plan, options, unique_id)
         ids, score = _chosen(plan, score_abc)
+        semitones = int(settings.get("transpose") or 0)
+        if semitones:
+            try:
+                score = generate.moved(score, semitones, settings["cot"])
+            except ValueError as error:
+                refuse(unique_id, str(error))
+            ids = None
         stages = generate.alone(generate.Stages.SEMANTIC, generate.Stages.ACOUSTIC,
                                 generate.Stages.DECODE)
 
@@ -402,7 +409,8 @@ class YuE2RenderPlan:
         timing.update(spent)
 
         log.info("[yue2_comfy] %.1f s of audio from a %s score | seed %s",
-                 timing["seconds_of_audio"], "given" if ids is None else "written",
+                 timing["seconds_of_audio"],
+                 "moved" if semitones else "given" if ids is None else "written",
                  plan["seed"])
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
         return ({"waveform": waveform, "sample_rate": SAMPLE_RATE},

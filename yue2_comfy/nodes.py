@@ -11,12 +11,12 @@ from __future__ import annotations
 import logging
 import os
 
-from . import devices
+from . import devices, transpose
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
     LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE, QUANTIZATION_CHOICES,
-    SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, VAE_CHOICES, WRITER_AUTO,
+    SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, TRANSPOSE_LIMIT, VAE_CHOICES, WRITER_AUTO,
     WRITER_LENGTH_CHOICES,
     WRITER_LENGTH_DEFAULT, WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS,
     WRITER_REPETITION_PENALTY, WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P,
@@ -180,6 +180,22 @@ OFFLOAD_TOOLTIP = (
     "wherever they are kept. The ones waiting their turn sit in system RAM, up to 6.7 GiB."
 )
 
+TRANSPOSE_TOOLTIP = (
+    "Moves the song to another key, in semitones: 2 is a whole tone up, -3 a minor "
+    "third down, 0 sings the score as the model wrote it.\n\n"
+    "YuE2 takes no key from the style line -- asked for 'A minor' there, it kept its "
+    "own key every time -- but it follows its score closely, so this moves the score: "
+    "every note, chord and key by the same step, just before it is sung. Measured, the "
+    "song lands exactly that far away and the voice moves with it, the octave "
+    "included: 12 puts the singer a full octave higher. It is a new take of the same "
+    "tune rather than the old recording pitched up, because the moved score is sung "
+    "from its first note.\n\n"
+    "It needs a score, so not with 'cot' off, and a score it cannot read note by note "
+    "is refused rather than guessed at. In 'YuE2 Generate Song' the 'score_abc' output "
+    "is the moved score; in 'YuE2 Render Plan' the plan's score, or the one pasted in, "
+    "is the one moved."
+)
+
 SAMPLING_TOOLTIP = "Sampling for the {} stage. The defaults are the released values."
 
 
@@ -241,6 +257,9 @@ class YuE2Options:
                                                  "tooltip": SAMPLING_TOOLTIP.format("song")}),
                 "offload": (list(OFFLOAD_CHOICES), {"default": d["offload"],
                                                     "tooltip": OFFLOAD_TOOLTIP}),
+                "transpose": ("INT", {"default": d["transpose"], "min": -TRANSPOSE_LIMIT,
+                                      "max": TRANSPOSE_LIMIT, "step": 1,
+                                      "tooltip": TRANSPOSE_TOOLTIP}),
             },
         }
 
@@ -295,6 +314,8 @@ class YuE2GenerateSong:
         progress = NodeProgress(unique_id)
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
+        if int(settings.get("transpose") or 0) and settings["cot"] == "off":
+            refuse(unique_id, transpose.COT_OFF)
 
         with session(settings, unique_id, progress) as models:
             waveform, score, timing = generate.run(

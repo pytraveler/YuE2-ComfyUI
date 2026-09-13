@@ -74,16 +74,46 @@ def test_options_round_trip():
     assert built == constants.DEFAULT_OPTIONS
 
 
-def test_offload_is_the_last_widget_so_saved_options_keep_their_places():
+def test_new_widgets_go_last_so_saved_options_keep_their_places():
     """ComfyUI hands a saved node its widget values by position.
 
     A widget added anywhere but the end would move every value after it into
     the wrong widget, in every workflow saved before it existed. At the end, an
-    older workflow simply has one value fewer, and the new widget takes its
-    default.
+    older workflow simply has a value or two fewer, and the new widgets take
+    their defaults. 'offload' was added first and 'transpose' after it.
     """
     spec = nodes.YuE2Options.INPUT_TYPES()
-    assert list(spec["optional"])[-1] == "offload"
+    assert list(spec["optional"])[-2:] == ["offload", "transpose"]
+
+
+def test_transpose_reaches_an_octave_either_way_and_starts_at_zero():
+    entry = options_widgets()["transpose"]
+    assert entry[0] == "INT"
+    assert entry[1]["default"] == 0
+    assert (entry[1]["min"], entry[1]["max"]) == (-constants.TRANSPOSE_LIMIT,
+                                                  constants.TRANSPOSE_LIMIT)
+
+
+def test_moving_a_song_with_cot_off_is_refused_before_anything_loads(monkeypatch):
+    """With cot 'off' there is no score to move, and learning that should not cost a load."""
+    entered = []
+
+    class Session:
+        def __init__(self, *args):
+            entered.append(args)
+
+        def __enter__(self):
+            return FakeModels()
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(nodes, "session", Session)
+    options = dict(constants.DEFAULT_OPTIONS, cot="off", transpose=2)
+    with pytest.raises(ValueError) as error:
+        nodes.YuE2GenerateSong().generate(style="s", lyrics="l", seed=1, options=options)
+    assert "cot" in str(error.value)
+    assert entered == []
 
 
 def test_seed_range_matches_the_protocol():

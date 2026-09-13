@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from yue2_comfy import constants, generate, staged
+from yue2_comfy import constants, generate, staged, transpose
 
 SCORE = "X:1\nK:C\nCDEF|\n"
 IDS = [88, 58, 49]
@@ -325,3 +325,91 @@ def test_the_rescaled_bands_keep_the_proportions_of_a_whole_run():
 def test_one_stage_alone_fills_the_bar():
     assert generate.alone(generate.Stages.ABC) == (
         (0.0, 100.0, generate.Stages.ABC[2]),)
+
+
+MOVABLE = ('X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=90\n'
+           'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+           'V: Ins clef=treble name="Ins Melody" snm="Inst."\n'
+           'K:C\n% verse\nV: Vocal\n"C"C8E8G8c8|\nV: Ins\nZ|\n')
+"""A score in the dialect the model writes, which the toy SCORE above is not."""
+
+
+def moving_plan(score=MOVABLE):
+    return {"style": "s", "lyrics": "l", "seed": 5, "score": score, "ids": IDS,
+            "settings": dict(constants.DEFAULT_OPTIONS)}
+
+
+def test_the_render_node_moves_the_plans_score_before_singing_it(monkeypatch):
+    """Moved text goes down, not the plan's ids, which describe the score before the move."""
+    calls = stub_singing(monkeypatch)
+    options = dict(constants.DEFAULT_OPTIONS, transpose=2)
+    staged.YuE2RenderPlan().render(moving_plan(), options=options)
+    assert calls[0]["ids"] is None
+    assert calls[0]["abc"] == transpose.move(MOVABLE, 2).text
+    assert "\nK:D\n" in calls[0]["abc"]
+
+
+def test_the_render_node_moves_a_pasted_score_too(monkeypatch):
+    calls = stub_singing(monkeypatch)
+    pasted = MOVABLE.replace('"C"C8E8G8c8|', '"C"E8G8c8e8|')
+    options = dict(constants.DEFAULT_OPTIONS, transpose=-3)
+    staged.YuE2RenderPlan().render(moving_plan(), score_abc=pasted, options=options)
+    assert calls[0]["abc"] == transpose.move(pasted, -3).text
+
+
+def test_a_plan_carries_its_move_to_the_render_node(monkeypatch):
+    """Settings travel with the plan, and 'transpose' is one of them."""
+    calls = stub_singing(monkeypatch)
+    plan = moving_plan()
+    plan["settings"]["transpose"] = 5
+    staged.YuE2RenderPlan().render(plan)
+    assert calls[0]["abc"] == transpose.move(MOVABLE, 5).text
+
+
+def test_a_score_that_cannot_be_moved_is_refused_before_the_model_loads(monkeypatch):
+    entered = []
+
+    @contextlib.contextmanager
+    def session(settings, unique_id, progress):
+        entered.append(True)
+        yield FakeModels()
+
+    monkeypatch.setattr(staged, "session", session)
+    options = dict(constants.DEFAULT_OPTIONS, transpose=2)
+    with pytest.raises(ValueError) as error:
+        staged.YuE2RenderPlan().render(moving_plan(SCORE), options=options)
+    assert "'transpose' to 0" in str(error.value)
+    assert entered == []
+
+
+def test_the_single_node_sings_the_moved_score_and_hands_it_back(monkeypatch):
+    """score_abc is the score the song was sung from, so here it is the moved one."""
+    seen = {}
+
+    def write_score(models, style, lyrics, seed, settings, progress=None,
+                    cancelled=None, stages=None):
+        return MOVABLE, IDS, {"abc": {"seconds": 1.0}}
+
+    def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
+             progress=None, cancelled=None, stages=None):
+        seen.update(ids=abc_ids, abc=abc)
+        return "latents", {"semantic": {}, "acoustic": {}}
+
+    def decode(models, latents, progress=None, cancelled=None, stages=None):
+        return "waveform", {"seconds_of_audio": 12.0}
+
+    monkeypatch.setattr(generate, "write_score", write_score)
+    monkeypatch.setattr(generate, "sing", sing)
+    monkeypatch.setattr(generate, "decode", decode)
+
+    settings = dict(constants.DEFAULT_OPTIONS, transpose=-5)
+    _waveform, score, _timing = generate.run(FakeModels(), "s", "l", 3, settings)
+    moved = transpose.move(MOVABLE, -5).text
+    assert seen == {"ids": None, "abc": moved}
+    assert score == moved
+
+
+def test_moving_with_cot_off_says_there_is_no_score_to_move():
+    with pytest.raises(ValueError) as error:
+        generate.moved("", 2, "off")
+    assert "'cot'" in str(error.value)

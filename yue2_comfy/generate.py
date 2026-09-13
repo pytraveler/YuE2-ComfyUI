@@ -17,7 +17,7 @@ import dataclasses
 import logging
 import time
 
-from . import placement, runtime
+from . import placement, runtime, transpose
 from .constants import (
     AUTO_MIN_SECONDS, CONTEXT, FRAME_SECONDS, SAMPLE_RATE, auto_seconds,
     normalize_seed, seconds_to_tokens, sung_lines,
@@ -259,23 +259,46 @@ def decode(models, latents, progress=None, cancelled=None, stages=None):
     return waveform, timing
 
 
+def moved(score, semitones, cot):
+    """The score moved by *semitones* before it is sung, or a ValueError saying why not.
+
+    Both nodes that sing call this -- 'YuE2 Generate Song' between writing the
+    score and singing it, 'YuE2 Render Plan' before it sings a plan -- so a move
+    is the same move wherever it is asked for, and it is logged the same way.
+    """
+    if cot == "off":
+        raise ValueError(transpose.COT_OFF)
+    result = transpose.move(score, semitones)
+    log.info("[yue2_comfy.generate] the score moved %s, from %s to %s",
+             transpose.describe(semitones), result.before, result.after)
+    return result.text
+
+
 def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
     """One song. Returns (waveform, abc_text, timing).
 
     The waveform is exactly what ComfyUI's AUDIO type wants: float32 [1, 2, S]
     on the CPU. decode_tiled already allocates that shape, so nothing here
-    transposes or copies the song again.
+    reshapes or copies the song again.
 
     The three calls below are the same three the staged nodes make one at a
     time. Keeping this node on the same path is the point: whatever the staged
     ones can do, this one has already done, and there is no second pipeline to
     keep in step.
+
+    With 'transpose' set, the score is moved between the first call and the
+    second and sung as text, and the moved score is the one handed back: the
+    score_abc output is always the score the song was sung from. At 0 nothing
+    changes, down to the ids stage one produced.
     """
     started = time.perf_counter()
     abc_text, abc_ids, timing = write_score(
         models, style, lyrics, seed, settings, progress, cancelled)
+    semitones = int(settings.get("transpose") or 0)
+    if semitones:
+        abc_text, abc_ids = moved(abc_text, semitones, settings["cot"]), None
     latents, spent = sing(models, style, lyrics, seed, settings, abc_ids,
-                          progress=progress, cancelled=cancelled)
+                          abc=abc_text, progress=progress, cancelled=cancelled)
     timing.update(spent)
     waveform, spent = decode(models, latents, progress, cancelled)
     timing.update(spent)

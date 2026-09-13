@@ -7,6 +7,56 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.3.0 - 2026-09-13
+
+### Added
+
+- **`transpose` in YuE2 Options: the same tune in another key.** A number of
+  semitones, from -12 to 12. YuE2 has no key control of its own. A key named in
+  the style line is ignored -- measured on two styles and three seeds, 'A
+  minor', 'in the key of A minor' and 'E major' changed the key the model wrote
+  0 times in 18 -- and editing the `K:` line of a score does not move a song
+  either, because the notes are read relative to it: `K:C` to `K:G` sings every
+  F as F-sharp and leaves the rest where it was.
+
+  What the model does follow is its score. Over twelve songs the pitches of each
+  score's notes and chords lined up with the chroma of its audio at a shift of
+  zero, every one of them. So `transpose` moves the score: every note by the same
+  number of semitones, every chord symbol and key field with it, just before the
+  score is sung. `YuE2 Generate Song` moves the score it has just written and
+  hands the moved one out as `score_abc`; `YuE2 Render Plan` moves the plan's
+  score, or the one pasted into it. The same move through either node gives the
+  same song to the byte.
+
+  Measured on a pop song and a Russian rap, sung with the same seed at -6, -5,
+  -3, +2, +5, +6 and +12: the chroma of all 14 renders sat exactly the requested
+  distance from the original score, and the vocal, separated with MelBandRoFormer
+  and pitch-tracked, moved by the requested amount to within 1.3 semitones in the
+  pop song and 0.1 in the rap -- an octave up included. A moved song is a new
+  take of the same tune rather than the old recording pitched, because the model
+  sings the moved score from its first note. At 0 nothing changes: the check
+  song is the same to the byte as before.
+
+  The moved score is read back with upstream's own parser and compared with the
+  original note by note before anything is sung. A score that parser cannot read
+  is refused rather than guessed at, with the two ways out -- a move of 0 or
+  another seed -- and so is a move with `cot` set to `off`, which writes no score
+  at all; both refusals come before the model loads. None of the 52 scores the
+  model wrote in testing, in eight styles and both `cot` modes that write one,
+  was refused, and every move of each from -12 to 12 checked out.
+
+- **Upstream's ABC reader, vendored.** `yue2_comfy/vendor/yue2_music/abc_tools.py`
+  is `skills/yue2-music/scripts/abc_tools.py` from the YuE repository, unchanged,
+  under the same Apache-2.0 licence as the rest of the vendored code.
+
+### Changed
+
+- **What editing `K:` does is described correctly.** Template 4 and the README
+  said that changing `K:C` to `K:G` gives a different song. That is true, and it
+  suggested the song moves to G, which it does not. Both now say what happens
+  and point at `transpose`. Template 3 lists `ode_steps`, `offload` and
+  `transpose` with the rest of the options.
+
 ## 0.2.0 - 2026-09-13
 
 ### Added

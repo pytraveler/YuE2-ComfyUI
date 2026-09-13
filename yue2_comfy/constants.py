@@ -135,7 +135,14 @@ DEFAULT_OPTIONS = {
     "top_k": SEMANTIC_TOP_K,
     "repetition_penalty": SEMANTIC_REPETITION_PENALTY,
     "offload": "auto",
+    "transpose": 0,
 }
+
+TRANSPOSE_LIMIT = 12
+"""How far 'transpose' reaches either way, in semitones: one octave.
+
+Any key is at most six semitones from any other, so the rest of the range only
+chooses which octave the tune moves into."""
 
 DEFAULT_IDEA = "a quiet song about coming home in winter, female voice"
 DEFAULT_STYLE = "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM"

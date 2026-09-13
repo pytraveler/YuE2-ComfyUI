@@ -146,7 +146,7 @@ stages, and releases the VRAM again.
 | Name | Contents |
 |---|---|
 | `audio` | 48 kHz stereo, ready for `SaveAudio` or anything else that takes `AUDIO` |
-| `score_abc` | The ABC score the model wrote before it played anything |
+| `score_abc` | The ABC score the model wrote before it played anything -- moved to the new key when `transpose` is set, since that is the score it sang |
 
 **Inputs**
 
@@ -330,6 +330,20 @@ and the node ran for 58.5 s on an RTX 5090.*
   is identical in every mode, to the last byte. Measured, `on` took a 40-second
   song from 7.55 GiB to 4.94 and a four-minute one from 14.96 GiB to 11.54, for
   a second or two a run.
+- `transpose` -- moves the song to another key, in semitones: `2` is a whole
+  tone up, `-3` a minor third down. YuE2 has no key control of its own. A key
+  named in the style line is ignored ('A minor', 'in the key of A minor' and
+  'E major' changed the key the model wrote 0 times in 18), and editing `K:`
+  does not move a song either, because every note is read relative to it. What
+  the model follows is the score, so this moves the score -- every note, chord
+  and key by the same step -- just before it is sung, and `score_abc` gives the
+  moved one. Measured at -6, -5, -3, +2, +5, +6 and +12 on a pop song and a rap,
+  the chroma of all 14 renders landed where asked, and the separated vocal
+  moved by the requested amount to within 1.3 semitones in the pop song and 0.1
+  in the rap, a whole octave included. It is a new take of the same tune rather
+  than the old recording pitched. It needs a score, so not with `cot` set to
+  `off`, and a score the parser cannot read is refused; none of the 52 the
+  model wrote in testing was.
 
 ### Staged nodes
 
@@ -369,7 +383,10 @@ singing that gets longer and the score that stays much the same.
 Two things were checked rather than assumed. Rendering an untouched plan
 produced audio **byte for byte identical** to `YuE2 Generate Song` on the same
 seed. Changing one line of the score -- `K:C` to `K:G` -- produced a different
-song, and a different length with it.
+song, and a different length with it. Not the same tune in G, though: the
+dialect reads every note relative to the key, so each F is sung as F-sharp and
+nothing else moves. To move a whole song, use `transpose` in
+[YuE2 Options](#yue2-options).
 
 ## Song length
 

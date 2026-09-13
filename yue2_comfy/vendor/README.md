@@ -33,10 +33,26 @@ and every diff stays about what upstream changed.
 `tokenization_yue2.py` imports `storage` inside `from_pretrained`, which this
 pack never calls.
 
+## yue2_music/
+
+`yue2_music/abc_tools.py` is a verbatim copy of
+`skills/yue2-music/scripts/abc_tools.py` from the same repository and version,
+which ships the skill with its own copy of the same Apache-2.0 licence. It is
+upstream's reader for the two-voice ABC dialect the model writes, and
+`yue2_comfy/transpose.py` leans on it twice: to read a score before moving it,
+and to read the moved score back and compare it with the original note by note.
+Taking upstream's reader rather than writing a second one leaves the dialect's
+conventions -- an accidental carrying to every octave of its letter until the
+barline, among them -- for upstream to get right. Its command line entry point
+is never called.
+
+`yue2_music/__init__.py` is this pack's own and only makes the folder a package.
+
 ## The ASCII rule does not apply here
 
 This project's own source is ASCII only. `modeling_yue2.py` contains 833
 characters above U+007E -- section banners drawn with U+2500 and U+2550, a few
-dashes and arrows, all in comments. Scrubbing them would mean maintaining a
-fork and making every future upstream diff noisy, for no runtime benefit. The
-ASCII check skips this directory.
+dashes and arrows, all in comments -- and `abc_tools.py` one, an en dash in an
+error message. Scrubbing them would mean maintaining a fork and making every
+future upstream diff noisy, for no runtime benefit. The ASCII check skips this
+directory.

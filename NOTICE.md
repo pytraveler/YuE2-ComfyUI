@@ -12,13 +12,18 @@ Apache-2.0. See LICENSE.
 [MiniMax-H3-Prompt-Rewriter-ComfyUI](https://github.com/pytraveler/MiniMax-H3-Prompt-Rewriter-ComfyUI)
 by the same author and carried over. Same licence, same terms.
 
-## Vendored YuE2 inference code
+## Vendored YuE2 code
 
 `yue2_comfy/vendor/yue2/` is a verbatim copy of part of
 [multimodal-art-projection/YuE](https://github.com/multimodal-art-projection/YuE),
 Apache-2.0, from `src/yue2/`. It is not modified. See
 `yue2_comfy/vendor/README.md` for the file list and the reason each omitted file
 was left out.
+
+`yue2_comfy/vendor/yue2_music/abc_tools.py` is a verbatim copy of
+`skills/yue2-music/scripts/abc_tools.py` from the same repository, which ships
+that skill with its own copy of the same Apache-2.0 licence. It reads the ABC
+scores that `transpose` moves, and it is not modified either.
 
 The VAE implementation inside that code is itself derived from
 stable-audio-tools (Copyright (c) 2023 Stability AI, MIT) and from BigVGAN's

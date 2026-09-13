@@ -102,10 +102,12 @@ jobs:
                         yue2_comfy/download.py yue2_comfy/llm.py \
                         yue2_comfy/staged.py yue2_comfy/manifest.py \
                         yue2_comfy/routes.py yue2_comfy/tokens.py \
-                        yue2_comfy/placement.py \
+                        yue2_comfy/placement.py yue2_comfy/transpose.py \
                         web/js/yue2_editor.js web/js/yue2_sheet.js \
                         web/js/yue2_controls.js \
-                        yue2_comfy/vendor/yue2/protocol.py; do
+                        yue2_comfy/vendor/yue2/protocol.py \
+                        yue2_comfy/vendor/yue2_music/abc_tools.py \
+                        tests/data/model_scores.json; do
             echo "$listed" | grep -qxF "$PREFIX/$needed" || {
               echo "::error::$needed is missing from $ARCHIVE"
               exit 1

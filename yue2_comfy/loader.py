@@ -24,7 +24,7 @@ import struct
 import threading
 from typing import NamedTuple
 
-from . import devices
+from . import devices, placement
 from .constants import install_command
 from .discovery import Files, locate  # noqa: F401
 
@@ -37,12 +37,18 @@ _STATE = {"key": None, "lm": None, "vae": None, "tokenizer": None}
 
 
 class Models(NamedTuple):
-    """What a run needs. The VAE stays on the CPU until the fourth stage."""
+    """What a run needs. The VAE stays on the CPU until the fourth stage.
+
+    ``offload`` is the run's own choice of how much of the backbone the card
+    holds at once -- see placement.py. It is not part of what was loaded, so one
+    resident model serves runs that choose differently.
+    """
 
     lm: object
     vae: object
     tokenizer: object
     device: object
+    offload: str = "auto"
 
 
 def read_header(path: str) -> dict:
@@ -132,8 +138,7 @@ def _build_lm(state: dict, settings: dict, device):
         model = YuE2ForCausalLM(config)
     model.load_state_dict(state, strict=True, assign=True)
     model.eval().requires_grad_(False)
-    model.to(device)
-    return model
+    return placement.load(model, device)
 
 
 def _build_vae(state: dict, settings: dict, variant: str):
@@ -216,6 +221,9 @@ def load_lm(weights_path: str, device):
     allocated, then filled with assign=True, which hands the mapped tensors
     straight to the parameters. The weights are already BF16 in the file, so
     nothing is cast and nothing is chosen for the user.
+
+    Only the modules both stages share go to the card here. Each half follows
+    when a stage asks for it, which is what placement.py is for.
     """
     import torch
 
@@ -228,8 +236,7 @@ def load_lm(weights_path: str, device):
     model.load_state_dict(state, strict=True, assign=True)
     log.info("[yue2_comfy.loader] LM: %d tensors from %s", len(state), weights_path)
     model.eval().requires_grad_(False)
-    model.to(device)
-    return model
+    return placement.load(model, device)
 
 
 def load_vae(weights_path: str, variant: str = "standard"):
@@ -358,13 +365,19 @@ def is_loaded() -> bool:
 
 
 def acquire(files: Files, device_spec: str = "auto", variant: str = "standard",
-            progress=None) -> Models:
-    """The three objects a run needs, from the cache when nothing has changed."""
+            progress=None, offload: str = "auto") -> Models:
+    """The three objects a run needs, from the cache when nothing has changed.
+
+    ``offload`` travels with the returned Models rather than into the cache
+    key: where the halves sit is decided stage by stage, so choosing
+    differently moves weights instead of reloading them.
+    """
     device = devices.resolve(device_spec)
     key = _cache_key(files, device, variant)
     with _LOCK:
         if _STATE["key"] == key and _STATE["lm"] is not None:
-            return Models(_STATE["lm"], _STATE["vae"], _STATE["tokenizer"], device)
+            return Models(_STATE["lm"], _STATE["vae"], _STATE["tokenizer"], device,
+                          offload)
 
         unload()
         _free_comfy_vram(device_spec)
@@ -382,7 +395,7 @@ def acquire(files: Files, device_spec: str = "auto", variant: str = "standard",
             vae = load_vae(files.vae, variant)
         _STATE.update(key=key, lm=lm, vae=vae, tokenizer=tokenizer)
         log.info("[yue2_comfy.loader] resident on %s%s", device, _vram_suffix(device))
-        return Models(lm, vae, tokenizer, device)
+        return Models(lm, vae, tokenizer, device, offload)
 
 
 def _vram_suffix(device) -> str:

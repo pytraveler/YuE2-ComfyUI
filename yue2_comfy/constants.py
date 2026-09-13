@@ -79,6 +79,7 @@ VAE_CHOICES = ("standard", "legacy")
 ATTENTION_CHOICES = ("sdpa", "cudnn")
 DOWNLOAD_CHOICES = ("auto", "comfy-org", "original", "off")
 QUANTIZATION_CHOICES = ("bf16", "int8")
+OFFLOAD_CHOICES = ("auto", "on", "off")
 
 WRITER_AUTO = "auto"
 LANGUAGE_CHOICES = (
@@ -133,6 +134,7 @@ DEFAULT_OPTIONS = {
     "top_p": SEMANTIC_TOP_P,
     "top_k": SEMANTIC_TOP_K,
     "repetition_penalty": SEMANTIC_REPETITION_PENALTY,
+    "offload": "auto",
 }
 
 DEFAULT_IDEA = "a quiet song about coming home in winter, female voice"

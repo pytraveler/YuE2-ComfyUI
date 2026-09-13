@@ -6,6 +6,9 @@
 This is what YuE2Pipeline does, minus the parts that only make sense in a
 command line tool: no process-wide torch flags (runtime.py scopes those), no
 numpy round trip on the way out, and no VRAM-dependent tile size.
+
+Where the weights sit does depend on the VRAM, stage by stage -- see
+placement.py -- and that never changes a byte of what comes out.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import dataclasses
 import logging
 import time
 
-from . import runtime
+from . import placement, runtime
 from .constants import (
     AUTO_MIN_SECONDS, CONTEXT, FRAME_SECONDS, SAMPLE_RATE, auto_seconds,
     normalize_seed, seconds_to_tokens, sung_lines,
@@ -23,8 +26,6 @@ from .constants import (
 log = logging.getLogger(__name__)
 
 FALLBACK_CORE_FRAMES = 512
-
-DECODE_RESERVE_BYTES = 512 * 1024 ** 2 + 2 * 1024 ** 3
 
 
 class Stages:
@@ -126,10 +127,16 @@ def write_score(models, style, lyrics, seed, settings, progress=None,
                          top_k=int(settings["abc_top_k"]))
     with runtime.deterministic_math(), \
             runtime.pinned_attention(settings["attention_backend"]):
-        ids, spent, truncated = generate_tokens(
-            models.lm, token_prefixes(request, models.tokenizer), sampling,
-            request.seed, "abc", cancelled=cancelled,
-            on_token=_counter(progress, band, sampling.max_tokens))
+        prefix = token_prefixes(request, models.tokenizer)
+
+        def score(mode):
+            placement.arrange(models, placement.AR, placement.ar_stage_bytes(
+                len(prefix), sampling.max_tokens), "the score", mode)
+            return generate_tokens(
+                models.lm, prefix, sampling, request.seed, "abc", cancelled=cancelled,
+                on_token=_counter(progress, band, sampling.max_tokens))
+
+        ids, spent, truncated = placement.guarded(models, "the score", score)
     if truncated:
         log.warning("[yue2_comfy.generate] the score hit its token budget")
     return models.tokenizer.decode(ids), list(ids), {"abc": spent}
@@ -205,11 +212,20 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
             negative = negative_prefix(
                 request, models.tokenizer, None if request.cot == "off" else ids)
 
-        semantic_ids, timing["semantic"], truncated = generate_tokens(
-            models.lm, prefix, sampling, request.seed, "semantic",
-            negative=negative, cfg_scale=request.guidance,
-            legacy_off=request.cot == "off", cancelled=cancelled,
-            on_token=_counter(progress, bands[0], sampling.max_tokens, seconds=True))
+        width = max(len(prefix), len(negative or ()))
+        branches = 1 if request.guidance == 1 else 2
+
+        def perform(mode):
+            placement.arrange(models, placement.AR, placement.ar_stage_bytes(
+                width, sampling.max_tokens, branches), "the performance", mode)
+            return generate_tokens(
+                models.lm, prefix, sampling, request.seed, "semantic",
+                negative=negative, cfg_scale=request.guidance,
+                legacy_off=request.cot == "off", cancelled=cancelled,
+                on_token=_counter(progress, bands[0], sampling.max_tokens, seconds=True))
+
+        semantic_ids, timing["semantic"], truncated = placement.guarded(
+            models, "the performance", perform)
         if truncated:
             log.info("[yue2_comfy.generate] the song ran to the full length budget")
 
@@ -220,11 +236,15 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
                 "A different seed, or a style with more to go on, usually fixes it."
             )
 
+        def synthesize(mode):
+            with placement.acoustic(models, mode):
+                return nar.synthesize(
+                    models.lm, prefix, codec, request.seed, steps=int(settings["ode_steps"]),
+                    context=CONTEXT, attention="sdpa", cancelled=cancelled,
+                    on_progress=lambda done, total: _band(progress, bands[1], done, total))
+
         start = time.perf_counter()
-        latents = nar.synthesize(
-            models.lm, prefix, codec, request.seed, steps=int(settings["ode_steps"]),
-            context=CONTEXT, attention="sdpa", cancelled=cancelled,
-            on_progress=lambda done, total: _band(progress, bands[1], done, total))
+        latents = placement.guarded(models, "the audio", synthesize)
         timing["acoustic"] = {"seconds": time.perf_counter() - start,
                               "frames": int(latents.shape[0])}
     return latents, timing
@@ -234,8 +254,7 @@ def decode(models, latents, progress=None, cancelled=None, stages=None):
     """Stage four: latents to a waveform, in the layout ComfyUI's AUDIO wants."""
     band = (stages or (Stages.DECODE,))[0]
     timing = {}
-    waveform = _decode(models.vae, models.lm, latents, models.device,
-                       progress, cancelled, timing, band)
+    waveform = _decode(models, latents, progress, cancelled, timing, band)
     timing["seconds_of_audio"] = waveform.shape[-1] / SAMPLE_RATE
     return waveform, timing
 
@@ -279,13 +298,20 @@ def _counter(progress, stage, total, seconds: bool = False):
     return on_token
 
 
-def _decode(vae, lm, latents, device, progress, cancelled, timing, band=None):
-    """Latents to a waveform, with the VAE on the card only for as long as it takes."""
+def _decode(models, latents, progress, cancelled, timing, band=None):
+    """Latents to a waveform, with the VAE on the card only for as long as it takes.
+
+    The backbone plays no part in this stage. Whatever of it would crowd the
+    decoder is moved off first -- placement.py decides how much -- and left off:
+    the next stage that needs a half brings it back, and a run that unloads the
+    model straight afterwards never pays for the trip back at all.
+    """
     import torch
 
+    vae, device = models.vae, models.device
     z = latents.T.unsqueeze(0).contiguous()
     frames = int(z.shape[-1])
-    moved_lm = _make_room(lm, device)
+    moved = placement.arrange(models, None, placement.DECODE_BYTES, "the decode")
     start = time.perf_counter()
     sizes = [int(vae.config.decode_core_frames)]
     if FALLBACK_CORE_FRAMES not in sizes:
@@ -310,13 +336,11 @@ def _decode(vae, lm, latents, device, progress, cancelled, timing, band=None):
         vae.to("cpu")
         if device.type == "cuda":
             torch.cuda.empty_cache()
-        if moved_lm:
-            lm.to(device)
 
     if not torch.isfinite(audio).all():
         raise ValueError("The decoder produced non-finite audio")
     timing["decode"] = {"seconds": time.perf_counter() - start, "frames": frames,
-                        "core_frames": core, "offloaded_lm": moved_lm}
+                        "core_frames": core, "moved": moved}
     return audio.clone().float().clamp_(-1, 1)
 
 
@@ -337,28 +361,3 @@ def _decode_tiled(vae, z, core_frames, progress, cancelled, band=None):
     return vae.decode_tiled(z, core_frames=core_frames,
                             halo_frames=int(vae.config.decode_halo_frames),
                             output_device="cpu", on_progress=report)
-
-
-def _make_room(lm, device) -> bool:
-    """Push the backbone to the CPU only if the decoder would not otherwise fit.
-
-    Upstream does this unconditionally. On a card with room to spare that is
-    6.8 GB copied out and back for nothing, and the copy costs more than the
-    decode it was meant to make room for.
-    """
-    import torch
-
-    if getattr(device, "type", None) != "cuda":
-        return False
-    try:
-        free, _total = torch.cuda.mem_get_info(device)
-    except Exception:
-        log.debug("[yue2_comfy.generate] cannot read free VRAM", exc_info=True)
-        return False
-    if free >= DECODE_RESERVE_BYTES:
-        return False
-    log.info("[yue2_comfy.generate] %.1f GiB free, moving the backbone to the CPU "
-             "for the decode", free / 1024 ** 3)
-    lm.to("cpu")
-    torch.cuda.empty_cache()
-    return True

@@ -74,6 +74,18 @@ def test_options_round_trip():
     assert built == constants.DEFAULT_OPTIONS
 
 
+def test_offload_is_the_last_widget_so_saved_options_keep_their_places():
+    """ComfyUI hands a saved node its widget values by position.
+
+    A widget added anywhere but the end would move every value after it into
+    the wrong widget, in every workflow saved before it existed. At the end, an
+    older workflow simply has one value fewer, and the new widget takes its
+    default.
+    """
+    spec = nodes.YuE2Options.INPUT_TYPES()
+    assert list(spec["optional"])[-1] == "offload"
+
+
 def test_seed_range_matches_the_protocol():
     """SongRequest demands 0 <= seed < 2**63, so the widget must not offer more."""
     entry = nodes.YuE2GenerateSong.INPUT_TYPES()["required"]["seed"]

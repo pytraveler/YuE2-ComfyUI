@@ -130,7 +130,8 @@ def session(settings, unique_id, progress):
         refuse(unique_id, str(error))
 
     try:
-        yield loader.acquire(files, settings["device"], settings["vae"], progress)
+        yield loader.acquire(files, settings["device"], settings["vae"], progress,
+                             settings.get("offload", "auto"))
     except InterruptedError:
         translate_interrupt()
         raise

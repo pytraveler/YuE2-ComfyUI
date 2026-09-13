@@ -15,8 +15,9 @@ from . import devices
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
-    LYRICS_TOOLTIP, MAX_SECONDS, OPTIONS_TYPE, QUANTIZATION_CHOICES, SAMPLE_RATE,
-    SEED_TOOLTIP, STYLE_TOOLTIP, VAE_CHOICES, WRITER_AUTO, WRITER_LENGTH_CHOICES,
+    LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE, QUANTIZATION_CHOICES,
+    SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, VAE_CHOICES, WRITER_AUTO,
+    WRITER_LENGTH_CHOICES,
     WRITER_LENGTH_DEFAULT, WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS,
     WRITER_REPETITION_PENALTY, WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P,
     auto_seconds, length_lines,
@@ -120,11 +121,12 @@ VAE_TOOLTIP = (
 )
 
 KEEP_TOOLTIP = (
-    "Keep the 6.8 GB model on the card after the run.\n\n"
+    "Keep the model loaded after the run.\n\n"
     "On saves about five seconds per run while you iterate on lyrics or seeds, and "
-    "holds the VRAM until ComfyUI restarts or another YuE2 run needs a different "
-    "model. Off frees it immediately, which is what you want when video or image "
-    "nodes run next in the same graph."
+    "holds the memory until ComfyUI restarts or another YuE2 run needs a different "
+    "model: on the card, or partly in system RAM when 'offload' has moved a half off. "
+    "Off frees it immediately, which is what you want when video or image nodes run "
+    "next in the same graph."
 )
 
 ATTENTION_TOOLTIP = (
@@ -163,6 +165,19 @@ ODE_TOOLTIP = (
     "Solver steps for the acoustic stage. 32 is what the model was released with.\n\n"
     "Fewer is faster and thinner; more costs time and changes the result rather than "
     "clearly improving it."
+)
+
+OFFLOAD_TOOLTIP = (
+    "Whether the whole model stays on the card, or only the half the running stage "
+    "uses.\n\n"
+    "YuE2 has one set of weights that writes the score and the performance, and another "
+    "that turns them into audio; no stage needs both. 'on' keeps only the half the stage "
+    "needs, and neither during the decode: measured, a 40-second song peaked at 4.9 GiB "
+    "instead of 7.6, and a four-minute one at 11.5 GiB instead of 15, for a second or "
+    "two a run. 'off' keeps everything on the card. 'auto' moves a half off only "
+    "when a stage would not fit beside it.\n\n"
+    "The song is the same to the last byte in every mode: the weights are the same "
+    "wherever they are kept. The ones waiting their turn sit in system RAM, up to 6.7 GiB."
 )
 
 SAMPLING_TOOLTIP = "Sampling for the {} stage. The defaults are the released values."
@@ -224,6 +239,8 @@ class YuE2Options:
                 "repetition_penalty": ("FLOAT", {"default": d["repetition_penalty"],
                                                  "min": 0.1, "max": 5.0, "step": 0.005,
                                                  "tooltip": SAMPLING_TOOLTIP.format("song")}),
+                "offload": (list(OFFLOAD_CHOICES), {"default": d["offload"],
+                                                    "tooltip": OFFLOAD_TOOLTIP}),
             },
         }
 

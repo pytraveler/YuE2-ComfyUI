@@ -4,7 +4,7 @@ ComfyUI nodes for [YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B). A style
 description and lyrics go in; a readable score and a complete 48 kHz stereo
 song come out, generated entirely on your own machine.
 
-[Russian version](README_RU.md)
+[Russian version](README_RU.md) | [Changelog](CHANGELOG.md)
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-blue"></a>
@@ -13,6 +13,12 @@ song come out, generated entirely on your own machine.
   <a href="https://huggingface.co/m-a-p/YuE2-Vae"><img alt="YuE2-Vae" src="https://img.shields.io/badge/%F0%9F%A4%97-YuE2--Vae-yellow"></a>
   <a href="NOTICE.md"><img alt="Weights: CC BY-NC 4.0" src="https://img.shields.io/badge/Weights-CC%20BY--NC%204.0-lightgrey"></a>
 </p>
+
+![YuE2 Generate Song in ComfyUI: on the left a text node with Russian lyrics tagged [Verse], [Chorus] and [Outro], wired into the lyrics input; in the middle the node with its seed, the Edit song... button and the song summary -- Russian, 76 BPM, male rap vocal and breathy female voice, then rap, heavy bass, hip hop beat, rhythmic punchy melody, staccato flow, and lyrics from manual song style -- above the caption 75 seconds of audio; on the right Save Audio with the finished 1:15 track](docs/node_song_gen.png)
+
+*The style is set on the node and the lyrics arrive through a wire from a plain
+text node; the summary shows both. 75 seconds of song, and the node ran for
+40.2 s on an RTX 5090.*
 
 ```text
   style:  "warm piano pop, expressive female voice, 88 BPM"
@@ -78,7 +84,7 @@ See [YuE2 Write Song](#yue2-write-song).
 | Resource | Requirement |
 |---|---|
 | GPU | An NVIDIA GPU with BF16 support. CPU works and is roughly an hour per song |
-| VRAM | **~7.1 GiB** for a short song, about **11 GiB** for three and a half minutes |
+| VRAM | **~5 GiB** for a 40-second song and **~11.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card. A card with room to spare keeps the whole model on it and uses more: 7.6 and 15 GiB. See `offload` in [YuE2 Options](#yue2-options) |
 | Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed |
 | Packages | `tiktoken`, which ComfyUI does not ship. It is the only thing this pack adds; `requests`, which the downloader uses, is already in every ComfyUI install. `llama-cpp-python` is optional -- `YuE2 Write Song` uses it when it is there and official llama.cpp binaries when it is not |
 
@@ -156,6 +162,45 @@ stages, and releases the VRAM again.
 
 Progress is reported per stage on the node, and Cancel stops a run in under a
 second -- between tokens during generation, between tiles during decoding.
+
+#### The song editor
+
+`YuE2 Generate Song`, `YuE2 Plan` and `YuE2 Plan Batch` carry an
+`Edit song...` button and a summary of the song instead of two bare text boxes.
+The button opens a window over the canvas, the style on top and the lyrics
+under it, and nothing is written to the node until Apply.
+
+![The song editor over the canvas. Under STYLE: language Russian; tempo 60 BPM on a slider; two voices, male rap vocal and expressive female voice, with the hint about voices under them; five sound parts, rap, heavy bass, hip hop beat, rhythmic punchy melody and staccato flow, each with up, down and remove buttons; and the style line the model will read. Under LYRICS: 399 tokens in the lyrics, the + Section and Edit as text buttons, a blue [Verse] and an orange [Chorus] of four lines each, thin marks under the letters where the tokenizer cuts, and a token count at the end of every line. Cancel and Apply at the bottom](docs/song_editor.png)
+
+*A Russian rap for two voices. The style line under the parts is the string the
+model reads, and the marks under the letters are where the YuE2 tokenizer cuts
+the words.*
+
+- **Style** is built from parts: a language, a tempo or none at all, the
+  voices, and any other part in a list to add to, edit and reorder. The line
+  underneath can be edited directly. A line the editor has not touched is not
+  rewritten, because a different string is a different song even when it reads
+  the same.
+- **Voices.** Naming two asks for both; it does not decide who sings where.
+  Tags such as `[Chorus - male rap vocal]` and roles written into the style
+  were both tried on twelve songs, and neither put a voice where it was asked
+  for, so there is no per-section voice control.
+- **Lyrics** come section by section. A click on a section tag steps it
+  through Verse, Pre-Chorus, Chorus, Bridge, Outro and Intro; a right-click
+  lists all ten. Lines and sections are added, duplicated, moved and deleted
+  from the buttons on each row, a double-click types into a line, and
+  `Edit as text` shows the plain text the model reads.
+- **A click on a letter flips its case**, and the marks show where the real
+  tokenizer cuts, with a token count on every line. A capital inside a word
+  splits it where you clicked; it is not a stress mark, and like any change to
+  the words it gives a different song on the same seed. See
+  [Stress, and what capital letters really do](#stress-and-what-capital-letters-really-do).
+- A style or lyrics that arrive through a wire, from `YuE2 Write Song` for
+  instance, are shown by the name of the node they come from and are edited
+  there.
+
+The marks need the YuE2 weights on disk, and ComfyUI needs a restart after the
+pack is installed or updated before they appear. The window is in English only.
 
 ### YuE2 Write Song
 
@@ -252,6 +297,11 @@ Everything the main node deliberately does not ask about. An unconnected socket
 is never a special case: the defaults here are the same values the node uses
 when this node is not on the graph at all.
 
+![YuE2 Options wired into YuE2 Generate Song. Options, top to bottom: cot full, max_seconds 0, keep_model_loaded false, cfg_scale 0.00, vae standard, device auto, attention_backend sdpa, download auto, quantization bf16, ode_steps 32, abc_temperature 0.70, abc_top_p 0.90, abc_top_k 30, temperature 1.00, top_p 0.95, top_k 100, repetition_penalty 1.200, offload on. Generate Song after a 58.523 s run: the options, style and lyrics inputs, the seed, the Edit song... button and the summary -- Russian, 60 BPM, male rap vocal and expressive female voice; rap, heavy bass, hip hop beat, rhythmic punchy melody, staccato flow; the sections as [Verse] 4, [Chorus] 4 and on; the lyrics -- above the caption 99 seconds of audio](docs/node_options.png)
+
+*Every setting at its default except `offload`, set to `on`. 99 seconds of song,
+and the node ran for 58.5 s on an RTX 5090.*
+
 - `cot` -- `full` plans melody and harmony, `melody` plans the tune only, `off`
   skips the score and generates directly. `full` is the default and the one the
   benchmark numbers come from.
@@ -268,7 +318,18 @@ when this node is not on the graph at all.
 - `download`, `quantization` -- where the weights come from when they are not
   on the machine yet, and which build to fetch. See
   [Where the weights go](#where-the-weights-go).
+- `ode_steps` -- solver steps for the acoustic stage. `32` is what the model
+  was released with. Fewer is faster and thinner; more costs time and changes
+  the result rather than clearly improving it.
 - Sampling for both stages: temperature, top-p, top-k, repetition penalty.
+- `offload` -- how much of the model the card holds at once. YuE2 has one set
+  of weights for the score and the performance and another for the audio, and
+  no stage needs both. `on` keeps only the half the running stage needs, and
+  neither during the decode; `off` keeps everything on the card; `auto`, the
+  default, moves a half off only when a stage would not fit beside it. The song
+  is identical in every mode, to the last byte. Measured, `on` took a 40-second
+  song from 7.55 GiB to 4.94 and a four-minute one from 14.96 GiB to 11.54, for
+  a second or two a run.
 
 ### Staged nodes
 

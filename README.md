@@ -146,7 +146,7 @@ stages, and releases the VRAM again.
 | Name | Contents |
 |---|---|
 | `audio` | 48 kHz stereo, ready for `SaveAudio` or anything else that takes `AUDIO` |
-| `score_abc` | The ABC score the model wrote before it played anything -- moved to the new key when `transpose` is set, since that is the score it sang |
+| `score_abc` | The ABC score the song was sung from: the one the model wrote before it played anything, or the edit kept on the node -- moved to the new key when `transpose` is set |
 
 **Inputs**
 
@@ -159,6 +159,9 @@ stages, and releases the VRAM again.
   byte. See [Reproducibility](#reproducibility).
 - `options` -- an optional socket. Leave it empty and every setting takes the
   value the model was released with.
+- `score_abc` -- an edited score for the node to sing instead of writing one,
+  filled by `Edit score...` and hidden behind it. Empty, as it starts, the node
+  works exactly as before. See [The score editor](#the-score-editor).
 
 Progress is reported per stage on the node, and Cancel stops a run in under a
 second -- between tokens during generation, between tiles during decoding.
@@ -201,6 +204,88 @@ the words.*
 
 The marks need the YuE2 weights on disk, and ComfyUI needs a restart after the
 pack is installed or updated before they appear. The window is in English only.
+
+#### The score editor
+
+`YuE2 Generate Song` and `YuE2 Render Plan` carry an `Edit score...` button and
+a summary of the score they will sing. The button opens a window over the
+canvas with three views of one score, and nothing is written to the node until
+Apply.
+
+<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song. On top the Piano roll, Notes and ABC tabs, with Key Dm, 4/4, 66 BPM, 29 bars, 1:45 on the right; under them Play and From start, the voice and instrument boxes ticked and chords not, the Voice part list, an Eighth notes grid with zoom buttons, Whole song, Undo and Redo. The roll shows the intro, bars 1 to 8, the chords Dm, C6, Bb, F, C/E, Dm7 and Am7/C in the lane under the bar numbers, and the instrument part drawn faintly. Under the roll the line No changes. This is the score as it came in, the note on what YuE2 does with an edit, Back to the model's score on the left, and Cancel and Apply on the right">
+
+*An instrumental piece in D minor: the voice part, open for editing, is empty,
+and the instrument part shows faintly behind it. 1:45 is how long the score
+runs; with a lower `max_seconds` the singing stops sooner.*
+
+On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
+run, so run it once first. The next run sings the edit instead of writing a
+score, and every edit after that costs only the singing. On `YuE2 Render Plan`
+it is the plan's score, and **Write the score** in the window runs only the plan
+node feeding it, so there is a score to edit before anything is sung. That is
+why `YuE2 Plan` and `YuE2 Select Plan` are output nodes: ComfyUI runs a node on
+its own only when it is one.
+
+- **Piano roll.** The voice part and the instrument part, one edited at a time
+  with the other drawn faintly behind it; the sections along the top and a
+  chord lane under the bar numbers. A click draws a note on the grid, a drag
+  moves it, its right edge stretches it, and a right-click or Delete removes
+  it. Shift-click and Shift-drag select several, and the arrow keys move them
+  by the grid or a semitone, by an octave with Shift. A click on the chord lane
+  types a chord. Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts
+  through a plain synth in the browser: a guide to the notes, not the song, and
+  it downloads nothing.
+- **Notes** draws the score as sheet music, with the bars the edit rewrites in
+  red.
+- **ABC** is the text the model reads. A score pasted here loads into the other
+  two.
+
+Only the bars you change are written again, with any bar tied to one of them.
+Every other bar stays byte for byte as the model wrote it, and a score applied
+without a change leaves the box empty, so the node sings what it sang before. A
+rewritten bar is spelled the way the model spells
+one -- an accidental only where the key needs it, a whole bar of rest as `Z` --
+and the result is read back with upstream's own ABC parser and compared note
+for note before it reaches the node. The bars, meter, tempo and key are fixed
+in this version; a bar with a key change inside it can be edited only as text.
+
+**An edit belongs to its words.** On Apply the editor marks the edit with the
+style, lyrics and `cot` it was made for, in a comment line the node takes off
+before anything is sung. A new seed with the same words sings the same edit as a
+new take, which is the way to retry a bar that did not take; for a new tune,
+**Reset score** on the node throws the edit away. Other words --
+words that arrive through a wire from `YuE2 Write Song` included -- leave the
+edit unsung: `YuE2 Generate Song` writes a new score for them, `YuE2 Render Plan`
+sings the plan's own, and both say so. Put the words back and the edit is sung
+again. A score pasted or wired into `score_abc` carries no mark and is sung
+whatever the words.
+
+Checked on the card with one song and the edit from the window. With the box
+empty, `YuE2 Generate Song` gave the same audio as before the box existed,
+sample for sample. The same edit through `YuE2 Generate Song` and through
+`YuE2 Render Plan` gave identical audio, identical also to that edit rendered
+without a mark before marks existed, so the mark never reaches the model. The
+same edit marked for other words left each node singing its own song, again
+sample for sample.
+
+**What the model does with an edit** was measured before the window was built:
+
+- Four bars with every note changed, in three rap songs. Where the new line and
+  the old one are two or more semitones apart, the new note was sung 16 times
+  in 18 and 11 in 18, and the old one never; in the third song the old line
+  won, 21 to 14. The rest of each song stayed on its score.
+- The lengths inside the same bars reversed: the new rhythm was followed in all
+  three. A phrase twice as fast with a half-bar rest was not -- the voice
+  filled the rest with the words.
+- The voice sits an octave below the written line, as it does on the model's
+  own scores.
+
+And one edit made in the finished window: in a short piano pop song, one note
+in each of three phrases raised from D to A. All three left the old D; two
+landed within a semitone of the new A, the third a tone short of it.
+
+Every edit is a new take of the whole song, not a patch on the old recording.
+The window is in English only.
 
 ### YuE2 Write Song
 
@@ -358,10 +443,10 @@ nudges the tokenizer, but editing the score moves the note.
 
 - **YuE2 Plan** -- style, lyrics and a seed in; a `plan` and the score as text
   out. No audio is generated, so this is a small fraction of a full run.
-- **YuE2 Render Plan** -- a `plan` in, audio and `latents` out. Leave
-  `score_abc` empty and the model's own score is sung, which gives exactly the
-  song `YuE2 Generate Song` makes from that seed. Paste an edited score into
-  the box and that is what gets sung.
+- **YuE2 Render Plan** -- a `plan` in, audio and `latents` out. Left unedited,
+  the model's own score is sung, which gives exactly the song
+  `YuE2 Generate Song` makes from that seed. Change it with `Edit score...` and
+  the change is what gets sung; see [The score editor](#the-score-editor).
 - **YuE2 Decode Latents** -- the `latents` from a render turned back into audio
   without singing anything again. This is how to hear one performance through
   both decoders, `standard` and `legacy`.

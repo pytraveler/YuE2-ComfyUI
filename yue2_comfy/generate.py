@@ -274,8 +274,9 @@ def moved(score, semitones, cot):
     return result.text
 
 
-def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
-    """One song. Returns (waveform, abc_text, timing).
+def run(models, style, lyrics, seed, settings, progress=None, cancelled=None,
+        edited=None):
+    """One song. Returns (waveform, sung, written, timing).
 
     The waveform is exactly what ComfyUI's AUDIO type wants: float32 [1, 2, S]
     on the CPU. decode_tiled already allocates that shape, so nothing here
@@ -286,24 +287,37 @@ def run(models, style, lyrics, seed, settings, progress=None, cancelled=None):
     ones can do, this one has already done, and there is no second pipeline to
     keep in step.
 
-    With 'transpose' set, the score is moved between the first call and the
-    second and sung as text, and the moved score is the one handed back: the
-    score_abc output is always the score the song was sung from. At 0 nothing
-    changes, down to the ids stage one produced.
+    'sung' is the score the song was sung from, which is what the score_abc
+    output hands on, and 'written' is the score the model wrote this run. With
+    'transpose' set, the score is moved between the first call and the second
+    and sung as text, so the two differ by the move. At 0 nothing changes, down
+    to the ids stage one produced.
+
+    With 'edited', a score a person changed, the first call is skipped: the edit
+    is sung as text, exactly as 'YuE2 Render Plan' sings one, on a progress bar
+    the three remaining stages fill by themselves. 'written' is then empty,
+    because the model wrote nothing.
     """
     started = time.perf_counter()
-    abc_text, abc_ids, timing = write_score(
-        models, style, lyrics, seed, settings, progress, cancelled)
+    if edited:
+        abc_text, abc_ids, timing, written = edited, None, {}, ""
+        bands = alone(Stages.SEMANTIC, Stages.ACOUSTIC, Stages.DECODE)
+    else:
+        abc_text, abc_ids, timing = write_score(
+            models, style, lyrics, seed, settings, progress, cancelled)
+        written, bands = abc_text, None
     semitones = int(settings.get("transpose") or 0)
     if semitones:
         abc_text, abc_ids = moved(abc_text, semitones, settings["cot"]), None
     latents, spent = sing(models, style, lyrics, seed, settings, abc_ids,
-                          abc=abc_text, progress=progress, cancelled=cancelled)
+                          abc=abc_text, progress=progress, cancelled=cancelled,
+                          stages=None if bands is None else bands[:2])
     timing.update(spent)
-    waveform, spent = decode(models, latents, progress, cancelled)
+    waveform, spent = decode(models, latents, progress, cancelled,
+                             stages=None if bands is None else bands[2:])
     timing.update(spent)
     timing["total_seconds"] = time.perf_counter() - started
-    return waveform, abc_text, timing
+    return waveform, abc_text, written, timing
 
 
 def _counter(progress, stage, total, seconds: bool = False):

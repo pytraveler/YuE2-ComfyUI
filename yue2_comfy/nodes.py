@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 
-from . import devices, transpose
+from . import devices, edits, transpose
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
@@ -275,13 +275,29 @@ class YuE2Options:
 
 
 
+EDITED_SCORE_TOOLTIP = (
+    "An edited score kept on this node. While it is empty, as it starts, the node "
+    "writes a new score on every run, exactly as it always has.\n\n"
+    "'Edit score...' fills it after a run: change notes and chords there, and the "
+    "next run sings the edit instead of writing a score, and 'Reset score' empties it "
+    "again. The edit belongs to the "
+    "style and lyrics it was made for -- with other words the node writes a new "
+    "score and says so -- while a new seed sings the same edit as a new take. A "
+    "score wired in is sung as it arrives."
+)
+
+GENERATE_INSTEAD = "the model wrote a new score for these words"
+
+
 class YuE2GenerateSong:
     """Style and lyrics in, a finished song out."""
 
     DESCRIPTION = (
         "Generates a complete song at 48 kHz stereo from a style description and "
-        "lyrics, using YuE2-3B. The model plans a readable score first, then sings it. "
-        "The weights are downloaded on first use, with progress shown on the node.\n\n"
+        "lyrics, using YuE2-3B. The model plans a readable score first, then sings it; "
+        "after a run, 'Edit score...' opens that score to change notes before the "
+        "next one. The weights are downloaded on first use, with progress shown on "
+        "the node.\n\n"
         "The model weights are licensed CC BY-NC 4.0, which is non-commercial. The code "
         "of this pack is Apache-2.0."
     )
@@ -299,6 +315,8 @@ class YuE2GenerateSong:
             },
             "optional": {
                 "options": (OPTIONS_TYPE,),
+                "score_abc": ("STRING", {"multiline": True, "default": "",
+                                         "tooltip": EDITED_SCORE_TOOLTIP}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -308,7 +326,7 @@ class YuE2GenerateSong:
     FUNCTION = "generate"
     CATEGORY = CATEGORY
 
-    def generate(self, style, lyrics, seed, options=None, unique_id=None):
+    def generate(self, style, lyrics, seed, options=None, score_abc="", unique_id=None):
         from . import generate
 
         progress = NodeProgress(unique_id)
@@ -316,11 +334,19 @@ class YuE2GenerateSong:
         settings = resolve(options)
         if int(settings.get("transpose") or 0) and settings["cot"] == "off":
             refuse(unique_id, transpose.COT_OFF)
+        edit = edits.read(score_abc)
+        problem = edits.mismatch(edit, style, lyrics, settings["cot"], GENERATE_INSTEAD)
+        if problem:
+            announce(unique_id, [("warn", problem)])
+        edited = edit.score if edit.score and not problem else None
+        if edited:
+            log.info("[yue2_comfy] singing the edited score kept on the node; "
+                     "no score is written this run")
 
         with session(settings, unique_id, progress) as models:
-            waveform, score, timing = generate.run(
+            waveform, score, written, timing = generate.run(
                 models, style, lyrics, seed, settings,
-                progress=progress, cancelled=interrupted,
+                progress=progress, cancelled=interrupted, edited=edited,
             )
 
         log.info(
@@ -331,7 +357,11 @@ class YuE2GenerateSong:
             timing["semantic"]["execution"], timing["semantic"]["attention"], seed,
         )
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
-        return ({"waveform": waveform, "sample_rate": SAMPLE_RATE}, score)
+        ui = {edits.WORDS_UI: [edits.mark(style, lyrics, settings["cot"])]}
+        if edited is None:
+            ui[edits.SCORE_UI] = [written]
+        return {"ui": ui,
+                "result": ({"waveform": waveform, "sample_rate": SAMPLE_RATE}, score)}
 
 
 class YuE2WriteSong:

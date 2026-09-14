@@ -20,18 +20,21 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from . import devices
+from . import devices, edits
 from .constants import (
     ADVANCED_CATEGORY, DEFAULT_LYRICS, DEFAULT_OPTIONS, DEFAULT_STYLE,
     LATENTS_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE, PLANS_TYPE,
     SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, normalize_seed,
 )
+from .edits import SCORE_UI, WORDS_UI
 from .progress import (NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 
 log = logging.getLogger(__name__)
 
 MAX_TAKES = 8
+
+RENDER_INSTEAD = "the plan's own score was sung"
 
 SEED_MAX = (1 << 63) - 1
 
@@ -43,10 +46,13 @@ PLAN_TOOLTIP = (
 
 SCORE_TOOLTIP = (
     "An edited score. Leave it empty to sing the one inside the plan.\n\n"
-    "Copy the 'score_abc' output into this box, change it, and what you typed is "
-    "what gets sung. An empty box, or text that still matches the plan, sings the "
-    "model's own score token for token: the same song 'YuE2 Generate Song' would "
-    "have produced from the same seed."
+    "The 'Edit score...' button opens the score as a piano roll, as sheet music "
+    "and as ABC text, and writes the edit here on Apply; 'Reset score' empties the "
+    "box again. An empty box, or text that "
+    "still matches the plan, sings the model's own score token for token: the same "
+    "song 'YuE2 Generate Song' would have produced from the same seed. An edit made "
+    "for other words than the plan's is not sung, and the node says so. A score can "
+    "also come in through a wire, and is then sung as it arrives."
 )
 
 LATENTS_TOOLTIP = (
@@ -165,9 +171,10 @@ def _chosen(plan, edited):
     Both sides are compared trimmed, so a paste that gained a trailing newline
     is not mistaken for an edit, and the edited text is passed on trimmed for
     the same reason: leading and trailing blank lines become tokens in the
-    prompt while carrying no music.
+    prompt while carrying no music. The mark of the words an edit was made for
+    comes off first, for the same reason again; see edits.py.
     """
-    text = (edited or "").strip()
+    text = edits.read(edited).score
     original = (plan.get("score") or "").strip()
     if not text or text == original:
         return list(plan.get("ids") or []), plan.get("score") or ""
@@ -218,8 +225,9 @@ class YuE2Plan:
     DESCRIPTION = (
         "Writes the ABC score for a song and stops there, which is a small part of "
         "the work a whole song takes.\n\n"
-        "Feed the plan to 'YuE2 Render Plan' to hear it, or edit the score first: "
-        "the render node sings whatever you give it. Hunting for a seed at this "
+        "Feed the plan to 'YuE2 Render Plan' to hear it, or edit the score first "
+        "with 'Edit score...' there: the render node sings whatever you give it. "
+        "Hunting for a seed at this "
         "stage is much cheaper than hunting for one a whole song at a time."
     )
 
@@ -243,6 +251,7 @@ class YuE2Plan:
     RETURN_NAMES = ("plan", "score_abc")
     FUNCTION = "plan"
     CATEGORY = ADVANCED_CATEGORY
+    OUTPUT_NODE = True
 
     def plan(self, style, lyrics, seed, options=None, unique_id=None):
         from . import generate
@@ -261,7 +270,9 @@ class YuE2Plan:
         log.info("[yue2_comfy] score of %d tokens in %.1f s | seed %s",
                  len(ids), timing.get("abc", {}).get("seconds", 0.0), seed)
         progress.finish("{} tokens of score".format(len(ids)))
-        return (_made(style, lyrics, seed, settings, score, ids, timing), score)
+        return {"ui": {SCORE_UI: [score],
+                       WORDS_UI: [edits.mark(style, lyrics, settings["cot"])]},
+                "result": (_made(style, lyrics, seed, settings, score, ids, timing), score)}
 
 
 class YuE2PlanBatch:
@@ -335,6 +346,7 @@ class YuE2SelectPlan:
     RETURN_NAMES = ("plan", "score_abc")
     FUNCTION = "select"
     CATEGORY = ADVANCED_CATEGORY
+    OUTPUT_NODE = True
 
     def select(self, plans, index, unique_id=None):
         if not plans:
@@ -348,7 +360,10 @@ class YuE2SelectPlan:
                                   "does not exist; taking {} instead."
                                   .format(len(plans), wanted, taken))])
         plan = plans[taken]
-        return (plan, plan.get("score") or "")
+        score = plan.get("score") or ""
+        cot = (plan.get("settings") or {}).get("cot", DEFAULT_OPTIONS["cot"])
+        for_words = edits.mark(plan.get("style"), plan.get("lyrics"), cot)
+        return {"ui": {SCORE_UI: [score], WORDS_UI: [for_words]}, "result": (plan, score)}
 
 
 class YuE2RenderPlan:
@@ -356,9 +371,10 @@ class YuE2RenderPlan:
 
     DESCRIPTION = (
         "Sings a score from 'YuE2 Plan' and decodes it to 48 kHz stereo audio.\n\n"
-        "Leave 'score_abc' empty and the model's own score is sung, which gives "
-        "exactly the song 'YuE2 Generate Song' makes from the same seed. Paste an "
-        "edited score in and that is sung instead."
+        "Left unedited, the model's own score is sung, which gives exactly the song "
+        "'YuE2 Generate Song' makes from the same seed. 'Edit score...' opens the "
+        "score in a piano roll to change notes and chords first; only the bars you "
+        "change are written again, and the edit is what gets sung."
     )
 
     @classmethod
@@ -388,7 +404,11 @@ class YuE2RenderPlan:
                               "join its 'plan' output to this input.")
         progress = NodeProgress(unique_id)
         settings = _settings(plan, options, unique_id)
-        ids, score = _chosen(plan, score_abc)
+        problem = edits.mismatch(edits.read(score_abc), plan.get("style"),
+                                 plan.get("lyrics"), settings["cot"], RENDER_INSTEAD)
+        if problem:
+            announce(unique_id, [("warn", problem)])
+        ids, score = _chosen(plan, "" if problem else score_abc)
         semitones = int(settings.get("transpose") or 0)
         if semitones:
             try:

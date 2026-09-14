@@ -1,0 +1,341 @@
+export const PARTS = ["Vocal", "Ins"];
+
+export const QUALITIES = [
+    "", "m", "dim", "aug", "7", "maj7", "m7", "dim7", "m7b5",
+    "sus4", "sus2", "6", "m6", "7sus4", "m(maj7)",
+];
+
+export const CHORD_TONES = {
+    "": [0, 4, 7], "m": [0, 3, 7], "dim": [0, 3, 6], "aug": [0, 4, 8],
+    "7": [0, 4, 7, 10], "maj7": [0, 4, 7, 11], "m7": [0, 3, 7, 10], "dim7": [0, 3, 6, 9],
+    "m7b5": [0, 3, 6, 10], "sus4": [0, 5, 7], "sus2": [0, 2, 7], "6": [0, 4, 7, 9],
+    "m6": [0, 3, 7, 9], "7sus4": [0, 5, 7, 10], "m(maj7)": [0, 3, 7, 11],
+};
+
+export const SNAPS = [
+    { name: "Quarter notes", quarters: 1 },
+    { name: "Eighth notes", quarters: 0.5 },
+    { name: "Sixteenth notes", quarters: 0.25 },
+    { name: "Thirty-second notes", quarters: 0.125 },
+];
+
+export const LOWEST = 21;
+export const HIGHEST = 108;
+
+const SHARP_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const FLAT_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const NATURAL = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const SHIFT = { "": 0, "#": 1, "##": 2, "b": -1, "bb": -2 };
+const PITCH_NAME = "([A-G])(bb|##|b|#)?";
+const ESCAPED = QUALITIES.map((q) => q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+const CHORD_RE = new RegExp("^" + PITCH_NAME + "(" + ESCAPED.join("|") + ")(?:/" + PITCH_NAME + ")?$");
+const FULL_REST_RE = /^\s*Z([2-4])?\s*$/;
+
+export function isChord(name) {
+    return CHORD_RE.test(String(name ?? "").trim());
+}
+
+export function chordPitches(name) {
+    const match = CHORD_RE.exec(String(name ?? "").trim());
+    if (!match) return [];
+    const root = 48 + ((NATURAL[match[1]] + SHIFT[match[2] || ""] + 12) % 12);
+    const tones = CHORD_TONES[match[3]].map((step) => root + step);
+    if (match[4]) tones.unshift(36 + ((NATURAL[match[4]] + SHIFT[match[5] || ""] + 12) % 12));
+    return tones;
+}
+
+export function noteName(pitch, flats = false) {
+    return (flats ? FLAT_NAMES : SHARP_NAMES)[((pitch % 12) + 12) % 12] + (Math.floor(pitch / 12) - 1);
+}
+
+export function isBlack(pitch) {
+    return [1, 3, 6, 8, 10].includes(((pitch % 12) + 12) % 12);
+}
+
+export function flatsIn(sheet, key) {
+    return (sheet?.signatures?.[key] ?? 0) < 0;
+}
+
+export function snapChoices(perQuarter) {
+    return SNAPS
+        .map((snap) => ({ name: snap.name, ticks: snap.quarters * perQuarter }))
+        .filter((snap) => Number.isInteger(snap.ticks) && snap.ticks >= 1);
+}
+
+export function snapTo(tick, step) {
+    return Math.round(tick / step) * step;
+}
+
+export function snapDown(tick, step) {
+    return Math.floor(tick / step) * step;
+}
+
+export function secondsAt(sheet, tick) {
+    return (tick * 60) / (sheet.bpm * sheet.per_quarter);
+}
+
+export function clock(seconds) {
+    const whole = Math.max(0, Math.floor(seconds));
+    return Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0");
+}
+
+export function barAt(sheet, tick) {
+    const bars = sheet.bars;
+    let low = 0;
+    let high = bars.length - 1;
+    while (low < high) {
+        const middle = (low + high + 1) >> 1;
+        if (bars[middle].start <= tick) low = middle;
+        else high = middle - 1;
+    }
+    return low;
+}
+
+export function sectionAt(sheet, bar) {
+    return sheet.sections.find((s) => bar >= s.bar && bar < s.bar + s.bars) || null;
+}
+
+export function modelOf(sheet) {
+    let next = 1;
+    const notes = {};
+    for (const part of PARTS) {
+        notes[part] = (sheet.notes[part] || [])
+            .map((n) => ({ id: next++, start: n.start, length: n.length, pitch: n.pitch }))
+            .sort((a, b) => a.start - b.start);
+    }
+    const chords = (sheet.chords || [])
+        .map((c) => ({ start: c.start, name: c.name }))
+        .sort((a, b) => a.start - b.start);
+    return { notes, chords, next };
+}
+
+export function sheetOf(model) {
+    const notes = {};
+    for (const part of PARTS) {
+        notes[part] = model.notes[part]
+            .map((n) => ({ start: n.start, length: n.length, pitch: n.pitch }))
+            .sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+    }
+    const chords = model.chords
+        .map((c) => ({ start: c.start, name: c.name }))
+        .sort((a, b) => a.start - b.start);
+    return { notes, chords };
+}
+
+function withPart(model, part, notes) {
+    return { ...model, notes: { ...model.notes, [part]: notes.slice().sort((a, b) => a.start - b.start) } };
+}
+
+export function fits(notes, candidate, ignore, total) {
+    if (!Number.isInteger(candidate.start) || !Number.isInteger(candidate.length)) return false;
+    if (candidate.start < 0 || candidate.length < 1 || candidate.start + candidate.length > total) return false;
+    if (candidate.pitch < 0 || candidate.pitch > 127) return false;
+    const end = candidate.start + candidate.length;
+    return !notes.some((n) => !ignore.has(n.id) && n.start < end && n.start + n.length > candidate.start);
+}
+
+export function addNote(model, part, start, length, pitch, total) {
+    const note = { id: model.next, start, length, pitch };
+    if (!fits(model.notes[part], note, new Set(), total)) return null;
+    const changed = withPart(model, part, [...model.notes[part], note]);
+    changed.next = model.next + 1;
+    return { model: changed, id: note.id };
+}
+
+export function moveNotes(model, part, ids, ticks, semitones, total) {
+    const moving = new Set(ids);
+    const moved = model.notes[part].map((n) => (moving.has(n.id)
+        ? { ...n, start: n.start + ticks, pitch: n.pitch + semitones } : n));
+    for (const note of moved) {
+        if (!moving.has(note.id)) continue;
+        if (!fits(moved, note, moving, total)) return null;
+    }
+    return withPart(model, part, moved);
+}
+
+export function resizeNote(model, part, id, length, total) {
+    const note = model.notes[part].find((n) => n.id === id);
+    if (!note) return null;
+    const changed = { ...note, length };
+    if (!fits(model.notes[part], changed, new Set([id]), total)) return null;
+    return withPart(model, part, model.notes[part].map((n) => (n.id === id ? changed : n)));
+}
+
+export function deleteNotes(model, part, ids) {
+    const gone = new Set(ids);
+    return withPart(model, part, model.notes[part].filter((n) => !gone.has(n.id)));
+}
+
+export function noteAt(model, part, tick, pitch) {
+    return model.notes[part].find((n) => n.pitch === pitch && n.start <= tick && tick < n.start + n.length) || null;
+}
+
+export function notesIn(model, part, fromTick, toTick, lowPitch, highPitch) {
+    const [t0, t1] = [Math.min(fromTick, toTick), Math.max(fromTick, toTick)];
+    const [p0, p1] = [Math.min(lowPitch, highPitch), Math.max(lowPitch, highPitch)];
+    return model.notes[part]
+        .filter((n) => n.start < t1 && n.start + n.length > t0 && n.pitch >= p0 && n.pitch <= p1)
+        .map((n) => n.id);
+}
+
+export function setChord(model, start, name) {
+    const clean = String(name ?? "").trim();
+    if (!isChord(clean)) return null;
+    const chords = model.chords.filter((c) => c.start !== start);
+    chords.push({ start, name: clean });
+    chords.sort((a, b) => a.start - b.start);
+    return { ...model, chords };
+}
+
+export function removeChord(model, start) {
+    return { ...model, chords: model.chords.filter((c) => c.start !== start) };
+}
+
+function barSignature(notes, chords, start, end) {
+    const inside = notes
+        .filter((n) => n.start < end && n.start + n.length > start)
+        .map((n) => n.start + ":" + n.length + ":" + n.pitch)
+        .sort();
+    const named = chords.filter((c) => c.start >= start && c.start < end).map((c) => c.start + ":" + c.name);
+    return inside.join(",") + "|" + named.join(",");
+}
+
+export function changedBars(sheet, model) {
+    const original = modelOf(sheet);
+    const changed = [];
+    sheet.bars.forEach((bar, index) => {
+        const end = bar.start + bar.length;
+        for (const part of PARTS) {
+            const before = barSignature(original.notes[part], part === "Vocal" ? original.chords : [], bar.start, end);
+            const after = barSignature(model.notes[part], part === "Vocal" ? model.chords : [], bar.start, end);
+            if (before !== after) {
+                changed.push(index);
+                return;
+            }
+        }
+    });
+    return changed;
+}
+
+export function pitchSpan(model) {
+    let low = Infinity;
+    let high = -Infinity;
+    for (const part of PARTS) {
+        for (const n of model.notes[part]) {
+            low = Math.min(low, n.pitch);
+            high = Math.max(high, n.pitch);
+        }
+    }
+    if (low === Infinity) return { low: 55, high: 79 };
+    return { low: Math.max(LOWEST, low - 5), high: Math.min(HIGHEST, high + 5) };
+}
+
+export function events(sheet, model, fromTick, parts = { Vocal: true, Ins: true, chords: true }) {
+    const tick = 60 / (sheet.bpm * sheet.per_quarter);
+    const out = [];
+    for (const part of PARTS) {
+        if (!parts[part]) continue;
+        for (const n of model.notes[part]) {
+            const end = n.start + n.length;
+            if (end <= fromTick) continue;
+            const begin = Math.max(n.start, fromTick);
+            out.push({ at: (begin - fromTick) * tick, length: (end - begin) * tick, pitch: n.pitch, part });
+        }
+    }
+    if (parts.chords) {
+        model.chords.forEach((chord, index) => {
+            const end = index + 1 < model.chords.length ? model.chords[index + 1].start : sheet.total;
+            if (end <= fromTick) return;
+            const begin = Math.max(chord.start, fromTick);
+            for (const pitch of chordPitches(chord.name)) {
+                out.push({ at: (begin - fromTick) * tick, length: (end - begin) * tick, pitch, part: "chords" });
+            }
+        });
+    }
+    return out.sort((a, b) => a.at - b.at || a.pitch - b.pitch);
+}
+
+function isMusicLine(line) {
+    const body = line.trim();
+    return body.endsWith("|") && !/^(%|[A-Za-z]:)/.test(body);
+}
+
+export function forNotation(abc) {
+    return String(abc ?? "").split(/\r?\n/).map((line) => {
+        if (!isMusicLine(line)) return line;
+        const pieces = line.trim().slice(0, -1).split("|").flatMap((piece) => {
+            const rest = FULL_REST_RE.exec(piece);
+            return rest ? Array(Number(rest[1] || 1)).fill("Z") : [piece];
+        });
+        return pieces.join("|") + "|";
+    }).join("\n");
+}
+
+export function headerFacts(abc) {
+    const lines = String(abc ?? "").trim().split(/\r?\n/);
+    const field = (name) => {
+        const line = lines.slice(0, 8).find((l) => l.startsWith(name + ":"));
+        return line ? line.slice(name.length + 1).trim() : "";
+    };
+    let bars = 0;
+    let vocal = false;
+    for (const line of lines.slice(8)) {
+        if (line.startsWith("V:")) vocal = line.slice(2).trim() === "Vocal";
+        else if (vocal && isMusicLine(line)) bars += forNotation(line).trim().slice(0, -1).split("|").length;
+    }
+    const tempo = /=(\d+)/.exec(field("Q"));
+    return { key: field("K"), meter: field("M"), bpm: tempo ? Number(tempo[1]) : null, bars };
+}
+
+export const MARK_PREFIX = "%yue2-words ";
+const MARK_LINE = /^%yue2-words ([0-9a-f]{16})[ \t\r]*$/;
+
+export function splitMark(text) {
+    let words = null;
+    const kept = [];
+    for (const line of String(text ?? "").split("\n")) {
+        const found = MARK_LINE.exec(line);
+        if (found) words = found[1];
+        else kept.push(line);
+    }
+    return { score: kept.join("\n").trim(), words };
+}
+
+export function attachMark(score, words) {
+    const clean = String(score ?? "").replace(/\s+$/, "");
+    return words ? clean + "\n" + MARK_PREFIX + words : clean;
+}
+
+export class History {
+    constructor(limit = 200) {
+        this.limit = limit;
+        this.done = [];
+        this.undone = [];
+    }
+
+    push(state) {
+        this.done.push(state);
+        if (this.done.length > this.limit) this.done.shift();
+        this.undone = [];
+    }
+
+    undo(current) {
+        if (!this.done.length) return null;
+        this.undone.push(current);
+        return this.done.pop();
+    }
+
+    redo(current) {
+        if (!this.undone.length) return null;
+        this.done.push(current);
+        return this.undone.pop();
+    }
+
+    get canUndo() {
+        return this.done.length > 0;
+    }
+
+    get canRedo() {
+        return this.undone.length > 0;
+    }
+}

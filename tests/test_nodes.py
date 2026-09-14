@@ -1,8 +1,10 @@
 """Node contract checks that run without ComfyUI."""
 
+import contextlib
+
 import pytest
 
-from yue2_comfy import constants, nodes
+from yue2_comfy import constants, edits, nodes
 
 
 def node_classes():
@@ -158,11 +160,14 @@ def test_generate_returns_a_comfyui_audio_dict(monkeypatch):
     monkeypatch.setattr(generate, "run", lambda *args, **kwargs: (
         torch.zeros(1, 2, constants.SAMPLE_RATE, dtype=torch.float32),
         "X:1",
+        "X:1",
         fake_timing(1.0),
     ))
 
-    audio, score = nodes.YuE2GenerateSong().generate(
+    out = nodes.YuE2GenerateSong().generate(
         style="test", lyrics="[Verse]" + chr(10) + "hello", seed=1)
+    audio, score = out["result"]
+    assert out["ui"][edits.SCORE_UI] == ["X:1"]
     assert unloaded == [True], "keep_model_loaded is off by default, so it must unload"
     assert set(audio) == {"waveform", "sample_rate"}
     assert audio["sample_rate"] == constants.SAMPLE_RATE
@@ -175,6 +180,98 @@ def test_generate_returns_a_comfyui_audio_dict(monkeypatch):
 def test_empty_prompt_is_refused():
     with pytest.raises(ValueError):
         nodes.YuE2GenerateSong().generate(style="  ", lyrics="", seed=1)
+
+
+def test_the_edited_score_box_is_the_last_widget_on_the_song_node():
+    """ComfyUI hands a saved node its widget values by position.
+
+    'options' is a socket and holds no value, so the new box sits right after
+    the seed and its control, and a workflow saved before it existed simply has
+    one value fewer.
+    """
+    spec = nodes.YuE2GenerateSong.INPUT_TYPES()
+    assert list(spec["required"]) == ["style", "lyrics", "seed"]
+    assert list(spec["optional"]) == ["options", "score_abc"]
+    assert spec["optional"]["score_abc"][1]["default"] == ""
+
+
+WRITTEN = "X:1\nK:C\nCDEF|"
+EDITED = "X:1\nK:C\nEFGA|"
+
+
+def stub_run(monkeypatch):
+    """The song node with its pipeline replaced; returns what reached the pipeline and the notices."""
+    calls = []
+    said = []
+
+    @contextlib.contextmanager
+    def session(settings, unique_id, progress):
+        yield FakeModels()
+
+    def run(models, style, lyrics, seed, settings, progress=None, cancelled=None, edited=None):
+        calls.append({"edited": edited, "cot": settings["cot"]})
+        sung = edited or WRITTEN
+        return "waveform", sung, "" if edited else WRITTEN, fake_timing(3.0)
+
+    from yue2_comfy import generate
+
+    monkeypatch.setattr(nodes, "session", session)
+    monkeypatch.setattr(generate, "run", run)
+    monkeypatch.setattr(nodes, "announce",
+                        lambda node, findings, kind="notice": said.append(findings))
+    return calls, said
+
+
+def sing_with(score_abc, lyrics="words", options=None):
+    return nodes.YuE2GenerateSong().generate(style="a style", lyrics=lyrics, seed=4,
+                                             options=options, score_abc=score_abc,
+                                             unique_id="3")
+
+
+def test_an_empty_box_writes_a_score_as_the_node_always_has(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    out = sing_with("")
+    cot = constants.DEFAULT_OPTIONS["cot"]
+    assert calls == [{"edited": None, "cot": cot}]
+    assert said == []
+    assert out["ui"] == {edits.SCORE_UI: [WRITTEN],
+                         edits.WORDS_UI: [edits.mark("a style", "words", cot)]}
+    assert out["result"][1] == WRITTEN
+
+
+def test_an_edit_for_these_words_is_sung_instead_of_writing_a_score(monkeypatch):
+    """The ui carries no score then: the model wrote none, and the editor keeps the one it had."""
+    calls, said = stub_run(monkeypatch)
+    cot = constants.DEFAULT_OPTIONS["cot"]
+    out = sing_with(edits.attach(EDITED, edits.mark("a style", "words", cot)))
+    assert calls == [{"edited": EDITED, "cot": cot}]
+    assert said == []
+    assert out["ui"] == {edits.WORDS_UI: [edits.mark("a style", "words", cot)]}
+    assert out["result"][1] == EDITED
+
+
+def test_an_edit_for_other_words_is_left_unsung_and_the_node_says_so(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    cot = constants.DEFAULT_OPTIONS["cot"]
+    out = sing_with(edits.attach(EDITED, edits.mark("a style", "words", cot)), lyrics="new words")
+    assert calls == [{"edited": None, "cot": cot}]
+    assert [level for level, _message in said[0]] == ["warn"]
+    assert nodes.GENERATE_INSTEAD in said[0][0][1]
+    assert out["ui"][edits.SCORE_UI] == [WRITTEN]
+
+
+def test_a_score_with_no_mark_is_sung_whatever_the_words(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    sing_with(EDITED, lyrics="any words at all")
+    assert calls[0]["edited"] == EDITED
+    assert said == []
+
+
+def test_with_cot_off_an_edit_waits_on_the_node(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    sing_with(EDITED, options=dict(constants.DEFAULT_OPTIONS, cot="off"))
+    assert calls == [{"edited": None, "cot": "off"}]
+    assert said[0][0][1] == edits.COT_OFF
 
 
 def test_max_seconds_widget_offers_the_automatic_zero():

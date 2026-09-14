@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from yue2_comfy import constants, generate, staged, transpose
+from yue2_comfy import constants, edits, generate, staged, transpose
 
 SCORE = "X:1\nK:C\nCDEF|\n"
 IDS = [88, 58, 49]
@@ -93,7 +93,7 @@ def stub_singing(monkeypatch, seconds=42.0):
 
 def test_a_plan_carries_everything_the_render_node_needs(monkeypatch):
     stub_score(monkeypatch)
-    plan, score = staged.YuE2Plan().plan(style="a style", lyrics="words", seed=7)
+    plan, score = staged.YuE2Plan().plan(style="a style", lyrics="words", seed=7)["result"]
     assert score == SCORE
     assert plan["style"] == "a style"
     assert plan["lyrics"] == "words"
@@ -110,8 +110,31 @@ def test_a_plan_survives_being_saved_in_a_workflow(monkeypatch):
     perfectly until somebody reopened the workflow the next morning.
     """
     stub_score(monkeypatch)
-    plan, _score = staged.YuE2Plan().plan(style="a style", lyrics="words", seed=7)
+    plan, _score = staged.YuE2Plan().plan(style="a style", lyrics="words", seed=7)["result"]
     assert json.loads(json.dumps(plan)) == plan
+
+
+def test_the_plan_nodes_hand_their_score_to_the_score_editor(monkeypatch):
+    """They can run on their own, so the editor can ask for a score without a song.
+
+    ComfyUI lets a partial run target only an output node. The render node stays
+    an ordinary node and the batch node too, so queueing a plan node alone never
+    sings. With the score goes the mark of the words it was written for, which
+    the editor puts on an edit so the render node can tell when they move on.
+    """
+    stub_score(monkeypatch)
+    written = staged.YuE2Plan().plan(style="a style", lyrics="words", seed=7)
+    cot = constants.DEFAULT_OPTIONS["cot"]
+    assert written["ui"] == {staged.SCORE_UI: [SCORE],
+                             staged.WORDS_UI: [edits.mark("a style", "words", cot)]}
+    plans = [{"score": "first"},
+             {"score": "second", "style": "s", "lyrics": "l", "settings": {"cot": "melody"}}]
+    assert staged.YuE2SelectPlan().select(plans, 1)["ui"] == {
+        staged.SCORE_UI: ["second"], staged.WORDS_UI: [edits.mark("s", "l", "melody")]}
+    assert staged.YuE2Plan.OUTPUT_NODE is True
+    assert staged.YuE2SelectPlan.OUTPUT_NODE is True
+    assert not getattr(staged.YuE2RenderPlan, "OUTPUT_NODE", False)
+    assert not getattr(staged.YuE2PlanBatch, "OUTPUT_NODE", False)
 
 
 def test_an_untouched_score_is_sung_as_the_model_wrote_it():
@@ -120,6 +143,7 @@ def test_an_untouched_score_is_sung_as_the_model_wrote_it():
     assert staged._chosen(plan, "") == (IDS, SCORE)
     assert staged._chosen(plan, SCORE) == (IDS, SCORE)
     assert staged._chosen(plan, "  " + SCORE + "  ") == (IDS, SCORE)
+    assert staged._chosen(plan, edits.attach(SCORE, "0123456789abcdef")) == (IDS, SCORE)
 
 
 def test_an_edited_score_is_sung_instead_of_the_ids():
@@ -142,6 +166,34 @@ def test_the_render_node_passes_an_edit_down_to_the_stage(monkeypatch):
     staged.YuE2RenderPlan().render(plan, score_abc="X:1\nK:G\n")
     assert calls[0]["ids"] is None
     assert calls[0]["abc"] == "X:1\nK:G"
+
+
+def plain_plan():
+    return {"style": "s", "lyrics": "l", "seed": 5, "score": SCORE, "ids": IDS,
+            "settings": dict(constants.DEFAULT_OPTIONS)}
+
+
+def test_the_render_node_sings_an_edit_made_for_its_plans_words(monkeypatch):
+    calls = stub_singing(monkeypatch)
+    plan = plain_plan()
+    words = edits.mark("s", "l", plan["settings"]["cot"])
+    staged.YuE2RenderPlan().render(plan, score_abc=edits.attach("X:1\nK:G\n", words))
+    assert calls[0]["ids"] is None
+    assert calls[0]["abc"] == "X:1\nK:G", "the mark must never reach the model"
+
+
+def test_the_render_node_leaves_an_edit_for_other_words_unsung_and_says_so(monkeypatch):
+    """New words under old notes is the outcome nobody asks for; the plan's own score is sung."""
+    calls = stub_singing(monkeypatch)
+    said = []
+    monkeypatch.setattr(staged, "announce",
+                        lambda node, findings, kind="notice": said.append(findings))
+    plan = plain_plan()
+    stale = edits.attach("X:1\nK:G\n", edits.mark("s", "other words", plan["settings"]["cot"]))
+    staged.YuE2RenderPlan().render(plan, score_abc=stale, unique_id="9")
+    assert calls[0]["ids"] == IDS
+    assert [level for level, _message in said[0]] == ["warn"]
+    assert staged.RENDER_INSTEAD in said[0][0][1]
 
 
 def test_the_render_node_passes_an_untouched_score_as_ids(monkeypatch):
@@ -218,7 +270,7 @@ def test_a_batch_gives_every_take_its_own_slice_of_the_bar(monkeypatch):
 
 def test_the_selector_takes_the_score_that_was_asked_for():
     plans = [{"score": "first"}, {"score": "second"}, {"score": "third"}]
-    plan, score = staged.YuE2SelectPlan().select(plans, 1)
+    plan, score = staged.YuE2SelectPlan().select(plans, 1)["result"]
     assert score == "second"
     assert plan is plans[1]
 
@@ -226,7 +278,7 @@ def test_the_selector_takes_the_score_that_was_asked_for():
 def test_the_selector_clamps_rather_than_stopping_the_run():
     """Lowering 'count' and forgetting the index should not cost a whole graph."""
     plans = [{"score": "first"}, {"score": "second"}]
-    _plan, score = staged.YuE2SelectPlan().select(plans, 9)
+    _plan, score = staged.YuE2SelectPlan().select(plans, 9)["result"]
     assert score == "second"
 
 
@@ -292,13 +344,45 @@ def test_the_single_node_still_walks_the_same_three_stages(monkeypatch):
     monkeypatch.setattr(generate, "sing", sing)
     monkeypatch.setattr(generate, "decode", decode)
 
-    waveform, score, timing = generate.run(
+    waveform, score, written, timing = generate.run(
         FakeModels(), "s", "l", 3, dict(constants.DEFAULT_OPTIONS))
     assert seen == ["write_score", ("sing", IDS), ("decode", "latents")]
-    assert (waveform, score) == ("waveform", SCORE)
+    assert (waveform, score, written) == ("waveform", SCORE, SCORE)
     assert timing["abc"]["seconds"] == 1.0
     assert timing["seconds_of_audio"] == 12.0
     assert "total_seconds" in timing
+
+
+def test_the_single_node_sings_an_edit_without_writing_a_score(monkeypatch):
+    """Stage one is skipped, and the three stages left fill the bar by themselves."""
+    seen = []
+
+    def write_score(models, style, lyrics, seed, settings, progress=None,
+                    cancelled=None, stages=None):
+        seen.append("write_score")
+        return SCORE, IDS, {"abc": {"seconds": 1.0}}
+
+    def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
+             progress=None, cancelled=None, stages=None):
+        seen.append(("sing", abc_ids, abc, stages))
+        return "latents", {"semantic": {}, "acoustic": {}}
+
+    def decode(models, latents, progress=None, cancelled=None, stages=None):
+        seen.append(("decode", stages))
+        return "waveform", {"seconds_of_audio": 12.0}
+
+    monkeypatch.setattr(generate, "write_score", write_score)
+    monkeypatch.setattr(generate, "sing", sing)
+    monkeypatch.setattr(generate, "decode", decode)
+
+    edit = MOVABLE.replace('"C"C8E8G8c8|', '"C"E8G8c8e8|')
+    _waveform, sung, written, timing = generate.run(
+        FakeModels(), "s", "l", 3, dict(constants.DEFAULT_OPTIONS), edited=edit)
+    bands = generate.alone(generate.Stages.SEMANTIC, generate.Stages.ACOUSTIC,
+                           generate.Stages.DECODE)
+    assert seen == [("sing", None, edit, bands[:2]), ("decode", bands[2:])]
+    assert (sung, written) == (edit, "")
+    assert "abc" not in timing
 
 
 def test_a_staged_node_owns_the_whole_progress_bar():
@@ -403,10 +487,11 @@ def test_the_single_node_sings_the_moved_score_and_hands_it_back(monkeypatch):
     monkeypatch.setattr(generate, "decode", decode)
 
     settings = dict(constants.DEFAULT_OPTIONS, transpose=-5)
-    _waveform, score, _timing = generate.run(FakeModels(), "s", "l", 3, settings)
+    _waveform, score, written, _timing = generate.run(FakeModels(), "s", "l", 3, settings)
     moved = transpose.move(MOVABLE, -5).text
     assert seen == {"ids": None, "abc": moved}
     assert score == moved
+    assert written == MOVABLE, "the editor edits the score as written, and the move goes on top"
 
 
 def test_moving_with_cot_off_says_there_is_no_score_to_move():

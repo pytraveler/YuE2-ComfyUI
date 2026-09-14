@@ -1,6 +1,6 @@
 # Licenses and provenance
 
-This pack carries five kinds of material under five different terms.
+This pack carries six kinds of material under their own terms.
 
 ## The pack's own code
 
@@ -25,11 +25,24 @@ was left out.
 that skill with its own copy of the same Apache-2.0 licence. It reads the ABC
 scores that `transpose` moves, and it is not modified either.
 
+`yue2_comfy/notation.py`, the score editor's reader and writer, uses the same
+file as the judge of what every token of a score means.
+
 The VAE implementation inside that code is itself derived from
 stable-audio-tools (Copyright (c) 2023 Stability AI, MIT) and from BigVGAN's
 SnakeBeta (Copyright (c) 2022 NVIDIA CORPORATION, MIT). Those notices travel
 with the model repository and are reproduced in the upstream
 `THIRD_PARTY_NOTICES.md`.
+
+## abcjs
+
+**MIT.** Copyright (c) 2009-2026 Paul Rosen and Gregory Dyke.
+
+`web/js/vendor/abcjs-basic-min.cjs` is `dist/abcjs-basic-min.js` from the npm
+package [abcjs](https://github.com/paulrosen/abcjs) 6.7.0, unmodified, with its
+licence beside it in `web/js/vendor/abcjs-LICENSE.md`. The score editor uses it
+to draw a score as sheet music. Why the file does not end in `.js` is written
+in `web/js/vendor/README.md`.
 
 ## The model weights
 

@@ -7,6 +7,120 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.4.0 - 2026-09-14
+
+### Added
+
+- **A score editor on `YuE2 Render Plan`.** An `Edit score...` button and a
+  summary of the score the node will sing stand where the bare `score_abc` box
+  used to be. The button opens a window over the canvas with three views of one
+  score, and nothing is written to the node until Apply; Cancel and Escape ask
+  before throwing edits away. The summary says whether the node sings the
+  model's score or an edited one, which bars were rewritten, and when the plan
+  has written a new score since the edit was made.
+
+  - **Piano roll.** The voice part and the instrument part, one edited at a
+    time with the other drawn faintly behind it, the sections along the top and
+    a chord lane under the bar numbers. A click draws a note, a drag moves it,
+    its right edge stretches it, a right-click or Delete removes it; Shift
+    selects several, the arrow keys move them by the grid, a semitone or an
+    octave. Snap from whole notes down to the score's own unit, zoom, undo and
+    redo. Play sounds the parts, and the chords if asked, through a plain synth
+    in the browser that downloads nothing.
+  - **Notes.** The score as sheet music, drawn by abcjs, with the bars the edit
+    rewrites in red.
+  - **ABC.** The text the model reads; a score pasted here loads into the other
+    two views.
+  - **Write the score** runs only the plan node feeding the render node, so a
+    score can be edited before anything has been sung.
+
+- **The same editor on `YuE2 Generate Song`.** After a run, `Edit score...` on
+  the song node opens the score it wrote, and the next run sings the edit
+  instead of writing a score, so a phrase can be fixed without rebuilding the
+  workflow around `YuE2 Plan`. The edit is kept in a new optional `score_abc`
+  input, the node's last widget, so a workflow saved before it existed loads
+  unchanged; empty, the node works exactly as before. The score reaches the
+  window through the node's `ui`, and the node stays an ordinary node, since
+  running it on its own would mean singing the whole song.
+
+  Checked on the card, sample for sample: with the box empty the node gives
+  the same song as before; one edit through this node and through
+  `YuE2 Render Plan` gives the same song, and the same as that edit rendered
+  without a mark before marks existed; an edit marked for other words leaves
+  each node its own song.
+
+- **An edit belongs to the words it was made for.** On Apply the editor marks
+  an edit with the style, lyrics and `cot` it was made for -- a comment line
+  that every node takes off before comparing or singing, so the model never
+  reads it -- and both singing nodes check the mark. A new seed with the same
+  words sings the same edit as a new take, which is how a bar that did not take
+  is tried again; for a new tune, a **Reset score** button, shown on the node
+  while an edit is kept, throws the edit away. Other words leave the edit
+  unsung: `YuE2 Generate Song`
+  writes a new score for them and `YuE2 Render Plan` sings the plan's own,
+  each with a warning, and the edit comes back with the words. A score pasted
+  or wired in carries no mark and is sung whatever the words. The rule lives in
+  `yue2_comfy/edits.py`.
+
+- **Only the bars that change are written again.** `yue2_comfy/notation.py`
+  reads a score into bars, notes and chords for the window and writes an edit
+  back into the text, rewriting the changed bars and any bar tied to one of them
+  and leaving every other byte where the model put it. A rewritten bar is spelled
+  the way the model spells one: an accidental only where the key needs it,
+  repeated in another octave of the same letter so that a person and abcjs read
+  it as the parser does, and a whole bar of rest as `Z`. The result is read back
+  with upstream's own parser and compared with the notes that were asked for,
+  and an edit that does not survive that is refused rather than sung. A score
+  opened and applied without a change is handed on as the model's own, so it
+  still sings the song `YuE2 Generate Song` makes from the same seed.
+
+  Tested on the eleven model scores in `tests/data/model_scores.json`: each one
+  reads and writes back unchanged to the byte, and forty random edits of each
+  read back note for note and touch only their own lines. The bars, meter, tempo
+  and key are fixed in this version, and a bar with a key change inside it can be
+  edited only as ABC text.
+
+- **What the model does with an edit, measured before the window was built.**
+  Four bars with every note changed, in three rap songs: where the new and the
+  old line are two or more semitones apart, the new note was sung 16 times in 18
+  and 11 in 18 and the old one never, while in the third song the old line won,
+  21 to 14; the rest of each song stayed on its score. The lengths inside those
+  bars reversed were followed in all three. A phrase twice as fast with a
+  half-bar rest was not: the voice filled the rest with the words. A mark on
+  every note, the way another pack writes scores, cost nothing measurable. After
+  the window was built, one note in each of three phrases of a short piano pop
+  song raised from D to A left the old D all three times, twice landing within a
+  semitone of the A. The window says that an edit usually takes and not always,
+  and what to do when it does not.
+
+- **abcjs 6.7.0, vendored.** `web/js/vendor/abcjs-basic-min.cjs` is the npm
+  package's `dist/abcjs-basic-min.js`, unmodified, MIT, with its licence beside
+  it. It ends in `.cjs` because ComfyUI imports every `.js` file of a pack as a
+  module, and this build is not one; `web/js/vendor/README.md` says so too.
+
+### Changed
+
+- **`YuE2 Plan` and `YuE2 Select Plan` are output nodes.** They hand their score
+  to the browser, and ComfyUI runs a node on its own only when it is an output
+  node. One consequence: a plan node with nothing connected to it now runs when
+  the workflow does, where before it was skipped.
+- **The `score_abc` box on `YuE2 Render Plan` is behind the editor.** A saved
+  workflow is written exactly as before, a score pasted into the box in an
+  earlier version opens in the editor as an edited score, and a score wired into
+  the socket is still sung, with the summary naming the node it comes from.
+- **Templates 1, 2 and 4 and the README describe the editor**, and template 4
+  no longer copies the score out of a preview box to paste it back.
+
+### Fixed
+
+- **Warnings and refusals from the nodes reach the screen.** The nodes have
+  always sent them as toasts -- why a run stopped, that `cot` set on a render
+  node was ignored, that an index was past the end of a batch -- but nothing in
+  the browser listened for them, and the frontend dropped each one into its
+  console as an unhandled message. `web/js/yue2_notices.js` listens now and
+  shows them as toasts, which is also where the warning about an edit made for
+  other words appears.
+
 ## 0.3.0 - 2026-09-14
 
 ### Added

@@ -103,8 +103,12 @@ jobs:
                         yue2_comfy/staged.py yue2_comfy/manifest.py \
                         yue2_comfy/routes.py yue2_comfy/tokens.py \
                         yue2_comfy/placement.py yue2_comfy/transpose.py \
+                        yue2_comfy/notation.py yue2_comfy/edits.py \
                         web/js/yue2_editor.js web/js/yue2_sheet.js \
-                        web/js/yue2_controls.js \
+                        web/js/yue2_controls.js web/js/yue2_score.js \
+                        web/js/yue2_roll.js web/js/yue2_notices.js \
+                        web/js/vendor/abcjs-basic-min.cjs \
+                        web/js/vendor/abcjs-LICENSE.md \
                         yue2_comfy/vendor/yue2/protocol.py \
                         yue2_comfy/vendor/yue2_music/abc_tools.py \
                         tests/data/model_scores.json; do

@@ -287,6 +287,186 @@ def test_a_letter_click_flips_its_case_and_a_second_click_flips_it_back():
     ]
 
 
+ROLL = WEB / "yue2_roll.js"
+
+ROLL_SCORE = ('X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\n'
+              'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+              'V: Ins clef=treble name="Ins Melody" snm="Inst."\n'
+              'K:F\n% verse\nV: Vocal\n"F"F16A16|"Bb"B16d16|Z2|\n'
+              'V: Ins\nZ|z16f16|Z2|\n'
+              '% chorus\nV: Vocal\n"C"c32-|c16z16|\nV: Ins\nZ2|\n')
+"""Flat key, a full rest over two bars, a tie across a barline and two sections."""
+
+
+def run_roll(script: str):
+    """Run ``script`` with the roll logic imported as ``r``; it must print one JSON value."""
+    program = "import * as r from {};\n{}".format(json.dumps(ROLL.as_uri()), script)
+    done = subprocess.run([NODE, "--input-type=module", "-e", program],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def test_the_roll_knows_the_chord_qualities_upstream_knows():
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    source = ROLL.read_text(encoding="utf-8")
+    match = re.search(r"export const QUALITIES = \[(.*?)\];", source, re.DOTALL)
+    assert re.findall(r'"([^"]*)"', match.group(1)) == list(abc_tools.QUALITIES)
+
+
+@needs_node
+def test_the_roll_accepts_exactly_the_chords_upstream_accepts():
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    names = ["C", "Dm7", "F#m7b5", "Bbmaj7/D", "Ebm(maj7)", "C##dim7", "Dbaug", "A7/E",
+             "G7sus4", "Cmaj9", "C13", "H7", "C/", "c", "", "Am7/", "Cm(maj7", " Dm "]
+    got = run_roll("console.log(JSON.stringify({}.map(r.isChord)));".format(json.dumps(names)))
+    assert got == [abc_tools.CHORD.fullmatch(name.strip()) is not None for name in names]
+
+
+@needs_node
+def test_note_names_snaps_and_chord_tones():
+    got = run_roll("""console.log(JSON.stringify([
+        [r.noteName(61), r.noteName(61, true), r.noteName(60), r.noteName(21), r.noteName(108)],
+        r.snapChoices(8).map((s) => s.ticks), r.snapChoices(4).map((s) => s.ticks),
+        [r.snapTo(13, 4), r.snapDown(15, 4)],
+        r.chordPitches("Am7/G"), r.chordPitches("Bb"), r.chordPitches("nope"),
+        r.clock(125.9),
+    ]));""")
+    assert got == [["C#4", "Db4", "C4", "A0", "C8"], [8, 4, 2, 1], [4, 2, 1], [12, 12],
+                   [43, 57, 60, 64, 67], [58, 62, 65], [], "2:05"]
+
+
+def roll_sheet():
+    from yue2_comfy import notation
+    return notation.read(ROLL_SCORE)
+
+
+@needs_node
+def test_the_sheet_survives_the_roll_and_comes_back_untouched():
+    from yue2_comfy import notation
+    sheet = roll_sheet()
+    got = run_roll("console.log(JSON.stringify(r.sheetOf(r.modelOf({}))));".format(json.dumps(sheet)))
+    assert notation.write(ROLL_SCORE, got) == {"abc": ROLL_SCORE.strip(), "bars": []}
+
+
+@needs_node
+def test_notes_cannot_overlap_leave_the_song_or_move_apart():
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        const vocal = m.notes.Vocal;
+        const total = sheet.total;
+        console.log(JSON.stringify([
+            r.addNote(m, "Vocal", 8, 8, 60, total),
+            r.addNote(m, "Vocal", 96, 16, 60, total) !== null,
+            r.addNote(m, "Vocal", total - 4, 8, 60, total),
+            r.moveNotes(m, "Vocal", [vocal[0].id, vocal[1].id], 32, 2, total) === null,
+            r.moveNotes(m, "Vocal", [vocal[2].id, vocal[3].id], 64, -1, total).notes.Vocal
+                .map((n) => [n.start, n.pitch]),
+            r.resizeNote(m, "Vocal", vocal[0].id, 24, total),
+            r.resizeNote(m, "Vocal", vocal[0].id, 8, total).notes.Vocal[0].length,
+            r.deleteNotes(m, "Ins", [m.notes.Ins[0].id]).notes.Ins.length,
+            r.notesIn(m, "Vocal", 0, 32, 60, 70).length,
+            r.noteAt(m, "Vocal", 20, 69).pitch,
+        ]));
+    """.format(sheet=json.dumps(sheet)))
+    assert got[0] is None and got[1] is True and got[2] is None
+    assert got[3] is True
+    assert got[4] == [[0, 65], [16, 69], [96, 69], [112, 73], [128, 72]]
+    assert got[5] is None and got[6] == 8
+    assert got[7] == 0 and got[8] == 2 and got[9] == 69
+
+
+@needs_node
+def test_the_bars_the_roll_marks_are_the_bars_the_server_rewrites():
+    from yue2_comfy import notation
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        let m = r.modelOf(sheet);
+        m = r.moveNotes(m, "Vocal", [m.notes.Vocal[2].id], 0, 2, sheet.total);
+        m = r.setChord(m, 96, "Dm7");
+        const added = r.addNote(m, "Ins", 72, 8, 65, sheet.total);
+        console.log(JSON.stringify({{bars: r.changedBars(sheet, added.model), sheet: r.sheetOf(added.model),
+                                    bad: r.setChord(m, 0, "Cmaj9"), cut: r.removeChord(m, 0).chords.length}}));
+    """.format(sheet=json.dumps(sheet)))
+    written = notation.write(ROLL_SCORE, got["sheet"])
+    assert got["bars"] == written["bars"] == [1, 2, 3]
+    assert got["bad"] is None and got["cut"] == 3
+
+
+@needs_node
+def test_rests_open_up_for_the_engraver_and_the_header_is_read():
+    sheet = roll_sheet()
+    got = run_roll("console.log(JSON.stringify([r.forNotation({abc}), r.headerFacts({abc})]));"
+                   .format(abc=json.dumps(ROLL_SCORE)))
+    assert "Z|Z|" in got[0] and "Z2" not in got[0]
+    assert got[1] == {"key": "F", "meter": "4/4", "bpm": 120, "bars": len(sheet["bars"])}
+
+
+@needs_node
+def test_playback_starts_inside_a_held_note_and_holds_each_chord_to_the_next():
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        console.log(JSON.stringify([
+            r.events(sheet, m, 136, {{Vocal: true, Ins: false, chords: false}}),
+            r.events(sheet, m, 0, {{Vocal: false, Ins: false, chords: true}}).slice(0, 3),
+            r.secondsAt(sheet, 32),
+        ]));
+    """.format(sheet=json.dumps(sheet)))
+    tick = 60 / (120 * 8)
+    assert got[0] == [{"at": 0, "length": 40 * tick, "pitch": 72, "part": "Vocal"}]
+    assert got[1] == [{"at": 0, "length": 32 * tick, "pitch": p, "part": "chords"} for p in (53, 57, 60)]
+    assert got[2] == 2.0
+
+
+@needs_node
+def test_history_undoes_and_redoes_in_order():
+    got = run_roll("""
+        const h = new r.History(2);
+        h.push("a"); h.push("b"); h.push("c");
+        const back = h.undo("d");
+        const again = h.undo(back);
+        const forward = h.redo(again);
+        console.log(JSON.stringify([back, again, forward, h.undo(forward), h.undo("x"), h.canRedo]));
+    """)
+    assert got == ["c", "b", "c", "b", None, True]
+
+
+@needs_node
+def test_the_mark_of_the_words_comes_off_and_goes_on_as_the_server_does_it():
+    """The editor puts the mark on and the node takes it off; a disagreement would sing a comment."""
+    from yue2_comfy import edits
+    words = edits.mark("style", "lyrics", "full")
+    marked = edits.attach(ROLL_SCORE, words)
+    texts = [ROLL_SCORE, marked, marked.replace("\n", "\r\n") + "\r\n",
+             ROLL_SCORE + "%yue2-words not-a-mark\n", "", edits.attach("", words),
+             "X:1\n%yue2-words " + words + "\nK:C"]
+    got = run_roll("""
+        const texts = {texts};
+        console.log(JSON.stringify({{split: texts.map((t) => r.splitMark(t)),
+                                    attached: [r.attachMark({score}, {words}), r.attachMark({score}, null)]}}));
+    """.format(texts=json.dumps(texts), score=json.dumps(ROLL_SCORE), words=json.dumps(words)))
+    assert got["attached"] == [marked, edits.attach(ROLL_SCORE, None)]
+    assert [[x["score"], x["words"]] for x in got["split"]] == [
+        [found.score, found.words] for found in map(edits.read, texts)]
+
+
+def test_the_browser_listens_for_the_notices_the_nodes_send():
+    """A notice nobody listens for lands in the console as an unhandled message and nowhere else.
+
+    That is how every warning and refusal toast of this pack went unseen until
+    the score editor's first warning was looked for on screen.
+    """
+    from yue2_comfy import progress
+    source = (WEB / "yue2_notices.js").read_text(encoding="utf-8")
+    assert 'const NOTICES_EVENT = "{}";'.format(progress.NOTICES_EVENT) in source
+    assert "api.addEventListener(NOTICES_EVENT," in source
+
+
 @needs_node
 def test_the_summary_counts_sung_lines_per_section():
     got = run_sheet("console.log(JSON.stringify(s.summarize({}, {})));".format(

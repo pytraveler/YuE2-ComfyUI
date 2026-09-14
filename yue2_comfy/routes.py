@@ -1,8 +1,12 @@
-"""HTTP routes behind the song editor's window.
+"""HTTP routes behind the song editor's and the score editor's windows.
 
 Registered on import. A failure here must never stop the nodes from loading --
-the editor is a convenience on top of widgets that work without it -- so the
-registration is guarded and logged rather than raised.
+both editors are conveniences on top of widgets that work without them -- so
+the registration is guarded and logged rather than raised.
+
+The score routes answer 200 with ``ok: false`` and a message when a score or an
+edit cannot be used, because that is something the person editing needs to
+read, and 400 only when the request itself is not what the editor sends.
 """
 
 from __future__ import annotations
@@ -43,11 +47,73 @@ def answer_tokens(body) -> tuple:
         return {"ok": True, "available": False, "problem": str(error)}, 200
 
 
+def _score_problem(error) -> dict:
+    """A failure the editor shows as it is, logged when it is not the person's doing."""
+    if not isinstance(error, ValueError):
+        log.warning("[yue2_comfy.routes] the score editor failed: %s", error, exc_info=True)
+        return {"ok": False, "error": "The score editor hit an error it did not expect: "
+                                      "{}".format(error)}
+    return {"ok": False, "error": str(error)}
+
+
+def answer_score_read(body) -> tuple:
+    """``(payload, status)`` for the score editor asking to draw a score."""
+    if not isinstance(body, dict) or not isinstance(body.get("abc"), str):
+        return {"ok": False, "error": "Send a JSON object with the score as 'abc'."}, 400
+
+    from . import notation
+
+    try:
+        return {"ok": True, "sheet": notation.read(body["abc"])}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        return _score_problem(error), 200
+
+
+def answer_score_write(body) -> tuple:
+    """``(payload, status)`` for the score editor writing an edit into a score.
+
+    The answer carries the new text, the bars that were written again, and the
+    new text read back, so the window redraws from what the score now says
+    rather than from what it asked for.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("abc"), str) \
+            or "sheet" not in body:
+        return {"ok": False, "error": "Send a JSON object with the score as 'abc' and "
+                                      "the edit as 'sheet'."}, 400
+
+    from . import notation
+
+    try:
+        written = notation.write(body["abc"], body["sheet"])
+        return {"ok": True, "abc": written["abc"], "bars": written["bars"],
+                "sheet": notation.read(written["abc"])}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        return _score_problem(error), 200
+
+
 def register() -> None:
     from aiohttp import web
     from server import PromptServer
 
     routes = PromptServer.instance.routes
+
+    async def body_of(request):
+        try:
+            return await request.json()
+        except ValueError:
+            return None
+
+    @routes.post(PREFIX + "/score/read")
+    async def score_read(request):
+        """A score as notes, for the piano roll."""
+        payload, status = await asyncio.to_thread(answer_score_read, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/score/write")
+    async def score_write(request):
+        """Edited notes written back into the score."""
+        payload, status = await asyncio.to_thread(answer_score_write, await body_of(request))
+        return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/tokens")
     async def lyric_tokens(request):

@@ -235,7 +235,8 @@ def test_an_empty_box_writes_a_score_as_the_node_always_has(monkeypatch):
     assert calls == [{"edited": None, "cot": cot}]
     assert said == []
     assert out["ui"] == {edits.SCORE_UI: [WRITTEN],
-                         edits.WORDS_UI: [edits.mark("a style", "words", cot)]}
+                         edits.WORDS_UI: [edits.mark("a style", "words", cot)],
+                         edits.AUTO_SECONDS_UI: [constants.auto_seconds("words")]}
     assert out["result"][1] == WRITTEN
 
 
@@ -246,7 +247,8 @@ def test_an_edit_for_these_words_is_sung_instead_of_writing_a_score(monkeypatch)
     out = sing_with(edits.attach(EDITED, edits.mark("a style", "words", cot)))
     assert calls == [{"edited": EDITED, "cot": cot}]
     assert said == []
-    assert out["ui"] == {edits.WORDS_UI: [edits.mark("a style", "words", cot)]}
+    assert out["ui"] == {edits.WORDS_UI: [edits.mark("a style", "words", cot)],
+                         edits.AUTO_SECONDS_UI: [constants.auto_seconds("words")]}
     assert out["result"][1] == EDITED
 
 
@@ -272,6 +274,18 @@ def test_with_cot_off_an_edit_waits_on_the_node(monkeypatch):
     sing_with(EDITED, options=dict(constants.DEFAULT_OPTIONS, cot="off"))
     assert calls == [{"edited": None, "cot": "off"}]
     assert said[0][0][1] == edits.COT_OFF
+
+
+def test_the_song_node_tells_the_editor_how_long_its_lyrics_let_a_song_run(monkeypatch):
+    """Lyrics wired in from 'YuE2 Write Song' are not on the canvas for the editor to count.
+
+    The editor reads 'max_seconds' off the options node itself, so what the node
+    reports is the ceiling at 0, whatever the options say.
+    """
+    stub_run(monkeypatch)
+    lyrics = "[Verse]\none\ntwo\nthree"
+    out = sing_with("", lyrics=lyrics, options=dict(constants.DEFAULT_OPTIONS, max_seconds=60.0))
+    assert out["ui"][edits.AUTO_SECONDS_UI] == [constants.auto_seconds(lyrics)]
 
 
 def test_max_seconds_widget_offers_the_automatic_zero():

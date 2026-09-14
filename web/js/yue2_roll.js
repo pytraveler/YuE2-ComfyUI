@@ -79,6 +79,52 @@ export function clock(seconds) {
     return Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0");
 }
 
+export const AUTO_BASE_SECONDS = 12;
+export const AUTO_SECONDS_PER_LINE = 12;
+export const AUTO_MIN_SECONDS = 40;
+export const AUTO_INSTRUMENTAL_SECONDS = 180;
+export const MAX_SECONDS = 360;
+
+const LINE_BREAKS = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+
+export function sungLines(lyrics) {
+    let count = 0;
+    for (const piece of String(lyrics ?? "").split(LINE_BREAKS)) {
+        const line = piece.trim();
+        if (!line || (line.startsWith("[") && line.endsWith("]"))) continue;
+        count += 1;
+    }
+    return count;
+}
+
+export function autoSeconds(lyrics) {
+    const lines = sungLines(lyrics);
+    if (lines === 0) return AUTO_INSTRUMENTAL_SECONDS;
+    return Math.min(MAX_SECONDS, Math.max(AUTO_MIN_SECONDS, AUTO_BASE_SECONDS + AUTO_SECONDS_PER_LINE * lines));
+}
+
+export function lengthLimit(maxSeconds, lyrics, reported) {
+    if (maxSeconds === null || maxSeconds === undefined) return null;
+    const requested = Number(maxSeconds) || 0;
+    if (requested > 0) return { seconds: requested, auto: false };
+    if (typeof lyrics === "string") return { seconds: autoSeconds(lyrics), auto: true };
+    const known = Number(reported);
+    return known > 0 ? { seconds: known, auto: true } : null;
+}
+
+export function limitTick(sheet, seconds) {
+    return (seconds * sheet.bpm * sheet.per_quarter) / 60;
+}
+
+export function barsAfter(sheet, seconds) {
+    const edge = limitTick(sheet, seconds) - 1e-6;
+    const after = [];
+    sheet.bars.forEach((bar, index) => {
+        if (bar.start >= edge) after.push(index);
+    });
+    return after;
+}
+
 export function barAt(sheet, tick) {
     const bars = sheet.bars;
     let low = 0;

@@ -19,7 +19,7 @@ import time
 
 from . import placement, runtime, transpose
 from .constants import (
-    AUTO_MIN_SECONDS, CONTEXT, FRAME_SECONDS, SAMPLE_RATE, auto_seconds,
+    AUTO_MIN_SECONDS, CONTEXT, FRAME_SECONDS, SAMPLE_RATE, length_ceiling,
     normalize_seed, seconds_to_tokens, sung_lines,
 )
 
@@ -176,9 +176,8 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
     from .vendor.yue2 import nar
     from .vendor.yue2.sampling import generate_tokens
 
-    requested = float(settings["max_seconds"])
-    automatic = requested <= 0
-    seconds = auto_seconds(lyrics) if automatic else requested
+    automatic = float(settings["max_seconds"]) <= 0
+    seconds = length_ceiling(settings["max_seconds"], lyrics)
     if automatic:
         log.info("[yue2_comfy.generate] length ceiling %.0f s, from %d sung lines",
                  seconds, sung_lines(lyrics))

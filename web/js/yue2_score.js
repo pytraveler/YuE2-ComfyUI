@@ -8,10 +8,19 @@ import * as roll from "./yue2_roll.js";
 const RENDER = "YuE2RenderPlan";
 const GENERATE = "YuE2GenerateSong";
 const PLAN_NODES = ["YuE2Plan", "YuE2SelectPlan"];
+const SELECT = "YuE2SelectPlan";
+const BATCH = "YuE2PlanBatch";
+const OPTIONS_NODE = "YuE2Options";
 const SCORE = "score_abc";
 const PLAN = "plan";
+const PLANS = "plans";
+const OPTIONS = "options";
+const LYRICS = "lyrics";
+const MAX_SECONDS = "max_seconds";
+const MUTED_MODES = [2, 4];
 const SCORE_UI = "yue2_score";
 const WORDS_UI = "yue2_words";
+const AUTO_SECONDS_UI = "yue2_auto_seconds";
 const SCORE_EVENT = "yue2-score-written";
 const READ_ROUTE = "/yue2/score/read";
 const WRITE_ROUTE = "/yue2/score/write";
@@ -29,6 +38,10 @@ const CHORD_H = 24;
 const ROW_H = 14;
 const EDGE_PX = 7;
 const CHANGED_RED = "#C0392B";
+const LIMIT_LINE = "#E06666";
+const LIMIT_SHADE = "rgba(0, 0, 0, 0.5)";
+const LIMIT_CHIP = "#6E2C2C";
+const TIMES_KEPT = 200;
 
 const PART_COLORS = { Vocal: "#4E98C4", Ins: "#5FA37A" };
 const PART_NAMES = { Vocal: "Voice part", Ins: "Instrument part" };
@@ -63,6 +76,15 @@ const RETRY_HERE =
     "changes. The edit belongs to these words: with other lyrics or another style the node writes a " +
     "new score instead.";
 
+const LIMIT_TOOLTIP =
+    "'max_seconds' in YuE2 Options ends the singing here, however far the score runs on. " +
+    "Bars after the red line are not sung; raising 'max_seconds' brings them in, and makes a new take.";
+const LIMIT_AUTO_TOOLTIP =
+    "With 'max_seconds' at 0 a song may run " + roll.AUTO_SECONDS_PER_LINE + " seconds for each sung line plus "
+    + roll.AUTO_BASE_SECONDS + ", at least " + roll.AUTO_MIN_SECONDS + " and at most " + roll.MAX_SECONDS
+    + ", or " + roll.AUTO_INSTRUMENTAL_SECONDS + " when there are no lines to count. Bars after the red line "
+    + "are not sung; a higher 'max_seconds' in YuE2 Options brings them in, and makes a new take.";
+
 const CHORD_HELP =
     "Chord symbols are a root from A to G with an optional # or b, then one of: nothing (major), " +
     "m, dim, aug, 7, maj7, m7, dim7, m7b5, sus4, sus2, 6, m6, 7sus4, m(maj7) -- and an optional " +
@@ -87,6 +109,7 @@ const SCORE_STYLE = `
 .yue2-s-grow { flex: 1 1 auto; }
 .yue2-s-gap { width: 10px; }
 .yue2-s-facts { font-size: 12px; color: var(--descrip-text, #999); white-space: nowrap; }
+.yue2-s-facts .yue2-s-warn { cursor: help; }
 .yue2-s-check { font-size: 12px; display: inline-flex; gap: 4px; align-items: center;
     color: var(--descrip-text, #bbb); user-select: none; }
 .yue2-s-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -124,6 +147,8 @@ const SCORE_STYLE = `
 
 let AUDIO = null;
 let ABCJS_LOADING = null;
+const TIMES = new Map();
+const TIMES_ASKED = new Set();
 
 function clamp(value, low, high) {
     return Math.min(high, Math.max(low, value));
@@ -196,6 +221,70 @@ function scoreSource(node) {
     if (isGenerate(node)) return { node, own: true };
     const origin = planSource(node);
     return origin ? { node: origin, own: false } : null;
+}
+
+function isNodeOf(node, type) {
+    return node?.type === type || node?.comfyClass === type;
+}
+
+function upstreamOf(node, name, wanted) {
+    let origin = node ? sourceOf(node, name) : null;
+    for (let hop = 0; origin && hop < 16; hop++) {
+        if (wanted(origin)) return origin;
+        if (origin.type !== "Reroute") return null;
+        origin = linkOrigin(origin, 0);
+    }
+    return null;
+}
+
+function optionsNodeFor(node) {
+    const found = upstreamOf(node, OPTIONS, (origin) => isNodeOf(origin, OPTIONS_NODE));
+    return found && !MUTED_MODES.includes(found.mode) ? found : null;
+}
+
+function limitFor(node) {
+    const own = isGenerate(node);
+    const source = own ? node : planSource(node);
+    if (!source) return null;
+    const writer = isNodeOf(source, SELECT)
+        ? upstreamOf(source, PLANS, (origin) => isNodeOf(origin, BATCH))
+        : source;
+    const settings = optionsNodeFor(node) || (own ? null : optionsNodeFor(writer));
+    let most = settings || writer ? 0 : null;
+    if (settings) {
+        most = sourceOf(settings, MAX_SECONDS) ? null : Number(widgetNamed(settings, MAX_SECONDS)?.value) || 0;
+    }
+    const typed = writer && !sourceOf(writer, LYRICS) ? widgetNamed(writer, LYRICS)?.value : null;
+    return roll.lengthLimit(most, typeof typed === "string" ? typed : null, source.__yue2AutoSeconds);
+}
+
+function limitReason(limit) {
+    return limit.auto ? "the length limit worked out from the lyrics" : "'max_seconds'";
+}
+
+function limitRemedy(limit) {
+    return limit.auto ? "unless 'max_seconds' is set higher in YuE2 Options" : "until it is raised";
+}
+
+function sheetTimes(abc) {
+    const text = String(abc || "").trim();
+    if (!text) return null;
+    if (TIMES.has(text)) return TIMES.get(text);
+    if (TIMES_ASKED.has(text)) return null;
+    TIMES_ASKED.add(text);
+    ask(READ_ROUTE, { abc: text })
+        .then(({ ok, payload }) => (ok && payload?.ok ? {
+            bpm: payload.sheet.bpm, per_quarter: payload.sheet.per_quarter, seconds: payload.sheet.seconds,
+            bars: payload.sheet.bars.map((bar) => ({ start: bar.start })),
+        } : false))
+        .catch(() => false)
+        .then((times) => {
+            TIMES_ASKED.delete(text);
+            TIMES.set(text, times);
+            while (TIMES.size > TIMES_KEPT) TIMES.delete(TIMES.keys().next().value);
+            refreshScoreSummaries();
+        });
+    return null;
 }
 
 function graphNodes() {
@@ -335,6 +424,7 @@ class ScoreEditor {
         this.own = Boolean(source?.own);
         this.planScore = this.origin?.__yue2Score || null;
         this.planWords = this.origin?.__yue2Words || null;
+        this.limit = limitFor(node);
         this.baseWords = null;
         this.player = new Player();
         this.sequence = 0;
@@ -607,23 +697,54 @@ class ScoreEditor {
                 this.snap = Number(value);
                 this.draw();
             }));
-        const bars = sheet.bars.length;
-        const key = sheet.bars[0]?.key || "";
-        const meter = sheet.bars[0]?.meter || "";
-        this.facts.textContent = [key && "Key " + key, meter, sheet.bpm + " BPM",
-            bars + " bars", roll.clock(sheet.seconds)].filter(Boolean).join(" \u00B7 ");
+        this.paintFacts();
         this.playhead = 0;
         if (fit) this.fitView();
         this.showTab(this.tab);
-        this.setStatus(this.describe());
+        this.showDescription();
         this.refresh();
+    }
+
+    paintFacts() {
+        const sheet = this.sheet;
+        const key = sheet.bars[0]?.key || "";
+        const meter = sheet.bars[0]?.meter || "";
+        this.facts.replaceChildren([key && "Key " + key, meter, sheet.bpm + " BPM",
+            sheet.bars.length + " bars", roll.clock(sheet.seconds)].filter(Boolean).join(" \u00B7 "));
+        if (this.cutTick() === null) return;
+        const sung = element("span", "yue2-s-warn", " \u00B7 sung up to " + roll.clock(this.limit.seconds));
+        sung.title = this.limit.auto ? LIMIT_AUTO_TOOLTIP : LIMIT_TOOLTIP;
+        this.facts.appendChild(sung);
+    }
+
+    cutTick() {
+        if (!this.sheet || !this.limit) return null;
+        const tick = roll.limitTick(this.sheet, this.limit.seconds);
+        return tick < this.sheet.total ? tick : null;
+    }
+
+    lateBars(bars) {
+        if (this.cutTick() === null) return [];
+        const late = new Set(roll.barsAfter(this.sheet, this.limit.seconds));
+        return bars.filter((bar) => late.has(bar));
     }
 
     describe() {
         if (!this.changed.length) {
-            return this.sheet ? "No changes. This is the score as it came in." : "";
+            if (!this.sheet) return "";
+            return "No changes. This is the score as it came in." + (this.cutTick() === null ? ""
+                : " Only its first " + roll.clock(this.limit.seconds) + " is sung: " + limitReason(this.limit)
+                    + " ends the song at the red line.");
         }
-        return "Bars " + barList(this.changed) + " will be written again; every other bar stays exactly as it was.";
+        const late = this.lateBars(this.changed);
+        return "Bars " + barList(this.changed) + " will be written again; every other bar stays exactly as it was."
+            + (late.length ? " Bars " + barList(late) + " come after " + roll.clock(this.limit.seconds) + ", where "
+                + limitReason(this.limit) + " ends the song: they will not be heard " + limitRemedy(this.limit) + "."
+                : "");
+    }
+
+    showDescription() {
+        this.setStatus(this.describe(), this.lateBars(this.changed).length > 0);
     }
 
     fillEmpty(problem) {
@@ -824,6 +945,15 @@ class ScoreEditor {
         }
         this.drawPart(c, model, this.part === "Vocal" ? "Ins" : "Vocal", true, first, lastTick);
         this.drawPart(c, model, this.part, false, first, lastTick);
+        const cut = this.cutTick();
+        const cutX = cut === null ? null : this.x(cut);
+        if (cutX !== null && cutX < W) {
+            const shadeFrom = Math.max(KEYS_W, cutX);
+            c.fillStyle = LIMIT_SHADE;
+            c.fillRect(shadeFrom, top, W - shadeFrom, H - top);
+            c.fillStyle = LIMIT_LINE;
+            if (cutX >= KEYS_W) c.fillRect(Math.round(cutX) - 1, top, 2, H - top);
+        }
         if (this.drag?.mode === "box") {
             const x0 = this.x(this.drag.tick);
             const x1 = this.x(this.drag.toTick);
@@ -878,6 +1008,17 @@ class ScoreEditor {
             c.font = "11px system-ui, sans-serif";
             c.fillText(chord.name, chordX + 5, RULER_H + CHORD_H - 8);
             c.font = "10px system-ui, sans-serif";
+        }
+        if (cutX !== null && cutX >= KEYS_W && cutX <= W) {
+            c.fillStyle = LIMIT_LINE;
+            c.fillRect(Math.round(cutX) - 1, 0, 2, top);
+            const chip = (this.limit.auto ? "lyrics limit " : "max_seconds ") + roll.clock(this.limit.seconds);
+            const chipW = c.measureText(chip).width + 10;
+            const chipX = cutX + 1 + chipW > W ? cutX - 1 - chipW : cutX + 1;
+            c.fillStyle = LIMIT_CHIP;
+            c.fillRect(chipX, 18, chipW, 15);
+            c.fillStyle = "#FFE3E3";
+            c.fillText(chip, chipX + 5, 29);
         }
         const marker = this.playTick ?? this.playhead;
         const markerX = this.x(marker);
@@ -1306,7 +1447,7 @@ class ScoreEditor {
             if (document.activeElement !== this.textBox) this.textBox.value = payload.abc;
             this.notesDrawn = null;
             if (this.tab === "notes") this.drawNotes();
-            this.setStatus(this.describe());
+            this.showDescription();
         } else {
             this.setStatus(payload.error || "The edit could not be written into the score.", true);
             if (this.good && this.good !== this.model) {
@@ -1450,6 +1591,12 @@ class ScoreEditor {
 
     scoreArrived(detail) {
         if (!detail || !this.origin || String(detail.id) !== String(this.origin.id)) return;
+        this.limit = limitFor(this.node);
+        if (this.sheet) {
+            this.paintFacts();
+            this.showDescription();
+            this.draw();
+        }
         if (typeof detail.words === "string") this.planWords = detail.words;
         if (typeof detail.score !== "string") {
             this.refresh();
@@ -1571,6 +1718,25 @@ function paintScoreSummary(node) {
     const holder = node.__yue2ScoreSummary;
     if (!holder) return;
     holder.replaceChildren();
+    fillScoreSummary(node, holder);
+    const count = Math.max(2, holder.childElementCount);
+    if (node.__yue2ScoreRows !== count) {
+        node.__yue2ScoreRows = count;
+        growToFit(node);
+    }
+}
+
+function growToFit(node) {
+    try {
+        const wanted = node.computeSize?.()?.[1];
+        if (wanted && node.size && node.size[1] < wanted) node.setSize?.([node.size[0], wanted]);
+    } catch (error) {
+        console.warn("[YuE2] the score summary could not resize its node:", error);
+    }
+    node.setDirtyCanvas?.(true, true);
+}
+
+function fillScoreSummary(node, holder) {
     const row = (...parts) => {
         const line = element("div");
         line.append(...parts);
@@ -1598,12 +1764,23 @@ function paintScoreSummary(node) {
         return [found.key && "Key " + found.key, found.meter, found.bpm && found.bpm + " BPM",
             found.bars && found.bars + " bars"].filter(Boolean).join(" \u00B7 ");
     };
+    const limitRow = (abc, edited) => {
+        const limit = limitFor(node);
+        const times = limit ? sheetTimes(abc) : null;
+        if (!times || times.seconds <= limit.seconds) return;
+        const late = roll.barsAfter(times, limit.seconds).filter((bar) => edited.includes(bar));
+        const why = limit.auto ? " (lyrics limit)" : " (max_seconds)";
+        row(late.length
+            ? warn("Bars " + barList(late) + " come after " + roll.clock(limit.seconds) + why + " and are not sung.")
+            : dim("Sung up to " + roll.clock(limit.seconds) + " of " + roll.clock(times.seconds) + why + "."));
+    };
     if (box.score) {
         row(strong("Edited score"), dim(" \u00B7 " + facts(box.score)));
         const bars = node.properties?.yue2_score_bars || [];
         const base = node.properties?.yue2_score_base;
         const rewritten = bars.length ? "Bars " + barList(bars) + " rewritten" : "Sung as it stands";
-        if (box.words && planWords && box.words !== planWords) {
+        const otherWords = Boolean(box.words && planWords && box.words !== planWords);
+        if (otherWords) {
             row(warn(own ? "Made for other words: this node writes a new score instead."
                 : "Made for other words: the plan's own score is sung instead."));
         } else if (planScore && base && base !== hashText(String(planScore).trim())) {
@@ -1614,12 +1791,14 @@ function paintScoreSummary(node) {
         } else {
             row(dim(bars.length ? rewritten + "; the rest as the model wrote it." : "Sung as it stands in this node."));
         }
+        if (!otherWords) limitRow(box.score, bars);
         return;
     }
     if (planScore) {
         row(strong("The model's score"), dim(" \u00B7 " + facts(planScore)));
         row(dim(own ? "Written by the model on each run. Edit score\u2026 to change notes."
             : "Sung exactly as written. Edit score\u2026 to change notes."));
+        limitRow(planScore, []);
         return;
     }
     if (own) {
@@ -1692,7 +1871,8 @@ function installScoreEditor(node) {
         reset.hidden = true;
         node.__yue2ScoreButton = edit;
         node.__yue2ResetButton = reset;
-        panelWidget(node, SCORE_SUMMARY, summary, () => SONG_SUMMARY_H);
+        panelWidget(node, SCORE_SUMMARY, summary, () => (node.__yue2ScoreRows > 2 ? SUMMARY_H : SONG_SUMMARY_H));
+        repaintOnChange(node, LYRICS);
         queueMicrotask(() => {
             try {
                 settleBesideTheSongButton(node, [edit, reset]);
@@ -1724,9 +1904,40 @@ function installScoreEditor(node) {
     paintScoreSummary(node);
 }
 
+function repaintOnChange(node, name) {
+    const widget = widgetNamed(node, name);
+    if (!widget || widget.__yue2Repaints) return;
+    const original = widget.callback;
+    widget.callback = function () {
+        const result = original?.apply(this, arguments);
+        setTimeout(refreshScoreSummaries, 0);
+        return result;
+    };
+    widget.__yue2Repaints = true;
+}
+
+function watchForLimits(nodeType, name) {
+    const onNodeCreated = nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated = function () {
+        const result = onNodeCreated?.apply(this, arguments);
+        repaintOnChange(this, name);
+        return result;
+    };
+    const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+    nodeType.prototype.onConnectionsChange = function () {
+        const result = onConnectionsChange?.apply(this, arguments);
+        setTimeout(refreshScoreSummaries, 0);
+        return result;
+    };
+}
+
 app.registerExtension({
     name: "yue2.score_editor",
     async beforeRegisterNodeDef(nodeType, nodeData) {
+        if (nodeData.name === OPTIONS_NODE) {
+            watchForLimits(nodeType, MAX_SECONDS);
+            return;
+        }
         const plan = PLAN_NODES.includes(nodeData.name);
         const own = nodeData.name === GENERATE;
         if (plan || own) {
@@ -1735,22 +1946,21 @@ app.registerExtension({
                 const result = onExecuted?.apply(this, arguments);
                 const score = message?.[SCORE_UI]?.[0];
                 const words = message?.[WORDS_UI]?.[0];
+                const auto = message?.[AUTO_SECONDS_UI]?.[0];
                 if (typeof score === "string") this.__yue2Score = score;
                 if (typeof words === "string") this.__yue2Words = words;
+                if (typeof auto === "number") this.__yue2AutoSeconds = auto;
                 if (typeof score === "string" || typeof words === "string") {
                     window.dispatchEvent(new CustomEvent(SCORE_EVENT, { detail: { id: this.id, score, words } }));
+                }
+                if (typeof score === "string" || typeof words === "string" || typeof auto === "number") {
                     refreshScoreSummaries();
                 }
                 return result;
             };
         }
-        if (plan) {
-            const onConnectionsChange = nodeType.prototype.onConnectionsChange;
-            nodeType.prototype.onConnectionsChange = function () {
-                const result = onConnectionsChange?.apply(this, arguments);
-                setTimeout(refreshScoreSummaries, 0);
-                return result;
-            };
+        if (plan || nodeData.name === BATCH) {
+            watchForLimits(nodeType, LYRICS);
             return;
         }
         if (nodeData.name !== RENDER && !own) return;

@@ -120,17 +120,21 @@ def test_the_plan_nodes_hand_their_score_to_the_score_editor(monkeypatch):
     ComfyUI lets a partial run target only an output node. The render node stays
     an ordinary node and the batch node too, so queueing a plan node alone never
     sings. With the score goes the mark of the words it was written for, which
-    the editor puts on an edit so the render node can tell when they move on.
+    the editor puts on an edit so the render node can tell when they move on, and
+    the ceiling those words give a song, which the editor draws on the piano roll
+    when they came in through a wire.
     """
     stub_score(monkeypatch)
     written = staged.YuE2Plan().plan(style="a style", lyrics="words", seed=7)
     cot = constants.DEFAULT_OPTIONS["cot"]
     assert written["ui"] == {staged.SCORE_UI: [SCORE],
-                             staged.WORDS_UI: [edits.mark("a style", "words", cot)]}
+                             staged.WORDS_UI: [edits.mark("a style", "words", cot)],
+                             staged.AUTO_SECONDS_UI: [constants.auto_seconds("words")]}
     plans = [{"score": "first"},
              {"score": "second", "style": "s", "lyrics": "l", "settings": {"cot": "melody"}}]
     assert staged.YuE2SelectPlan().select(plans, 1)["ui"] == {
-        staged.SCORE_UI: ["second"], staged.WORDS_UI: [edits.mark("s", "l", "melody")]}
+        staged.SCORE_UI: ["second"], staged.WORDS_UI: [edits.mark("s", "l", "melody")],
+        staged.AUTO_SECONDS_UI: [constants.auto_seconds("l")]}
     assert staged.YuE2Plan.OUTPUT_NODE is True
     assert staged.YuE2SelectPlan.OUTPUT_NODE is True
     assert not getattr(staged.YuE2RenderPlan, "OUTPUT_NODE", False)

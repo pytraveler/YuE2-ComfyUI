@@ -68,6 +68,14 @@ def test_the_default_length_is_automatic():
     assert constants.DEFAULT_OPTIONS["max_seconds"] == 0.0
 
 
+def test_the_length_ceiling_is_max_seconds_or_the_one_the_lyrics_give():
+    """Where the singing stage stops, and where the score editor draws its line."""
+    lyrics = "[Verse]\na\nb\n\n[Chorus]\nc\nd"
+    assert constants.length_ceiling(60, lyrics) == 60.0
+    assert constants.length_ceiling(0, lyrics) == constants.auto_seconds(lyrics)
+    assert constants.length_ceiling(None, "") == constants.AUTO_INSTRUMENTAL_SECONDS
+
+
 def test_a_short_ceiling_needs_the_floor_brought_down_with_it():
     """The crash this guards against, seen in the ComfyUI log on 2026-09-12.
 

@@ -357,7 +357,8 @@ class YuE2GenerateSong:
             timing["semantic"]["execution"], timing["semantic"]["attention"], seed,
         )
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
-        ui = {edits.WORDS_UI: [edits.mark(style, lyrics, settings["cot"])]}
+        ui = {edits.WORDS_UI: [edits.mark(style, lyrics, settings["cot"])],
+              edits.AUTO_SECONDS_UI: [auto_seconds(lyrics)]}
         if edited is None:
             ui[edits.SCORE_UI] = [written]
         return {"ui": ui,

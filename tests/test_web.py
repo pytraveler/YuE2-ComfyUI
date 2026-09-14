@@ -455,6 +455,40 @@ def test_the_mark_of_the_words_comes_off_and_goes_on_as_the_server_does_it():
         [found.score, found.words] for found in map(edits.read, texts)]
 
 
+@needs_node
+def test_the_length_limit_is_the_ceiling_the_singing_stage_stops_at():
+    """The red line on the piano roll has to fall where the song really stops."""
+    lyrics = ["", "[Intro]\n[Outro]", "one line", constants.DEFAULT_LYRICS,
+              "[Verse]\r\na\r\n\r\n  b  \n[Chorus]\n\tc", "line\n" * 40, "[Verse] sung anyway\n[x]"]
+    maxima = [0, 60, 12.5, -3]
+    got = run_roll("""
+        const lyrics = {lyrics};
+        console.log(JSON.stringify({{
+            lines: lyrics.map((text) => r.sungLines(text)),
+            limits: {maxima}.flatMap((most) => lyrics.map((text) => r.lengthLimit(most, text).seconds)),
+            unknown: r.lengthLimit(null, "a"),
+            wired: [r.lengthLimit(0, null, 204), r.lengthLimit(60, null, 204), r.lengthLimit(0, null)],
+        }}));
+    """.format(lyrics=json.dumps(lyrics), maxima=json.dumps(maxima)))
+    assert got["lines"] == [constants.sung_lines(text) for text in lyrics]
+    assert got["limits"] == [constants.length_ceiling(most, text) for most in maxima for text in lyrics]
+    assert got["unknown"] is None
+    assert got["wired"] == [{"seconds": 204, "auto": True}, {"seconds": 60, "auto": False}, None]
+
+
+@needs_node
+def test_the_bars_past_the_limit_are_the_bars_that_start_after_it():
+    """A bar the limit cuts through is still partly heard, so only the bars after it are named."""
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        console.log(JSON.stringify([r.limitTick(sheet, 5), r.barsAfter(sheet, 5), r.barsAfter(sheet, 6),
+                                    r.barsAfter(sheet, sheet.seconds), r.barsAfter(sheet, 0)]));
+    """.format(sheet=json.dumps(sheet)))
+    assert sheet["seconds"] == 12.0
+    assert got == [80, [3, 4, 5], [3, 4, 5], [], [0, 1, 2, 3, 4, 5]]
+
+
 def test_the_browser_listens_for_the_notices_the_nodes_send():
     """A notice nobody listens for lands in the console as an unhandled message and nowhere else.
 

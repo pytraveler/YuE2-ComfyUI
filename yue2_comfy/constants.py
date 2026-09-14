@@ -215,6 +215,17 @@ def auto_seconds(lyrics: str) -> float:
     return min(MAX_SECONDS, max(AUTO_MIN_SECONDS, seconds))
 
 
+def length_ceiling(max_seconds, lyrics: str) -> float:
+    """The most seconds a run sings: 'max_seconds', or at 0 the ceiling the lyrics give.
+
+    The singing stage stops there however far the score runs on, and the score
+    editor draws the same line across its piano roll. Both read it from here, so
+    the line on the screen is where the song really ends.
+    """
+    requested = float(max_seconds or 0)
+    return requested if requested > 0 else auto_seconds(lyrics)
+
+
 def length_lines(choice) -> int:
     """How many sung lines a length word asks for.
 

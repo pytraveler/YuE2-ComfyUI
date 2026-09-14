@@ -24,9 +24,9 @@ from . import devices, edits
 from .constants import (
     ADVANCED_CATEGORY, DEFAULT_LYRICS, DEFAULT_OPTIONS, DEFAULT_STYLE,
     LATENTS_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE, PLANS_TYPE,
-    SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, normalize_seed,
+    SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, auto_seconds, normalize_seed,
 )
-from .edits import SCORE_UI, WORDS_UI
+from .edits import AUTO_SECONDS_UI, SCORE_UI, WORDS_UI
 from .progress import (NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 
@@ -271,7 +271,8 @@ class YuE2Plan:
                  len(ids), timing.get("abc", {}).get("seconds", 0.0), seed)
         progress.finish("{} tokens of score".format(len(ids)))
         return {"ui": {SCORE_UI: [score],
-                       WORDS_UI: [edits.mark(style, lyrics, settings["cot"])]},
+                       WORDS_UI: [edits.mark(style, lyrics, settings["cot"])],
+                       AUTO_SECONDS_UI: [auto_seconds(lyrics)]},
                 "result": (_made(style, lyrics, seed, settings, score, ids, timing), score)}
 
 
@@ -363,7 +364,9 @@ class YuE2SelectPlan:
         score = plan.get("score") or ""
         cot = (plan.get("settings") or {}).get("cot", DEFAULT_OPTIONS["cot"])
         for_words = edits.mark(plan.get("style"), plan.get("lyrics"), cot)
-        return {"ui": {SCORE_UI: [score], WORDS_UI: [for_words]}, "result": (plan, score)}
+        return {"ui": {SCORE_UI: [score], WORDS_UI: [for_words],
+                       AUTO_SECONDS_UI: [auto_seconds(plan.get("lyrics"))]},
+                "result": (plan, score)}
 
 
 class YuE2RenderPlan:

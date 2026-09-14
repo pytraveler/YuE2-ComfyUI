@@ -39,6 +39,12 @@ is not one, because running it alone is running the whole song."""
 WORDS_UI = "yue2_words"
 """Where the same node hands over the mark of the words that score was written for."""
 
+AUTO_SECONDS_UI = "yue2_auto_seconds"
+"""Where a node hands over the ceiling its lyrics give a song when 'max_seconds' is 0.
+
+The score editor draws where the singing stops. It counts the lines itself when
+the lyrics are on the canvas, and needs this when they came in through a wire."""
+
 MARK_PREFIX = "%yue2-words "
 MARK_LINE = re.compile(r"%yue2-words ([0-9a-f]{16})[ \t\r]*")
 

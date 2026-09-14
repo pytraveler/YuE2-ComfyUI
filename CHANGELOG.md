@@ -7,6 +7,61 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.4.1 - 2026-09-14
+
+### Added
+
+- **The score editor shows where the song ends.** The model writes a score for
+  the whole song, but the singing stops at `max_seconds` -- at `0`, at the
+  ceiling worked out from the lyrics -- so bars past that point were never
+  heard, and nothing on screen said so: a 60-second ceiling under a score of
+  1:45 left eight edited bars of a chorus silent. Now a dashed yellow line on
+  the piano roll marks the ceiling and dims the bars after it, the facts above
+  the roll say how much is sung, and both the window and the node's summary
+  name edited bars that fall after the line. The editor reads `max_seconds`
+  off the options node the singing node uses -- for `YuE2 Render Plan`, its own
+  options or else the plan node's -- and counts the lyrics itself; lyrics that
+  arrive through a wire are counted by the node that receives them, which hands
+  the ceiling to the browser as `yue2_auto_seconds`. The rule lives in
+  `constants.length_ceiling`: the singing stage stops by it, and a test holds
+  the browser code to it.
+- **The habits people bring from FL Studio and other desktop piano rolls.**
+  Ctrl selects like Shift, with a click or a drag; Alt draws, moves and
+  stretches a note off the grid, in steps of the shortest note the score is
+  written in; Ctrl with the up and down arrows moves the selection by an
+  octave, as Shift already did. The right Alt of a keyboard with AltGr works as
+  Alt too: Windows reports it as Ctrl and Alt together, and read as Ctrl it
+  selected instead. Every key that was there still works.
+- **A chord drawn as stacked notes gets an answer.** A part sings one note at a
+  time, so a note drawn on top of another is still refused, but the window now
+  says why and where chords go, with a button that puts the chord the two notes
+  suggest -- `C` for C and E, `Am` for A and C -- on the chord lane at that
+  spot in one click. A click on the chord there changes or removes it.
+
+### Changed
+
+- **The piano roll takes the familiar dark look.** Light green notes with their
+  names on them, selected notes in red, a blue-grey grid with strong bar lines,
+  a keyboard of real keys and an orange play marker. The part being edited is
+  green and the other part a faint grey behind it, where before each part had
+  its own colour. The line where `max_seconds` ends the song is yellow and
+  dashed, since red means selected.
+- **A note stretched into the next one moves the boundary between them.** The
+  stretch used to stop dead without a word, so in a bar where the notes touch,
+  as they often do in the model's scores, no note could be made longer. Now the
+  next note starts later and keeps its end, never squeezed out, and the
+  stretched end lands on a grid line even when the note starts between two. A
+  click in a gap shorter than the last note drawn draws a note that fills the
+  gap, where it was refused.
+
+### Fixed
+
+- **A chord typed on the chord lane could vanish.** With the chord box open, a
+  click on the grid set the chord for an instant, and the edit that click made
+  then dropped it. The box now settles before the click does anything else, Esc
+  closes it without a change, and it keeps its own width however other styles
+  on the page size text boxes.
+
 ## 0.4.0 - 2026-09-14
 
 ### Added

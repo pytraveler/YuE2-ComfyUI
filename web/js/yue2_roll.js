@@ -44,6 +44,15 @@ export function chordPitches(name) {
     return tones;
 }
 
+const GUESSED = { 3: "m", 4: "", 6: "dim", 7: "", 10: "7", 11: "maj7" };
+
+export function chordGuess(one, other, flats = false) {
+    const low = Math.min(one, other);
+    const step = (((Math.max(one, other) - low) % 12) + 12) % 12;
+    if (!(step in GUESSED)) return "";
+    return (flats ? FLAT_NAMES : SHARP_NAMES)[((low % 12) + 12) % 12] + GUESSED[step];
+}
+
 export function noteName(pitch, flats = false) {
     return (flats ? FLAT_NAMES : SHARP_NAMES)[((pitch % 12) + 12) % 12] + (Math.floor(pitch / 12) - 1);
 }
@@ -68,6 +77,11 @@ export function snapTo(tick, step) {
 
 export function snapDown(tick, step) {
     return Math.floor(tick / step) * step;
+}
+
+export function modifiersOf(event) {
+    const alt = Boolean(event.altKey || event.getModifierState?.("AltGraph"));
+    return { alt, ctrl: Boolean(event.ctrlKey || event.metaKey) && !alt, shift: Boolean(event.shiftKey) };
 }
 
 export function secondsAt(sheet, tick) {
@@ -188,6 +202,16 @@ export function addNote(model, part, start, length, pitch, total) {
     return { model: changed, id: note.id };
 }
 
+export function roomAt(model, part, tick, total) {
+    if (!Number.isInteger(tick) || tick < 0 || tick >= total) return 0;
+    let end = total;
+    for (const n of model.notes[part]) {
+        if (n.start <= tick && tick < n.start + n.length) return 0;
+        if (n.start > tick) end = Math.min(end, n.start);
+    }
+    return end - tick;
+}
+
 export function moveNotes(model, part, ids, ticks, semitones, total) {
     const moving = new Set(ids);
     const moved = model.notes[part].map((n) => (moving.has(n.id)
@@ -199,12 +223,19 @@ export function moveNotes(model, part, ids, ticks, semitones, total) {
     return withPart(model, part, moved);
 }
 
-export function resizeNote(model, part, id, length, total) {
-    const note = model.notes[part].find((n) => n.id === id);
-    if (!note) return null;
-    const changed = { ...note, length };
-    if (!fits(model.notes[part], changed, new Set([id]), total)) return null;
-    return withPart(model, part, model.notes[part].map((n) => (n.id === id ? changed : n)));
+export function stretchNote(model, part, id, length, total) {
+    const notes = model.notes[part];
+    const note = notes.find((n) => n.id === id);
+    if (!note || !Number.isInteger(length)) return null;
+    const next = notes.find((n) => n.start > note.start) || null;
+    const farthest = next ? next.start + next.length - 1 : total;
+    const end = Math.max(note.start + 1, Math.min(note.start + length, farthest, total));
+    if (end === note.start + note.length) return model;
+    return withPart(model, part, notes.map((n) => {
+        if (n.id === id) return { ...n, length: end - n.start };
+        if (next && n.id === next.id && end > n.start) return { ...n, start: end, length: n.start + n.length - end };
+        return n;
+    }));
 }
 
 export function deleteNotes(model, part, ids) {

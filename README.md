@@ -226,15 +226,23 @@ node feeding it, so there is a score to edit before anything is sung. That is
 why `YuE2 Plan` and `YuE2 Select Plan` are output nodes: ComfyUI runs a node on
 its own only when it is one.
 
-- **Piano roll.** The voice part and the instrument part, one edited at a time
-  with the other drawn faintly behind it; the sections along the top and a
-  chord lane under the bar numbers. A click draws a note on the grid, a drag
-  moves it, its right edge stretches it, and a right-click or Delete removes
-  it. Shift-click and Shift-drag select several, and the arrow keys move them
-  by the grid or a semitone, by an octave with Shift. A click on the chord lane
-  types a chord. Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts
-  through a plain synth in the browser: a guide to the notes, not the song, and
-  it downloads nothing.
+- **Piano roll**, in the look most music software shares: green notes with
+  their names on them, a blue-grey grid and a keyboard down the side. The voice
+  part and the instrument part are edited one at a time, with the other drawn
+  faintly behind; the sections run along the top, and a chord lane sits under
+  the bar numbers. A click draws a note, a drag moves it, and a right-click or
+  Delete removes it. The right edge stretches a note, into the next one too,
+  which then starts later and keeps its end. Shift or Ctrl with a click or a
+  drag selects several, and selected notes turn red; the arrow keys move them
+  by the grid or a semitone, and by an octave with Shift or Ctrl. Alt, or the
+  right Alt of a keyboard with AltGr, draws, moves and stretches between the
+  grid lines, in steps of the shortest note the score is written in. A part
+  sings one note at a time, so a note drawn on top of another is refused, and a
+  button under the roll puts the chord the two notes suggest on the chord lane
+  instead. A click on the chord lane types a chord: Enter sets it, Esc leaves
+  it. Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts through a plain
+  synth in the browser: a guide to the notes, not the song, and it downloads
+  nothing.
 - **Notes** draws the score as sheet music, with the bars the edit rewrites in
   red.
 - **ABC** is the text the model reads. A score pasted here loads into the other
@@ -259,6 +267,16 @@ edit unsung: `YuE2 Generate Song` writes a new score for them, `YuE2 Render Plan
 sings the plan's own, and both say so. Put the words back and the edit is sung
 again. A score pasted or wired into `score_abc` carries no mark and is sung
 whatever the words.
+
+**Where the song ends.** The model writes a score for the whole song, and the
+singing stops at `max_seconds` wherever the score has got to by then; at `0` the
+ceiling is worked out from the lyrics, as [Song length](#song-length) explains.
+When the score runs longer, a dashed yellow line on the piano roll marks the
+point and dims the bars after it, the facts above the roll end in
+`sung up to 1:00`, and the node's summary says how much of the score is sung.
+Edited bars that fall after the line are named in both places, because they
+will not be heard until the ceiling moves. Raising `max_seconds` keeps the edit;
+like any change of `max_seconds`, it sings a new take.
 
 Checked on the card with one song and the edit from the window. With the box
 empty, `YuE2 Generate Song` gave the same audio as before the box existed,
@@ -483,7 +501,9 @@ words have run out.
 Left at `0`, the ceiling is worked out from the lyrics -- roughly a minute for
 a verse and a chorus, and 180 seconds when there are no lyrics at all to count.
 The resolved value is logged, so the console says `length ceiling 60 s, from 4
-sung lines` rather than leaving you to guess.
+sung lines` rather than leaving you to guess. The score editor draws the same
+ceiling as a dashed line across its piano roll; see
+[The score editor](#the-score-editor).
 
 The ceiling is not a free parameter. It sizes the static KV cache and the
 captured CUDA graph, which changes the order the attention reduction runs in,

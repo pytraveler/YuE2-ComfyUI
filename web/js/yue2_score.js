@@ -37,13 +37,50 @@ const RULER_H = 36;
 const CHORD_H = 24;
 const ROW_H = 14;
 const EDGE_PX = 7;
+const CHORD_BOX_W = 150;
 const CHANGED_RED = "#C0392B";
-const LIMIT_LINE = "#E06666";
-const LIMIT_SHADE = "rgba(0, 0, 0, 0.5)";
-const LIMIT_CHIP = "#6E2C2C";
 const TIMES_KEPT = 200;
+const NOTE_RADIUS = 2;
+const SKIN = {
+    back: "#243035",
+    rowWhite: "#34434A",
+    rowBlack: "#2D3A40",
+    octave: "#222C31",
+    snap: "#303E45",
+    beat: "#28343A",
+    bar: "#1A2226",
+    changed: "rgba(240, 176, 88, 0.12)",
+    locked: "rgba(255, 255, 255, 0.05)",
+    note: "#8FD49E",
+    noteEdge: "#4E8A5E",
+    noteText: "#163020",
+    picked: "#EE8A84",
+    pickedEdge: "#A8504B",
+    pickedText: "#3A1512",
+    ghost: "rgba(196, 220, 230, 0.20)",
+    ghostEdge: "rgba(196, 220, 230, 0.34)",
+    box: "rgba(255, 255, 255, 0.75)",
+    ruler: "#1C2529",
+    rulerText: "#AFC3CC",
+    rulerTick: "#3B4A51",
+    lane: "#212B30",
+    laneText: "#8FA3AC",
+    chip: "#33444C",
+    chipEdge: "#526973",
+    chipText: "#E4EEF2",
+    playhead: "#F5A623",
+    limit: "#F2D15C",
+    limitShade: "rgba(8, 12, 14, 0.45)",
+    limitChip: "#4A4119",
+    limitText: "#FFF1B8",
+    keyWhite: "#E3E6E8",
+    keyEdge: "#9EA6AA",
+    keyBlack: "#1B1E20",
+    keyBlackTop: "#3B4146",
+    keyText: "#5B666C",
+    keysEdge: "#11171A",
+};
 
-const PART_COLORS = { Vocal: "#4E98C4", Ins: "#5FA37A" };
 const PART_NAMES = { Vocal: "Voice part", Ins: "Instrument part" };
 const SECTION_COLORS = [
     ["pre", "#9B7FD1"], ["intro", "#8C96A3"], ["verse", "#4E98C4"], ["chorus", "#D19A3F"],
@@ -78,11 +115,11 @@ const RETRY_HERE =
 
 const LIMIT_TOOLTIP =
     "'max_seconds' in YuE2 Options ends the singing here, however far the score runs on. " +
-    "Bars after the red line are not sung; raising 'max_seconds' brings them in, and makes a new take.";
+    "Bars after the dashed line are not sung; raising 'max_seconds' brings them in, and makes a new take.";
 const LIMIT_AUTO_TOOLTIP =
     "With 'max_seconds' at 0 a song may run " + roll.AUTO_SECONDS_PER_LINE + " seconds for each sung line plus "
     + roll.AUTO_BASE_SECONDS + ", at least " + roll.AUTO_MIN_SECONDS + " and at most " + roll.MAX_SECONDS
-    + ", or " + roll.AUTO_INSTRUMENTAL_SECONDS + " when there are no lines to count. Bars after the red line "
+    + ", or " + roll.AUTO_INSTRUMENTAL_SECONDS + " when there are no lines to count. Bars after the dashed line "
     + "are not sung; a higher 'max_seconds' in YuE2 Options brings them in, and makes a new take.";
 
 const CHORD_HELP =
@@ -125,6 +162,7 @@ const SCORE_STYLE = `
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.5; }
 .yue2-s-status { font-size: 12px; min-height: 18px; margin: 6px 0 2px; color: var(--descrip-text, #aaa); }
 .yue2-s-status.yue2-s-bad { color: #E08A8A; }
+.yue2-s-status button { margin-left: 8px; padding: 1px 9px; font-size: 11px; }
 .yue2-s-hint { font-size: 11px; line-height: 1.45; color: var(--descrip-text, #999); margin: 2px 0 0; }
 .yue2-s-foot { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
 .yue2-s-foot button { font-size: 13px; padding: 6px 14px; }
@@ -440,6 +478,7 @@ class ScoreEditor {
         this.playhead = 0;
         this.playTick = null;
         this.chordInput = null;
+        this.notice = null;
         this.changed = [];
         this.localChanged = [];
         this.sheet = null;
@@ -600,6 +639,9 @@ class ScoreEditor {
         this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
         this.canvas.addEventListener("wheel", (event) => this.wheel(event), { passive: false });
         panel.addEventListener("keydown", (event) => this.key(event));
+        panel.addEventListener("keyup", (event) => {
+            if (event.key === "Alt" || event.key === "AltGraph") event.preventDefault();
+        });
         this.observer = new ResizeObserver(() => this.resize());
         this.observer.observe(this.rollBox);
 
@@ -658,6 +700,7 @@ class ScoreEditor {
         this.good = null;
         this.history = new roll.History();
         this.selection = new Set();
+        this.notice = null;
         this.textBox.value = clean;
         this.notesDrawn = null;
         if (!clean) {
@@ -734,7 +777,7 @@ class ScoreEditor {
             if (!this.sheet) return "";
             return "No changes. This is the score as it came in." + (this.cutTick() === null ? ""
                 : " Only its first " + roll.clock(this.limit.seconds) + " is sung: " + limitReason(this.limit)
-                    + " ends the song at the red line.");
+                    + " ends the song at the dashed line.");
         }
         const late = this.lateBars(this.changed);
         return "Bars " + barList(this.changed) + " will be written again; every other bar stays exactly as it was."
@@ -744,7 +787,8 @@ class ScoreEditor {
     }
 
     showDescription() {
-        this.setStatus(this.describe(), this.lateBars(this.changed).length > 0);
+        const text = this.describe();
+        this.setStatus(this.notice ? this.notice + " " + text : text, this.lateBars(this.changed).length > 0);
     }
 
     fillEmpty(problem) {
@@ -892,7 +936,7 @@ class ScoreEditor {
         c.setTransform(this.ratio, 0, 0, this.ratio, 0, 0);
         c.font = "10px system-ui, sans-serif";
         c.textBaseline = "alphabetic";
-        c.fillStyle = "#1b1b1b";
+        c.fillStyle = SKIN.back;
         c.fillRect(0, 0, W, H);
 
         c.save();
@@ -903,10 +947,10 @@ class ScoreEditor {
         for (let r = 0; r < rows; r++) {
             const pitch = this.pitchTop - r;
             const rowY = top + r * ROW_H;
-            c.fillStyle = roll.isBlack(pitch) ? "#181818" : "#212121";
+            c.fillStyle = roll.isBlack(pitch) ? SKIN.rowBlack : SKIN.rowWhite;
             c.fillRect(KEYS_W, rowY, W - KEYS_W, ROW_H);
             if (((pitch % 12) + 12) % 12 === 0) {
-                c.fillStyle = "#303030";
+                c.fillStyle = SKIN.octave;
                 c.fillRect(KEYS_W, rowY + ROW_H - 1, W - KEYS_W, 1);
             }
         }
@@ -919,11 +963,11 @@ class ScoreEditor {
             const barX = this.x(bar.start);
             const barW = bar.length * px;
             if (marked.has(index) || localMarked.has(index)) {
-                c.fillStyle = "rgba(209, 154, 63, 0.11)";
+                c.fillStyle = SKIN.changed;
                 c.fillRect(barX, top, barW, H - top);
             }
             if (!bar.editable) {
-                c.fillStyle = "rgba(255, 255, 255, 0.05)";
+                c.fillStyle = SKIN.locked;
                 for (let stripe = -H; stripe < barW; stripe += 12) {
                     c.fillRect(barX + stripe + (H - top) / 2, top, 3, H - top);
                 }
@@ -931,17 +975,17 @@ class ScoreEditor {
             const den = Number(bar.meter.split("/")[1]) || 4;
             const beat = (sheet.per_quarter * 4) / den;
             if (this.snap * px >= 7) {
-                c.fillStyle = "#262626";
+                c.fillStyle = SKIN.snap;
                 for (let t = bar.start + this.snap; t < bar.start + bar.length; t += this.snap) {
                     c.fillRect(Math.round(this.x(t)), top, 1, H - top);
                 }
             }
-            c.fillStyle = "#353535";
+            c.fillStyle = SKIN.beat;
             for (let t = bar.start + beat; t < bar.start + bar.length; t += beat) {
                 c.fillRect(Math.round(this.x(t)), top, 1, H - top);
             }
-            c.fillStyle = "#5c5c5c";
-            c.fillRect(Math.round(barX), top, 1, H - top);
+            c.fillStyle = SKIN.bar;
+            c.fillRect(Math.round(barX), top, 2, H - top);
         }
         this.drawPart(c, model, this.part === "Vocal" ? "Ins" : "Vocal", true, first, lastTick);
         this.drawPart(c, model, this.part, false, first, lastTick);
@@ -949,31 +993,43 @@ class ScoreEditor {
         const cutX = cut === null ? null : this.x(cut);
         if (cutX !== null && cutX < W) {
             const shadeFrom = Math.max(KEYS_W, cutX);
-            c.fillStyle = LIMIT_SHADE;
+            c.fillStyle = SKIN.limitShade;
             c.fillRect(shadeFrom, top, W - shadeFrom, H - top);
-            c.fillStyle = LIMIT_LINE;
-            if (cutX >= KEYS_W) c.fillRect(Math.round(cutX) - 1, top, 2, H - top);
+            if (cutX >= KEYS_W) this.dashedLine(c, cutX, top, H);
+        }
+        const marker = this.playTick ?? this.playhead;
+        const markerX = Math.round(this.x(marker)) + 0.5;
+        const markerShown = markerX >= KEYS_W && markerX <= W;
+        if (markerShown) {
+            c.strokeStyle = SKIN.playhead;
+            c.lineWidth = 1;
+            c.beginPath();
+            c.moveTo(markerX, top);
+            c.lineTo(markerX, H);
+            c.stroke();
         }
         if (this.drag?.mode === "box") {
             const x0 = this.x(this.drag.tick);
             const x1 = this.x(this.drag.toTick);
             const y0 = this.y(Math.max(this.drag.pitch, this.drag.toPitch));
             const y1 = this.y(Math.min(this.drag.pitch, this.drag.toPitch)) + ROW_H;
-            c.strokeStyle = "rgba(255, 255, 255, 0.7)";
+            c.strokeStyle = SKIN.box;
+            c.lineWidth = 1;
             c.setLineDash([4, 3]);
             c.strokeRect(Math.min(x0, x1), y0, Math.abs(x1 - x0), y1 - y0);
             c.setLineDash([]);
         }
         c.restore();
 
-        c.fillStyle = "#262626";
+        c.fillStyle = SKIN.ruler;
         c.fillRect(0, 0, W, RULER_H);
-        c.fillStyle = "#1f1f1f";
+        c.fillStyle = SKIN.lane;
         c.fillRect(0, RULER_H, W, CHORD_H);
         c.save();
         c.beginPath();
         c.rect(KEYS_W, 0, W - KEYS_W, top);
         c.clip();
+        const labels = [];
         for (const section of sheet.sections) {
             const startBar = sheet.bars[section.bar];
             const endBar = sheet.bars[section.bar + section.bars - 1];
@@ -981,108 +1037,154 @@ class ScoreEditor {
             const right = this.x(endBar.start + endBar.length);
             if (right < KEYS_W || left > W) continue;
             c.fillStyle = sectionColor(section.name);
-            c.globalAlpha = 0.85;
+            c.globalAlpha = 0.8;
             c.fillRect(left + 1, 1, right - left - 2, 14);
             c.globalAlpha = 1;
             c.fillStyle = "#fff";
-            c.fillText(section.name || "section", Math.max(left, KEYS_W) + 4, 12);
+            const labelX = Math.max(left, KEYS_W) + 4;
+            c.fillText(section.name || "section", labelX, 12);
+            labels.push([labelX, labelX + c.measureText(section.name || "section").width + 4]);
         }
         const every = 28 / (px * (sheet.bars[0]?.length || 1)) > 1 ? 4 : 1;
-        c.fillStyle = "#bdbdbd";
         index = roll.barAt(sheet, Math.max(0, Math.floor(first)));
         for (; index < sheet.bars.length; index++) {
             const bar = sheet.bars[index];
             if (bar.start > lastTick) break;
-            if (index % every === 0) c.fillText(String(index + 1), this.x(bar.start) + 3, 30);
-            c.fillStyle = "#4a4a4a";
+            c.fillStyle = SKIN.rulerTick;
             c.fillRect(Math.round(this.x(bar.start)), 17, 1, RULER_H - 17);
-            c.fillStyle = "#bdbdbd";
+            if (index % every === 0) {
+                c.fillStyle = SKIN.rulerText;
+                c.fillText(String(index + 1), this.x(bar.start) + 4, 30);
+            }
         }
+        c.font = "11px system-ui, sans-serif";
+        c.lineWidth = 1;
         for (const chord of model.chords) {
             const chordX = this.x(chord.start);
             if (chordX > W || chordX + 60 < KEYS_W) continue;
             const width = c.measureText(chord.name).width + 10;
-            c.fillStyle = "#3a3f47";
-            c.fillRect(chordX, RULER_H + 4, width, CHORD_H - 8);
-            c.fillStyle = "#e8e8e8";
-            c.font = "11px system-ui, sans-serif";
+            this.box(c, Math.round(chordX) + 0.5, RULER_H + 4.5, width, CHORD_H - 9, SKIN.chip, SKIN.chipEdge);
+            c.fillStyle = SKIN.chipText;
             c.fillText(chord.name, chordX + 5, RULER_H + CHORD_H - 8);
-            c.font = "10px system-ui, sans-serif";
         }
+        c.font = "10px system-ui, sans-serif";
         if (cutX !== null && cutX >= KEYS_W && cutX <= W) {
-            c.fillStyle = LIMIT_LINE;
-            c.fillRect(Math.round(cutX) - 1, 0, 2, top);
+            this.dashedLine(c, cutX, 0, top);
             const chip = (this.limit.auto ? "lyrics limit " : "max_seconds ") + roll.clock(this.limit.seconds);
             const chipW = c.measureText(chip).width + 10;
-            const chipX = cutX + 1 + chipW > W ? cutX - 1 - chipW : cutX + 1;
-            c.fillStyle = LIMIT_CHIP;
-            c.fillRect(chipX, 18, chipW, 15);
-            c.fillStyle = "#FFE3E3";
-            c.fillText(chip, chipX + 5, 29);
+            const onRight = Math.round(cutX + 3) + 0.5;
+            const onLeft = Math.round(cutX - 3 - chipW) + 0.5;
+            const covers = (from) => labels.some(([a, b]) => a < from + chipW && b > from);
+            const chipX = onRight + chipW > W || (covers(onRight) && !covers(onLeft) && onLeft >= KEYS_W)
+                ? onLeft : onRight;
+            this.box(c, chipX, 1.5, chipW, 14, SKIN.limitChip, SKIN.limit);
+            c.fillStyle = SKIN.limitText;
+            c.fillText(chip, chipX + 5, 12);
         }
-        const marker = this.playTick ?? this.playhead;
-        const markerX = this.x(marker);
-        if (markerX >= KEYS_W && markerX <= W) {
-            c.fillStyle = "#E0A45A";
-            c.fillRect(Math.round(markerX) - 1, 0, 2, H);
+        if (markerShown) {
+            c.fillStyle = SKIN.playhead;
+            c.beginPath();
+            c.moveTo(markerX - 5, 17);
+            c.lineTo(markerX + 5, 17);
+            c.lineTo(markerX, 24);
+            c.closePath();
+            c.fill();
+            c.fillRect(markerX - 0.5, 24, 1, top - 24);
         }
         c.restore();
 
-        c.fillStyle = "#2a2a2a";
-        c.fillRect(0, 0, KEYS_W, H);
-        c.fillStyle = "#9a9a9a";
+        c.fillStyle = SKIN.ruler;
+        c.fillRect(0, 0, KEYS_W, top);
+        c.fillStyle = SKIN.laneText;
         c.fillText("bar", 6, 30);
         c.fillText("chord", 6, RULER_H + CHORD_H - 8);
         c.save();
         c.beginPath();
         c.rect(0, top, KEYS_W, H - top);
         c.clip();
-        for (let r = 0; r < rows; r++) {
-            const pitch = this.pitchTop - r;
-            const rowY = top + r * ROW_H;
-            c.fillStyle = roll.isBlack(pitch) ? "#161616" : "#d9d9d9";
-            c.fillRect(roll.isBlack(pitch) ? 0 : 0, rowY, roll.isBlack(pitch) ? KEYS_W * 0.62 : KEYS_W, ROW_H - 1);
-            if (((pitch % 12) + 12) % 12 === 0) {
-                c.fillStyle = "#333";
-                c.fillText(roll.noteName(pitch), KEYS_W - 24, rowY + ROW_H - 3);
-            }
-        }
+        this.drawKeys(c, top, rows);
         c.restore();
-        c.fillStyle = "#444";
+        c.fillStyle = SKIN.keysEdge;
         c.fillRect(KEYS_W - 1, 0, 1, H);
         this.undoButton.disabled = !this.history.canUndo;
         this.redoButton.disabled = !this.history.canRedo;
     }
 
+    drawKeys(c, top, rows) {
+        const blackW = Math.round(KEYS_W * 0.6);
+        c.fillStyle = SKIN.keyWhite;
+        c.fillRect(0, top, KEYS_W, rows * ROW_H);
+        for (let r = 0; r < rows; r++) {
+            const pitch = this.pitchTop - r;
+            const rowY = top + r * ROW_H;
+            const tone = ((pitch % 12) + 12) % 12;
+            if (roll.isBlack(pitch)) {
+                c.fillStyle = SKIN.keyEdge;
+                c.fillRect(blackW, rowY + ROW_H / 2, KEYS_W - blackW, 1);
+                c.fillStyle = SKIN.keyBlack;
+                c.fillRect(0, rowY + 1, blackW, ROW_H - 2);
+                c.fillStyle = SKIN.keyBlackTop;
+                c.fillRect(blackW - 4, rowY + 3, 2, ROW_H - 6);
+            } else if (tone === 0 || tone === 5) {
+                c.fillStyle = SKIN.keyEdge;
+                c.fillRect(0, rowY + ROW_H - 1, KEYS_W, 1);
+            }
+            if (tone === 0) {
+                c.fillStyle = SKIN.keyText;
+                c.fillText(roll.noteName(pitch), KEYS_W - 24, rowY + ROW_H - 3);
+            }
+        }
+    }
+
     drawPart(c, model, part, ghost, first, lastTick) {
         const px = this.pxPerTick;
         const top = RULER_H + CHORD_H;
+        c.save();
+        c.font = "9px system-ui, sans-serif";
+        c.lineWidth = 1;
         for (const note of model.notes[part]) {
             if (note.start + note.length < first || note.start > lastTick) continue;
             const noteY = this.y(note.pitch);
             if (noteY + ROW_H < top || noteY > this.height) continue;
-            const noteX = this.x(note.start);
-            const width = Math.max(2, note.length * px - 1);
-            c.globalAlpha = ghost ? 0.26 : 1;
-            c.fillStyle = PART_COLORS[part];
-            c.fillRect(noteX, noteY + 1, width, ROW_H - 2);
-            c.globalAlpha = 1;
-            if (ghost) continue;
-            if (this.selection.has(note.id)) {
-                c.strokeStyle = "#ffffff";
-                c.lineWidth = 1.5;
-                c.strokeRect(noteX + 0.75, noteY + 1.75, width - 1.5, ROW_H - 3.5);
+            const noteX = Math.round(this.x(note.start)) + 0.5;
+            const width = Math.max(3, Math.round(note.length * px) - 1);
+            if (ghost) {
+                this.box(c, noteX, noteY + 1.5, width, ROW_H - 3, SKIN.ghost, SKIN.ghostEdge);
+                continue;
             }
-            if (width > 12) {
-                c.fillStyle = "rgba(255, 255, 255, 0.45)";
-                c.fillRect(noteX + width - 3, noteY + 4, 2, ROW_H - 8);
-            }
-            if (width > 36) {
-                const bar = this.sheet.bars[roll.barAt(this.sheet, note.start)];
-                c.fillStyle = "rgba(0, 0, 0, 0.78)";
-                c.fillText(roll.noteName(note.pitch, roll.flatsIn(this.sheet, bar.key)), noteX + 3, noteY + ROW_H - 4);
+            const picked = this.selection.has(note.id);
+            this.box(c, noteX, noteY + 1.5, width, ROW_H - 3, picked ? SKIN.picked : SKIN.note,
+                picked ? SKIN.pickedEdge : SKIN.noteEdge);
+            const bar = this.sheet.bars[roll.barAt(this.sheet, note.start)];
+            const label = roll.noteName(note.pitch, roll.flatsIn(this.sheet, bar.key));
+            if (c.measureText(label).width + 6 <= width) {
+                c.fillStyle = picked ? SKIN.pickedText : SKIN.noteText;
+                c.fillText(label, noteX + 3, noteY + ROW_H - 4);
             }
         }
+        c.restore();
+    }
+
+    box(c, x, y, w, h, fill, edge) {
+        c.beginPath();
+        if (c.roundRect) c.roundRect(x, y, w, h, NOTE_RADIUS);
+        else c.rect(x, y, w, h);
+        c.fillStyle = fill;
+        c.fill();
+        c.strokeStyle = edge;
+        c.stroke();
+    }
+
+    dashedLine(c, x, from, to) {
+        c.save();
+        c.strokeStyle = SKIN.limit;
+        c.lineWidth = 2;
+        c.setLineDash([6, 4]);
+        c.beginPath();
+        c.moveTo(Math.round(x), from);
+        c.lineTo(Math.round(x), to);
+        c.stroke();
+        c.restore();
     }
 
     local(event) {
@@ -1118,6 +1220,7 @@ class ScoreEditor {
     pointerDown(event) {
         if (!this.sheet) return;
         this.rollBox.focus();
+        const keys = roll.modifiersOf(event);
         const { px, py } = this.local(event);
         const top = RULER_H + CHORD_H;
         const tick = this.tickAt(px);
@@ -1148,7 +1251,7 @@ class ScoreEditor {
                 return;
             }
             const edge = this.x(hit.start + hit.length) - px <= EDGE_PX;
-            if (event.shiftKey && !edge) {
+            if ((keys.shift || keys.ctrl) && !edge) {
                 if (this.selection.has(hit.id)) this.selection.delete(hit.id);
                 else this.selection.add(hit.id);
                 this.draw();
@@ -1166,15 +1269,23 @@ class ScoreEditor {
         }
         if (event.button !== 0) return;
         this.canvas.setPointerCapture(event.pointerId);
-        if (event.shiftKey) {
+        if (keys.shift || keys.ctrl) {
             this.drag = { mode: "box", tick, pitch, toTick: tick, toPitch: pitch, kept: new Set(this.selection) };
             return;
         }
         if (this.barLocked(tick)) return;
-        const start = roll.snapDown(tick, this.snap);
-        const placed = roll.addNote(this.model, this.part, start, this.lastLength || this.snap, pitch, this.sheet.total);
+        const start = keys.alt ? Math.floor(tick) : roll.snapDown(tick, this.snap);
+        const under = this.model.notes[this.part].find((note) => note.start <= start && start < note.start + note.length);
+        if (under) {
+            this.offerChord(under, start, pitch);
+            return;
+        }
+        const room = roll.roomAt(this.model, this.part, start, this.sheet.total);
+        const placed = room
+            ? roll.addNote(this.model, this.part, start, Math.min(this.lastLength || this.snap, room), pitch, this.sheet.total)
+            : null;
         if (!placed) {
-            this.setStatus("There is no room for a note there: each part sings one note at a time.", true);
+            this.setStatus("The song ends before that point.", true);
             return;
         }
         this.selection = new Set([placed.id]);
@@ -1204,7 +1315,8 @@ class ScoreEditor {
             const inside = roll.notesIn(this.model, this.part, this.drag.tick, tick, this.drag.pitch, pitch);
             this.selection = new Set([...this.drag.kept, ...inside]);
         } else if (this.drag.mode === "move") {
-            const ticks = roll.snapTo(tick - this.drag.tick, this.snap);
+            const ticks = roll.modifiersOf(event).alt ? Math.round(tick - this.drag.tick)
+                : roll.snapTo(tick - this.drag.tick, this.snap);
             const semitones = pitch - this.drag.pitch;
             const moved = roll.moveNotes(this.drag.base, this.part, this.drag.ids, ticks, semitones, total);
             if (moved) {
@@ -1216,11 +1328,11 @@ class ScoreEditor {
                 }
             }
         } else if (this.drag.mode === "resize") {
-            const length = Math.max(1, roll.snapTo(tick - this.drag.start, this.snap)) || this.snap;
-            const stretched = roll.resizeNote(this.drag.from, this.part, this.drag.id, length, total);
+            const end = roll.modifiersOf(event).alt ? Math.round(tick) : roll.snapTo(tick, this.snap);
+            const stretched = roll.stretchNote(this.drag.from, this.part, this.drag.id, Math.max(1, end - this.drag.start), total);
             if (stretched) {
                 this.working = stretched;
-                this.lastLength = length;
+                this.lastLength = stretched.notes[this.part].find((n) => n.id === this.drag.id)?.length || this.lastLength;
             }
         }
         this.draw();
@@ -1258,7 +1370,7 @@ class ScoreEditor {
         if (!this.sheet) return;
         event.preventDefault();
         const { px } = this.local(event);
-        if (event.ctrlKey || event.metaKey) {
+        if (roll.modifiersOf(event).ctrl) {
             this.zoom(event.deltaY < 0 ? 1.2 : 1 / 1.2, px);
             return;
         }
@@ -1272,9 +1384,13 @@ class ScoreEditor {
     }
 
     key(event) {
+        if (event.key === "Alt" || event.key === "AltGraph") {
+            event.preventDefault();
+            return;
+        }
         const tag = event.target?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-        const ctrl = event.ctrlKey || event.metaKey;
+        const ctrl = roll.modifiersOf(event).ctrl;
         const letter = String(event.key || "").toLowerCase();
         if (ctrl && letter === "z") {
             event.preventDefault();
@@ -1308,7 +1424,7 @@ class ScoreEditor {
             return;
         }
         const moves = {
-            ArrowUp: [0, event.shiftKey ? 12 : 1], ArrowDown: [0, event.shiftKey ? -12 : -1],
+            ArrowUp: [0, event.shiftKey || ctrl ? 12 : 1], ArrowDown: [0, event.shiftKey || ctrl ? -12 : -1],
             ArrowLeft: [-this.snap, 0], ArrowRight: [this.snap, 0],
         };
         if (moves[event.key]) {
@@ -1325,6 +1441,31 @@ class ScoreEditor {
         }
     }
 
+    offerChord(under, start, pitch) {
+        const bar = roll.barAt(this.sheet, start);
+        const guess = roll.chordGuess(under.pitch, pitch, roll.flatsIn(this.sheet, this.sheet.bars[bar].key));
+        const existing = this.model.chords.find((chord) => chord.start === start)?.name || "";
+        const why = "A part sings one note at a time, so a chord is not stacked notes here: "
+            + "it goes in the chord lane above the grid.";
+        if (guess && guess === existing) {
+            this.setStatus(why + " " + guess + " is already there.", true);
+            return;
+        }
+        const action = !guess ? "Add a chord" : existing ? "Change " + existing + " to " + guess : "Add the chord " + guess;
+        const button = element("button", "", action + " at bar " + (bar + 1));
+        button.addEventListener("click", () => (guess ? this.placeChord(start, guess) : this.openChordInput(start, existing)));
+        this.status.replaceChildren(why, button);
+        this.status.classList.add("yue2-s-bad");
+    }
+
+    placeChord(start, name) {
+        if (this.barLocked(start) || !this.commit(roll.setChord(this.model, start, name))) return;
+        this.notice = name + " is on the chord lane at bar " + (roll.barAt(this.sheet, start) + 1)
+            + ": click it there to change or remove it.";
+        this.setStatus(this.notice);
+        this.rollBox.focus();
+    }
+
     chordAt(tick, px) {
         if (this.barLocked(tick)) return;
         const c = this.canvas.getContext("2d");
@@ -1338,6 +1479,7 @@ class ScoreEditor {
     }
 
     openChordInput(start, name) {
+        this.chordInput?.finish(true);
         this.closeChordInput();
         const input = document.createElement("input");
         input.type = "text";
@@ -1345,51 +1487,52 @@ class ScoreEditor {
         input.value = name;
         input.placeholder = "Am7, F/C \u2014 empty removes";
         input.setAttribute("list", "yue2-s-chords");
-        input.style.left = clamp(this.x(start), KEYS_W, Math.max(KEYS_W, this.width - 160)) + "px";
+        for (const side of ["width", "min-width", "max-width"]) input.style.setProperty(side, CHORD_BOX_W + "px", "important");
+        input.style.left = clamp(this.x(start), KEYS_W, Math.max(KEYS_W, this.width - CHORD_BOX_W - 10)) + "px";
         input.style.top = RULER_H + 1 + "px";
-        let done = false;
-        const finish = (keep) => {
-            if (done) return;
-            if (keep) {
-                const text = input.value.trim();
-                if (!text) {
-                    if (name) this.commit(roll.removeChord(this.model, start));
-                } else if (text !== name) {
-                    const changed = roll.setChord(this.model, start, text);
-                    if (!changed) {
-                        input.classList.add("yue2-s-bad");
-                        this.setStatus(CHORD_HELP, true);
-                        return;
-                    }
-                    this.commit(changed);
-                }
+        const entry = { input, done: false };
+        entry.finish = (keep) => {
+            if (entry.done) return true;
+            const text = input.value.trim();
+            if (keep && text && text !== name && !roll.isChord(text)) {
+                input.classList.add("yue2-s-bad");
+                this.setStatus(CHORD_HELP, true);
+                return false;
             }
-            done = true;
-            this.closeChordInput();
-            this.rollBox.focus();
+            this.closeChordInput(entry);
+            if (keep && !text && name) this.commit(roll.removeChord(this.model, start));
+            else if (keep && text && text !== name) this.commit(roll.setChord(this.model, start, text));
+            this.showDescription();
+            return true;
         };
         input.addEventListener("keydown", (event) => {
             event.stopPropagation();
-            if (event.key === "Enter") finish(true);
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            if (entry.finish(true)) this.rollBox.focus();
         });
         input.addEventListener("input", () => {
             input.classList.toggle("yue2-s-bad", Boolean(input.value.trim()) && !roll.isChord(input.value));
         });
-        input.addEventListener("blur", () => setTimeout(() => finish(true), 0));
-        this.chordInput = { input, finish };
+        input.addEventListener("blur", () => {
+            if (!entry.finish(true)) this.closeChordInput(entry);
+        });
+        this.chordInput = entry;
         this.rollBox.appendChild(input);
         input.focus();
         input.select();
+        this.setStatus("Type a chord symbol and press Enter. An empty box removes the chord; Esc leaves it as it was.");
     }
 
-    closeChordInput() {
-        if (!this.chordInput) return;
-        const { input } = this.chordInput;
-        this.chordInput = null;
-        input.remove();
+    closeChordInput(entry = this.chordInput) {
+        if (!entry) return;
+        entry.done = true;
+        if (this.chordInput === entry) this.chordInput = null;
+        entry.input.remove();
     }
 
     commit(next, previous = this.model) {
+        this.notice = null;
         if (!next) {
             this.setStatus("That does not fit: each part sings one note at a time, inside the song.", true);
             this.draw();
@@ -1408,6 +1551,7 @@ class ScoreEditor {
         if (!this.model) return;
         const previous = this.history.undo(this.model);
         if (!previous) return;
+        this.notice = null;
         this.model = previous;
         this.selection.clear();
         this.localChanged = roll.changedBars(this.sheet, this.model);
@@ -1419,6 +1563,7 @@ class ScoreEditor {
         if (!this.model) return;
         const next = this.history.redo(this.model);
         if (!next) return;
+        this.notice = null;
         this.model = next;
         this.selection.clear();
         this.localChanged = roll.changedBars(this.sheet, this.model);
@@ -1636,6 +1781,7 @@ class ScoreEditor {
     escape() {
         if (this.chordInput) {
             this.closeChordInput();
+            this.showDescription();
             this.rollBox.focus();
             return;
         }

@@ -336,6 +336,22 @@ def test_note_names_snaps_and_chord_tones():
                    [43, 57, 60, 64, 67], [58, 62, 65], [], "2:05"]
 
 
+@needs_node
+def test_a_note_stacked_on_another_is_offered_as_the_chord_it_most_likely_starts():
+    """A chord drawn as stacked notes cannot live in a part, so the window offers a chord symbol.
+
+    Only the intervals that name a chord from its lower note are guessed; the rest
+    offer an empty chord box. Whatever is guessed must be a chord upstream accepts.
+    """
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    pairs = [[60, 64, False], [64, 60, False], [57, 60, False], [66, 72, False], [66, 72, True],
+             [62, 72, False], [60, 71, False], [60, 62, False], [60, 72, False], [55, 60, False]]
+    got = run_roll("console.log(JSON.stringify({}.map(([one, other, flats]) => r.chordGuess(one, other, flats))));"
+                   .format(json.dumps(pairs)))
+    assert got == ["C", "C", "Am", "F#dim", "Gbdim", "D7", "Cmaj7", "", "", ""]
+    assert all(abc_tools.CHORD.fullmatch(name) for name in got if name)
+
+
 def roll_sheet():
     from yue2_comfy import notation
     return notation.read(ROLL_SCORE)
@@ -364,8 +380,8 @@ def test_notes_cannot_overlap_leave_the_song_or_move_apart():
             r.moveNotes(m, "Vocal", [vocal[0].id, vocal[1].id], 32, 2, total) === null,
             r.moveNotes(m, "Vocal", [vocal[2].id, vocal[3].id], 64, -1, total).notes.Vocal
                 .map((n) => [n.start, n.pitch]),
-            r.resizeNote(m, "Vocal", vocal[0].id, 24, total),
-            r.resizeNote(m, "Vocal", vocal[0].id, 8, total).notes.Vocal[0].length,
+            r.stretchNote(m, "Vocal", vocal[0].id, 24, total).notes.Vocal.slice(0, 2).map((n) => [n.start, n.length]),
+            r.stretchNote(m, "Vocal", vocal[0].id, 8, total).notes.Vocal[0].length,
             r.deleteNotes(m, "Ins", [m.notes.Ins[0].id]).notes.Ins.length,
             r.notesIn(m, "Vocal", 0, 32, 60, 70).length,
             r.noteAt(m, "Vocal", 20, 69).pitch,
@@ -374,8 +390,77 @@ def test_notes_cannot_overlap_leave_the_song_or_move_apart():
     assert got[0] is None and got[1] is True and got[2] is None
     assert got[3] is True
     assert got[4] == [[0, 65], [16, 69], [96, 69], [112, 73], [128, 72]]
-    assert got[5] is None and got[6] == 8
+    assert got[5] == [[0, 24], [24, 8]] and got[6] == 8
     assert got[7] == 0 and got[8] == 2 and got[9] == 69
+
+
+@needs_node
+def test_a_note_stretched_into_the_next_one_takes_time_from_it():
+    """A part sings one note at a time, so a stretch moves the boundary with the next note.
+
+    Refused, the stretch left a bar whose notes touch with no note that could be made
+    longer. The next note keeps its end and at least one tick, the song's end is a wall,
+    and a length that changes nothing hands back the same model, so a click on an edge
+    records no edit.
+    """
+    from yue2_comfy import notation
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        const [f, , , d, c] = m.notes.Vocal;
+        const spans = (model) => model.notes.Vocal.map((n) => [n.start, n.length]);
+        const taken = r.stretchNote(m, "Vocal", f.id, 24, sheet.total);
+        console.log(JSON.stringify({{
+            taken: spans(taken),
+            wall: spans(r.stretchNote(m, "Vocal", f.id, 40, sheet.total)),
+            shorter: spans(r.stretchNote(m, "Vocal", f.id, 8, sheet.total)),
+            gap: spans(r.stretchNote(m, "Vocal", d.id, 40, sheet.total)),
+            end: spans(r.stretchNote(m, "Vocal", c.id, 100, sheet.total)),
+            same: r.stretchNote(m, "Vocal", f.id, 16, sheet.total) === m,
+            missing: r.stretchNote(m, "Vocal", 999, 8, sheet.total),
+            bars: r.changedBars(sheet, taken),
+            sheet: r.sheetOf(taken),
+        }}));
+    """.format(sheet=json.dumps(sheet)))
+    kept = [[32, 16], [48, 16], [128, 48]]
+    assert got["taken"] == [[0, 24], [24, 8]] + kept
+    assert got["wall"] == [[0, 31], [31, 1]] + kept
+    assert got["shorter"] == [[0, 8], [16, 16]] + kept
+    assert got["gap"] == [[0, 16], [16, 16], [32, 16], [48, 40], [128, 48]]
+    assert got["end"] == [[0, 16], [16, 16], [32, 16], [48, 16], [128, 64]]
+    assert got["same"] is True and got["missing"] is None
+    assert notation.write(ROLL_SCORE, got["sheet"])["bars"] == got["bars"] == [0]
+
+
+@needs_node
+def test_the_room_for_a_click_runs_to_the_next_note_or_the_end_of_the_song():
+    """A click in a gap shorter than the last note drawn gets a note cut to the gap, not a refusal."""
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        const ticks = [0, 4, 64, 100, 176, 191, 192, -1, 4.5];
+        console.log(JSON.stringify([...ticks.map((tick) => r.roomAt(m, "Vocal", tick, sheet.total)),
+                                    r.roomAt(m, "Ins", 0, sheet.total), r.roomAt(m, "Ins", 50, sheet.total)]));
+    """.format(sheet=json.dumps(sheet)))
+    assert got == [0, 0, 64, 28, 16, 1, 0, 0, 0, 48, 0]
+
+
+@needs_node
+def test_altgr_counts_as_alt_and_not_as_ctrl():
+    """Windows reports AltGr, the right Alt of many keyboard layouts, as Ctrl and Alt together.
+
+    Read as Ctrl, it selected notes instead of taking them off the grid.
+    """
+    got = run_roll("""
+        const events = [{altKey: true}, {ctrlKey: true}, {metaKey: true}, {ctrlKey: true, altKey: true},
+                        {getModifierState: (name) => name === "AltGraph"}, {shiftKey: true, ctrlKey: true}, {}];
+        console.log(JSON.stringify(events.map((event) => r.modifiersOf(event))));
+    """)
+    assert [[x["alt"], x["ctrl"], x["shift"]] for x in got] == [
+        [True, False, False], [False, True, False], [False, True, False], [True, False, False],
+        [True, False, False], [False, True, True], [False, False, False]]
 
 
 @needs_node

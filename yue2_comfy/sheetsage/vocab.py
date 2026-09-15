@@ -31,6 +31,7 @@ FIELDS = ("timestamp", "rhythm", "structure", "key", "chord", "melody")
 TIME_HZ = 100
 WINDOW_SECONDS = 300.0
 MAX_SHIFT = 256
+MAX_TOKENS = 5120
 
 SHARPS = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 QUALITIES = ("maj", "min", "dim", "aug", "maj7", "min7", "7", "hdim7", "dim7",

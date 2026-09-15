@@ -232,10 +232,10 @@ class YuE2Transcribe:
             band = Band(progress, 0.0, 0.4) if lyrics_auto_recognition else progress
             heard = self._heard(track, recording, settings, band, unique_id)
             if heard.get("cut_short"):
-                from .sheetsage import network
+                from .sheetsage import vocab
 
                 findings.append(("notice", CUT_SHORT.format(parts=len(heard["cut_short"]), total=len(heard["windows"]),
-                                                            tokens=network.MAX_TOKENS)))
+                                                            tokens=vocab.MAX_TOKENS)))
         written = None
         if keep_score:
             score = kept.score

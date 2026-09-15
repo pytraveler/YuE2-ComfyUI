@@ -65,7 +65,12 @@ def faithful_answer(messages):
 
 @pytest.fixture
 def heard(node, monkeypatch):
-    """Recognition and the language model replaced as well; returns what they were asked."""
+    """Recognition and the language model replaced as well; returns what they were asked.
+
+    The model list is replaced too, with one model on it. The real list is
+    whatever this machine holds, and on a machine with none the node adds the
+    download notice, which the tests here do not expect.
+    """
     from yue2_comfy import llm
     from yue2_comfy.asr import runtime as asr_runtime
 
@@ -89,6 +94,7 @@ def heard(node, monkeypatch):
     monkeypatch.setattr(asr_runtime, "recognise", fake_recognise)
     monkeypatch.setattr(asr_runtime, "unload", lambda: None)
     monkeypatch.setattr(asr_runtime, "_LAYOUTS", asr_runtime.collections.OrderedDict())
+    monkeypatch.setattr(llm, "catalogue", lambda: [("writer.gguf (2.7 GB)", "writer.gguf")])
     monkeypatch.setattr(llm, "resolve", lambda choice, settings, progress=None: "writer.gguf")
     monkeypatch.setattr(llm, "run", fake_run)
     monkeypatch.setattr(llm, "unload", lambda: None)
@@ -299,6 +305,14 @@ def test_a_recording_the_model_cannot_take_is_refused_with_the_reason(node, monk
 
 
 def test_a_part_the_decoder_could_not_finish_is_said_on_the_node(node, monkeypatch):
+    """Said without torch, as CI runs the suite: the notice must not load the network for its token count.
+
+    Torch is hidden even where it is installed, and a network module an earlier
+    test loaded is dropped, so a local run fails the way CI would.
+    """
+    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.delitem(sys.modules, "yue2_comfy.sheetsage.network", raising=False)
+    monkeypatch.delattr(sys.modules["yue2_comfy.sheetsage"], "network", raising=False)
     result = master_result()
     result["cut_short"] = [1]
     monkeypatch.setattr(runtime, "transcribe", lambda *args, **kwargs: result)

@@ -7,6 +7,13 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.5.1 - 2026-09-16
+
+### Fixed
+
+- **The tests failed on machines without torch or a language model**, such as
+  GitHub's. They pass there again.
+
 ## 0.5.0 - 2026-09-15
 
 ### Added

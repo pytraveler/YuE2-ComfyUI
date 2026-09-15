@@ -48,11 +48,11 @@ RMS_EPS = 1e-6
 AUDIO_SCALE = (AUDIO_WIDTH // AUDIO_HEADS) ** -0.5
 SCALE = HEAD ** -0.5
 ROOM_STEP = 1024
+"""The cache is sized in whole steps of this, so requests of nearby lengths share one cache and one graph."""
 CONV_CHUNKS = 320
+"""Chunks, a second of audio each, the audio encoder's convolutions take at once: a longer recording goes in parts."""
 NEAR_TIE = 2.0
 """How far below the plain step's best logit a replayed pick may fall at a check and still stand."""
-"""Chunks, a second of audio each, the audio encoder's convolutions take at once: a longer recording goes in parts."""
-"""The cache is sized in whole steps of this, so requests of nearby lengths share one cache and one graph."""
 GRAPHS = True
 
 

@@ -1,6 +1,6 @@
 # Licenses and provenance
 
-This pack carries six kinds of material under their own terms.
+This pack carries seven kinds of material under their own terms.
 
 ## The pack's own code
 
@@ -11,6 +11,14 @@ Apache-2.0. See LICENSE.
 `yue2_comfy/cli.py` were written for
 [MiniMax-H3-Prompt-Rewriter-ComfyUI](https://github.com/pytraveler/MiniMax-H3-Prompt-Rewriter-ComfyUI)
 by the same author and carried over. Same licence, same terms.
+
+`yue2_comfy/sheetsage/` and `yue2_comfy/asr/` are this pack's own
+implementations of SheetSage2 and Qwen3-ASR, under the same terms. ComfyUI's
+SheetSage2 code is GPL-3.0 and m-a-p's reference code carries no licence, so
+neither is copied here; the transcriptions are checked against ComfyUI master's
+instead, and match it to the byte on the pack's own songs. The speech model's
+log-mel front end follows the arithmetic of OpenAI's Whisper (MIT) and of
+Hugging Face's feature extractor (Apache-2.0), as Qwen3-ASR's own release does.
 
 ## Vendored YuE2 code
 
@@ -53,6 +61,12 @@ pack downloads them but does not redistribute them, and it does not relicense
 them. If you intend to use the output commercially, read the model license at
 https://huggingface.co/m-a-p/YuE2-3B before you do.
 
+SheetSage2's weights are under the same CC BY-NC 4.0. `YuE2 Transcribe`
+downloads them as `sheetsage2_bf16.safetensors` from
+[Comfy-Org/YuE2](https://huggingface.co/Comfy-Org/YuE2), a single-file repack of
+[m-a-p/SheetSage2](https://huggingface.co/m-a-p/SheetSage2), and likewise does
+not redistribute them.
+
 `qwen.tiktoken` is deliberately not shipped inside this pack for the same
 reason: it comes from the same non-commercially licensed repository, and the
 pack stays permissively licensed.
@@ -70,6 +84,16 @@ downloads it and does not redistribute it.
 
 A model you supply yourself carries whatever licence it came with, which this
 pack neither reads nor enforces.
+
+## The speech model
+
+**Apache-2.0.**
+
+With `lyrics_auto_recognition` on, `YuE2 Transcribe` recognises the sung words
+with Qwen3-ASR-1.7B from
+[Qwen/Qwen3-ASR-1.7B-hf](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf), which
+it downloads on first use and does not redistribute. The pack runs it with its
+own code rather than with Qwen's package or transformers.
 
 ## The llama.cpp binaries
 

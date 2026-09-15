@@ -58,24 +58,33 @@ a second node that writes both from one sentence:
 
 See [YuE2 Write Song](#yue2-write-song).
 
+A third node covers a song you already have. It writes down the recording's tune
+as a score, and the first node sings that tune in whatever style its style line
+describes:
+
+    [YuE2 Transcribe]
+      audio  (a recording)
+      -> score_abc  -> [YuE2 Generate Song]  with cot at melody
+      -> lyrics     ->
+
+See [YuE2 Transcribe](#yue2-transcribe).
+
 ## Contents
 
 - [What you need before installing](#what-you-need-before-installing)
 - [Install](#install)
 - [Example workflows](#example-workflows)
-- [Nodes](#nodes)
-  - [YuE2 Generate Song](#yue2-generate-song)
-  - [YuE2 Write Song](#yue2-write-song)
-  - [YuE2 Options](#yue2-options)
-  - [Staged nodes](#staged-nodes)
+- [Nodes](#nodes) - [YuE2 Generate Song](#yue2-generate-song) -
+  [YuE2 Write Song](#yue2-write-song) - [YuE2 Transcribe](#yue2-transcribe) -
+  [YuE2 Options](#yue2-options) - [Staged nodes](#staged-nodes)
 - [Song length](#song-length)
-- [Writing lyrics](#writing-lyrics)
-  - [Stress, and what capital letters really do](#stress-and-what-capital-letters-really-do)
+- [Writing lyrics](#writing-lyrics) -
+  [Stress, and what capital letters really do](#stress-and-what-capital-letters-really-do)
 - [Reproducibility](#reproducibility)
-- [Where the weights go](#where-the-weights-go)
-  - [The INT8 build](#the-int8-build)
-  - [Using files you already have](#using-files-you-already-have)
-  - [Environment variables](#environment-variables)
+- [Where the weights go](#where-the-weights-go) -
+  [The INT8 build](#the-int8-build) -
+  [Using files you already have](#using-files-you-already-have) -
+  [Environment variables](#environment-variables)
 - [Notes](#notes)
 - [Licence](#licence)
 
@@ -84,8 +93,8 @@ See [YuE2 Write Song](#yue2-write-song).
 | Resource | Requirement |
 |---|---|
 | GPU | An NVIDIA GPU with BF16 support. CPU works and is roughly an hour per song |
-| VRAM | **~5 GiB** for a 40-second song and **~11.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card. A card with room to spare keeps the whole model on it and uses more: 7.6 and 15 GiB. See `offload` in [YuE2 Options](#yue2-options) |
-| Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed |
+| VRAM | **~5 GiB** for a 40-second song and **~11.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card. A card with room to spare keeps the whole model on it and uses more: 7.6 and 15 GiB. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.3 GiB while it recognises the words of a three-minute song |
+| Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words |
 | Packages | `tiktoken`, which ComfyUI does not ship. It is the only thing this pack adds; `requests`, which the downloader uses, is already in every ComfyUI install. `llama-cpp-python` is optional -- `YuE2 Write Song` uses it when it is there and official llama.cpp binaries when it is not |
 
 If `tiktoken` is missing the node says so, with the right pip line for the
@@ -394,6 +403,97 @@ so they differ in arithmetic rather than in what they are told; the same seed
 repeated within one of them gives the same words back, but the two do not agree
 with each other.
 
+### YuE2 Transcribe
+
+A recording in; a score YuE2 can sing and its lyrics out. This is how a song is
+covered: the node writes down the tune of a song you already have, and
+`YuE2 Generate Song` sings that tune in whatever style its style line describes.
+
+![YuE2 Transcribe after a 0.110 s run. Inputs audio, options, score_abc and lyrics; the outputs score_abc and lyrics wired on. Widgets: mode full, lyrics_auto_recognition true, model auto, seed 107215315253946 with control after generate on fixed. A row of four buttons: Edit lyrics..., Reset lyrics, Edit score... and Reset score. The lyrics summary: Edited lyrics, 5 sections, 61 lines, sent on instead of the node's own lyrics, beginning with [Intro]. The score summary: Edited score, key Bm, 4/4, 112 BPM, 48 bars, bars 1-46 rewritten and the rest as transcribed. Under them the caption 5 sections, 99 seconds](docs/node_transcribe.png)
+
+*Both editors used on the node, both for this recording: the lyrics edited into
+five sections, and the first 46 of the score's 48 bars rewritten. Nothing had to
+be heard again, so the run took 0.11 s.*
+
+**Outputs**
+
+| Name | Contents |
+|---|---|
+| `score_abc` | The score written from the recording -- the vocal line, the instrumental line, beats, key and sections, and the chords too when `mode` is `full` -- or the edit kept on the node |
+| `lyrics` | The transcription's section tags in song order, with the recognised words under them when `lyrics_auto_recognition` is on, or the edited lyrics kept on the node |
+
+**Inputs**
+
+- `audio` -- the recording. A song with a singer works best, and only the first
+  recording of a batch is used.
+- `mode` -- `melody` writes the two lines without chords, which is what a cover
+  wants: sung with `cot` at `melody`, the accompaniment follows the new style.
+  `full` adds the chords it hears, for `cot` at `full`. Switching between the
+  two reuses the transcription.
+- `lyrics_auto_recognition` -- off at first. Turned on, the sung words are
+  recognised and laid out under the section tags, as described below.
+- `model` -- the language model that breaks recognised words into lines, from
+  the same list as on `YuE2 Write Song`. `auto` downloads the writer's 2.7 GB
+  model when the machine has none, and the node says so. It is used only with
+  recognition on.
+- `seed` -- changes only how the recognised words are broken into lines. It is
+  left on `fixed`, because a new layout of the same words would make the song
+  node downstream sing a new take.
+- `options` -- `download`, `device` and `keep_model_loaded` from `YuE2 Options`
+  apply here as they do on the song node.
+- `score_abc`, `lyrics` -- the edits kept on the node, filled by the editors and
+  hidden behind their buttons. Empty, as they start, the node outputs what it
+  hears.
+
+**A cover** is three wires: `score_abc` into the `score_abc` of
+`YuE2 Generate Song`, `lyrics` into its `lyrics`, and a `YuE2 Options` with
+`cot` at `melody` on the song node. The style line is yours to write, and it
+decides the genre, the voice and the instruments. A score without chords sung
+under `cot` at `full` is still sung, with a warning to set `melody`.
+
+**The words.** With `lyrics_auto_recognition` on, Qwen3-ASR-1.7B hears the whole
+recording in one pass, which is where it recognises words best. Each sung
+section is then heard once more on its own, and those rougher texts only decide
+where the whole song's words are cut. A language model then breaks every section
+into lines, and it is not trusted with the words: its answer is kept only when
+each section comes back under its own tag with the recognised words in their
+order -- some left out, none added, changed or moved, and at least 70 percent of
+them still there. A section that fails is broken into lines at its punctuation
+instead, and the node says how many did.
+
+Recognised words are close, not exact. On three real Russian tracks the word
+error rate against the published lyrics was 0.11 to 0.28, and the mistakes sound
+like the right word, so read the lyrics through in `Edit lyrics...` before
+singing them. Hearing the song section by section instead was worse on every
+track, 0.19 to 0.34, which is why the whole song comes first. The line layout
+was kept in 62 of 66 sections with the writer's 4B model and in all 66 with a
+27B one.
+
+**Nothing is heard twice.** A recording gives the same transcription and the
+same words whatever the seed or the mode, so both are kept for the last eight
+recordings: switching `mode`, editing or changing the seed costs no listening,
+and a new seed only lays the words out again. The models stay loaded only with
+`keep_model_loaded`, and Unload Models releases them.
+
+**The editors.** `Edit lyrics...` opens the [song editor](#the-song-editor) on
+the lyrics alone, starting from the section tags or the recognised words, and
+`Edit score...` opens the [score editor](#the-score-editor) on the
+transcription. An edit belongs to the recording it was made on, and an edited
+score to its `mode` as well. Given another recording, the node leaves the edit
+out, outputs what it hears in the new one and says so; `Reset lyrics` and
+`Reset score` throw an edit away. Lyrics or a score written before the node ever
+ran carry no recording and are sent on as they are.
+
+**Measured.** The transcriber is this pack's own implementation of SheetSage2,
+checked against ComfyUI master's: the same tokens and the same ABC to the byte
+on six songs, 1.1 to 10.4 s a song on an RTX 5090, and a peak of 1.9 GiB where
+master's reaches 16.5. On songs this pack sang, the vocal line came back with a
+note F1 of 0.96 to 0.99 counted in beats, and on three real tracks covered with
+`cot` at `melody`, 95 to 97 percent of the melody's pitch order survived. Those
+are clean mixes; on an arbitrary recording, expect the vocal F1 of 82.5 percent
+that the model card reports for RWC-Pop. Recognition runs its decoding step as a
+CUDA graph, and inside ComfyUI it heard a 190-second song in 5.2 s.
+
 ### YuE2 Options
 
 Everything the main node deliberately does not ask about. An unconnected socket
@@ -609,6 +709,21 @@ Any instruction-following GGUF in your ComfyUI model folders is offered in the
 node's `model` list and is used instead, so this download is for people who
 have none rather than a second requirement.
 
+`YuE2 Transcribe` has two models, fetched on first use with `download` at
+anything but `off`, the speech model only once `lyrics_auto_recognition` is on:
+
+| File | Size | Repository | Licence |
+| --- | --- | --- | --- |
+| `audio_encoders/sheetsage2_bf16.safetensors` | 1.29 GB | [Comfy-Org/YuE2](https://huggingface.co/Comfy-Org/YuE2) | CC BY-NC 4.0 |
+| `YuE2/Qwen3-ASR-1.7B/model.safetensors` | 3.80 GB | [Qwen/Qwen3-ASR-1.7B-hf](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) | Apache-2.0 |
+| `YuE2/Qwen3-ASR-1.7B/tokenizer.json`, `config.json` | 11 MB | [Qwen/Qwen3-ASR-1.7B-hf](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) | Apache-2.0 |
+
+SheetSage2 goes into ComfyUI's `models/audio_encoders`, the folder Comfy-Org's
+repository puts it in and ComfyUI's own audio encoder loader reads. A copy
+already on disk is used where it lies: SheetSage2 is recognised by its tensors
+whatever the file is called, and the speech model by the shape of its weights
+next to its `tokenizer.json`.
+
 `ComfyUI/models/YuE2/` is registered with ComfyUI, so `extra_model_paths.yaml`
 can redirect it like any other model folder, and `checkpoints` is whatever that
 file already says it is.
@@ -708,7 +823,8 @@ trusts. Nothing is skipped: the certificate is still verified.
 
 ## Licence
 
-The code here is Apache-2.0. The model weights are CC BY-NC 4.0, which is
+The code here is Apache-2.0, the SheetSage2 and Qwen3-ASR implementations
+included. The YuE2 and SheetSage2 weights are CC BY-NC 4.0, which is
 non-commercial, and the vendored upstream inference code keeps its own licence.
-The writer's default language model is Apache-2.0 and belongs to neither.
-See [NOTICE.md](NOTICE.md).
+The writer's default language model and the Qwen3-ASR speech model are
+Apache-2.0 and belong to neither. See [NOTICE.md](NOTICE.md).

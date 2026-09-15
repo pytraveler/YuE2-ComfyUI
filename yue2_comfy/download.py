@@ -513,6 +513,77 @@ def fetch_repack(quantization: str, progress=None) -> str:
     return list(wanted.values())[0]
 
 
+def sheetsage_wanted() -> dict:
+    """SheetSage2's one file, and where ComfyUI expects audio encoders."""
+    from .constants import SHEETSAGE_NAME, SHEETSAGE_PATH
+
+    return {SHEETSAGE_PATH: os.path.join(paths.audio_encoders_root(), SHEETSAGE_NAME)}
+
+
+def fetch_sheetsage(progress=None) -> str:
+    """Comfy-Org's SheetSage2 file, into ComfyUI/models/audio_encoders.
+
+    Always this file, whatever 'download' names: m-a-p publish SheetSage2 only
+    as adapters over a separate encoder, which this pack does not read.
+    """
+    from .constants import SHEETSAGE_BYTES
+
+    wanted = sheetsage_wanted()
+    fetch(REPACK_REPO, wanted, "Downloading SheetSage2 ({})".format(human_size(SHEETSAGE_BYTES)), progress)
+    return list(wanted.values())[0]
+
+
+def ensure_sheetsage(settings: dict, progress=None) -> str:
+    """SheetSage2's weights, fetched first when the machine has not got them and downloading is on."""
+    from . import discovery
+
+    found = discovery.find_sheetsage()
+    if found:
+        return found
+    if settings.get("download", "auto") == "off":
+        raise FileNotFoundError(
+            discovery.sheetsage_missing_message(paths.sheetsage_roots())
+            + "\n\nOr set 'download' in YuE2 Options to 'auto', and the node will fetch it itself.")
+    path = fetch_sheetsage(progress)
+    if progress is not None:
+        progress.text("Download finished")
+    return path
+
+
+def asr_wanted() -> dict:
+    """Qwen3-ASR-1.7B's three files, into their own folder under models/YuE2."""
+    from .constants import ASR_DIRNAME, ASR_FILES
+
+    folder = os.path.join(paths.models_root(), ASR_DIRNAME)
+    return {name: os.path.join(folder, name) for name in ASR_FILES}
+
+
+def fetch_asr(progress=None) -> str:
+    """Qwen's release of the speech model, whatever 'download' names; the folder it landed in."""
+    from .constants import ASR_BYTES, ASR_REPO
+
+    wanted = asr_wanted()
+    fetch(ASR_REPO, wanted, "Downloading Qwen3-ASR-1.7B ({})".format(human_size(ASR_BYTES)), progress)
+    return os.path.dirname(list(wanted.values())[0])
+
+
+def ensure_asr(settings: dict, progress=None) -> str:
+    """The speech model's folder, fetched first when the machine has not got it and downloading is on."""
+    from . import discovery
+
+    found = discovery.find_asr()
+    if found:
+        return found
+    if settings.get("download", "auto") == "off":
+        raise FileNotFoundError(
+            discovery.asr_missing_message(paths.asr_roots())
+            + "\n\nOr set 'download' in YuE2 Options to 'auto', and the node will fetch it itself.")
+    folder = fetch_asr(progress)
+    if progress is not None:
+        progress.text("Download finished")
+    return folder
+
+
 def verify_folder(directory: str, progress=None) -> None:
     """Check a folder against the manifest that came down with it.
 

@@ -18,7 +18,7 @@ import logging
 import os
 import re
 
-from .constants import CHECKPOINTS_SUBDIR, MODELS_SUBDIR, WRITER_SUBDIR
+from .constants import AUDIO_ENCODERS_SUBDIR, CHECKPOINTS_SUBDIR, MODELS_SUBDIR, WRITER_SUBDIR
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +152,35 @@ def checkpoints_root() -> str:
         os.makedirs(registered[0], exist_ok=True)
         return registered[0]
     root = os.path.join(folder_paths.models_dir, CHECKPOINTS_SUBDIR)
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def audio_encoders_root() -> str:
+    """ComfyUI/models/audio_encoders, where Comfy-Org's SheetSage2 file belongs.
+
+    The same reasoning as for the checkpoint: it is where their repository puts
+    it and where ComfyUI's own audio encoder loader looks, so one copy serves
+    both. An existing registered path wins, and without ComfyUI the pack's own
+    root stands in.
+    """
+    folder_paths = _folder_paths()
+    if folder_paths is None:
+        return os.path.join(models_root(), AUDIO_ENCODERS_SUBDIR)
+    try:
+        registered = [path for path in folder_paths.get_folder_paths(AUDIO_ENCODERS_SUBDIR)]
+    except KeyError:
+        registered = []
+    for path in registered:
+        try:
+            if os.path.isdir(path):
+                return path
+        except OSError:
+            continue
+    if registered:
+        os.makedirs(registered[0], exist_ok=True)
+        return registered[0]
+    root = os.path.join(folder_paths.models_dir, AUDIO_ENCODERS_SUBDIR)
     os.makedirs(root, exist_ok=True)
     return root
 
@@ -351,4 +380,60 @@ def search_roots() -> list:
         for snapshot in snapshot_dirs(cache_root):
             _add(roots, snapshot)
     _add(roots, checkout_sibling_root())
+    return roots
+
+
+def sheetsage_roots() -> list:
+    """Everywhere SheetSage2's file may be, audio encoder folders first.
+
+    The override is still the only root when it is set. Otherwise ComfyUI's
+    audio_encoders folders come before the places YuE2 itself is looked for,
+    and a downloaded copy of the Comfy-Org repository beside the checkout keeps
+    the file one level down, in its own audio_encoders folder.
+    """
+    override = os.environ.get(ENV_ROOT)
+    if override:
+        return search_roots()
+    roots: list = []
+    folder_paths = _folder_paths()
+    if folder_paths is not None:
+        try:
+            registered = list(folder_paths.get_folder_paths(AUDIO_ENCODERS_SUBDIR))
+        except KeyError:
+            registered = []
+        for path in registered:
+            _add(roots, path)
+        try:
+            _add(roots, os.path.join(folder_paths.models_dir, AUDIO_ENCODERS_SUBDIR))
+        except Exception:
+            log.debug("[yue2_comfy.paths] no models_dir", exc_info=True)
+    for path in search_roots():
+        _add(roots, path)
+    sibling = checkout_sibling_root()
+    try:
+        children = sorted(os.listdir(sibling))
+    except OSError:
+        children = []
+    for child in children:
+        _add(roots, os.path.join(sibling, child, AUDIO_ENCODERS_SUBDIR))
+    return roots
+
+
+def asr_roots() -> list:
+    """Everywhere Qwen3-ASR's folder may be: the usual roots, then collections beside the checkout.
+
+    The override is still the only root when it is set. Speech models
+    downloaded as a set next to the checkout keep each size one level further
+    down, so every folder there is a root of its own.
+    """
+    roots = search_roots()
+    if os.environ.get(ENV_ROOT):
+        return roots
+    sibling = checkout_sibling_root()
+    try:
+        children = sorted(os.listdir(sibling))
+    except OSError:
+        children = []
+    for child in children:
+        _add(roots, os.path.join(sibling, child))
     return roots

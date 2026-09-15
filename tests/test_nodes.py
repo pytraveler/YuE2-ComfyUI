@@ -20,19 +20,20 @@ def test_every_node_is_wired(name, cls):
     assert cls.DESCRIPTION.strip()
 
 
-def test_the_menu_offers_three_nodes_and_hides_the_rest_one_level_down():
+def test_the_menu_offers_four_nodes_and_hides_the_rest_one_level_down():
     """The whole product is that someone can write a song without reading.
 
-    Eight nodes in one menu is the pack this one was written not to be. The
+    Nine nodes in one menu is the pack this one was written not to be. The
     staged four and their selector earn their place by being one click further
     in, so demoting a headline node or promoting a staged one has to be done on
-    purpose rather than by editing a class and not noticing.
+    purpose rather than by editing a class and not noticing. Transcribe is a
+    headline node: covering a song is a thing people come for.
     """
     plain = {name for name, cls in node_classes()
              if cls.CATEGORY == constants.CATEGORY}
     advanced = {name for name, cls in node_classes()
                 if cls.CATEGORY == constants.ADVANCED_CATEGORY}
-    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options"}
+    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe"}
     assert advanced == set(nodes.STAGED_CLASSES)
 
 
@@ -195,8 +196,9 @@ def test_the_edited_score_box_is_the_last_widget_on_the_song_node():
     assert spec["optional"]["score_abc"][1]["default"] == ""
 
 
-WRITTEN = "X:1\nK:C\nCDEF|"
-EDITED = "X:1\nK:C\nEFGA|"
+WRITTEN = "X:1\nK:C\n\"C\"CDEF|"
+EDITED = "X:1\nK:C\n\"Am\"EFGA|"
+MELODY_ONLY = "X:1\nV: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\nK:C\nV: Vocal\nEFGA|"
 
 
 def stub_run(monkeypatch):
@@ -274,6 +276,21 @@ def test_with_cot_off_an_edit_waits_on_the_node(monkeypatch):
     sing_with(EDITED, options=dict(constants.DEFAULT_OPTIONS, cot="off"))
     assert calls == [{"edited": None, "cot": "off"}]
     assert said[0][0][1] == edits.COT_OFF
+
+
+def test_a_melody_only_score_sung_under_cot_full_is_sung_with_a_warning(monkeypatch):
+    """A transcription for a cover has no chords; 'full' promises the model it has them."""
+    calls, said = stub_run(monkeypatch)
+    sing_with(MELODY_ONLY, options=dict(constants.DEFAULT_OPTIONS, cot="full"))
+    assert calls == [{"edited": MELODY_ONLY, "cot": "full"}]
+    assert said == [[("warn", edits.CHORDLESS)]]
+
+
+def test_a_melody_only_score_under_cot_melody_says_nothing(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    sing_with(MELODY_ONLY, options=dict(constants.DEFAULT_OPTIONS, cot="melody"))
+    assert calls == [{"edited": MELODY_ONLY, "cot": "melody"}]
+    assert said == []
 
 
 def test_the_song_node_tells_the_editor_how_long_its_lyrics_let_a_song_run(monkeypatch):

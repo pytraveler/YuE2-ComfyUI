@@ -200,6 +200,22 @@ def test_the_render_node_leaves_an_edit_for_other_words_unsung_and_says_so(monke
     assert staged.RENDER_INSTEAD in said[0][0][1]
 
 
+def test_the_render_node_warns_when_a_melody_only_score_meets_cot_full(monkeypatch):
+    """Sung anyway: the warning says what to change, it does not stop the song."""
+    calls = stub_singing(monkeypatch)
+    said = []
+    monkeypatch.setattr(staged, "announce",
+                        lambda node, findings, kind="notice": said.append(findings))
+    plan = plain_plan()
+    plan["settings"]["cot"] = "full"
+    staged.YuE2RenderPlan().render(plan, score_abc="X:1\nK:G\nGABc|\n", unique_id="9")
+    assert calls[0]["abc"] == "X:1\nK:G\nGABc|"
+    assert said == [[("warn", edits.CHORDLESS)]]
+    said.clear()
+    staged.YuE2RenderPlan().render(plan, score_abc='X:1\nK:G\n"G"GABc|\n', unique_id="9")
+    assert said == []
+
+
 def test_the_render_node_passes_an_untouched_score_as_ids(monkeypatch):
     calls = stub_singing(monkeypatch)
     plan = {"style": "s", "lyrics": "l", "seed": 5, "score": SCORE, "ids": IDS,

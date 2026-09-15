@@ -25,6 +25,7 @@ from .constants import (
 from .progress import (NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 from .staged import (STAGED_CLASSES, STAGED_NAMES, resolve, session, words)
+from .transcribe import TRANSCRIBE_CLASSES, TRANSCRIBE_NAMES
 
 log = logging.getLogger(__name__)
 
@@ -123,8 +124,9 @@ VAE_TOOLTIP = (
 KEEP_TOOLTIP = (
     "Keep the model loaded after the run.\n\n"
     "On saves about five seconds per run while you iterate on lyrics or seeds, and "
-    "holds the memory until ComfyUI restarts or another YuE2 run needs a different "
-    "model: on the card, or partly in system RAM when 'offload' has moved a half off. "
+    "holds the memory until Unload Models is pressed, ComfyUI restarts or another "
+    "YuE2 run needs a different model: on the card, or partly in system RAM when "
+    "'offload' has moved a half off. "
     "Off frees it immediately, which is what you want when video or image nodes run "
     "next in the same graph."
 )
@@ -339,6 +341,8 @@ class YuE2GenerateSong:
         if problem:
             announce(unique_id, [("warn", problem)])
         edited = edit.score if edit.score and not problem else None
+        if edited and settings["cot"] == "full" and edits.chordless(edited):
+            announce(unique_id, [("warn", edits.CHORDLESS)])
         if edited:
             log.info("[yue2_comfy] singing the edited score kept on the node; "
                      "no score is written this run")
@@ -488,6 +492,7 @@ NODE_CLASS_MAPPINGS = {
     "YuE2Options": YuE2Options,
 }
 NODE_CLASS_MAPPINGS.update(STAGED_CLASSES)
+NODE_CLASS_MAPPINGS.update(TRANSCRIBE_CLASSES)
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
@@ -495,6 +500,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2Options": "YuE2 Options",
 }
 NODE_DISPLAY_NAME_MAPPINGS.update(STAGED_NAMES)
+NODE_DISPLAY_NAME_MAPPINGS.update(TRANSCRIBE_NAMES)
 """One registry, so that whatever reads this module sees every node.
 
 The release workflow and the tests both import these two names to check that

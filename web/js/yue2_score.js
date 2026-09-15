@@ -7,6 +7,7 @@ import * as roll from "./yue2_roll.js";
 
 const RENDER = "YuE2RenderPlan";
 const GENERATE = "YuE2GenerateSong";
+const TRANSCRIBE = "YuE2Transcribe";
 const PLAN_NODES = ["YuE2Plan", "YuE2SelectPlan"];
 const SELECT = "YuE2SelectPlan";
 const BATCH = "YuE2PlanBatch";
@@ -17,9 +18,12 @@ const PLANS = "plans";
 const OPTIONS = "options";
 const LYRICS = "lyrics";
 const MAX_SECONDS = "max_seconds";
+const MODE = "mode";
 const MUTED_MODES = [2, 4];
 const SCORE_UI = "yue2_score";
 const WORDS_UI = "yue2_words";
+const TRACK_UI = "yue2_track";
+const MARKS_UI = "yue2_marks";
 const AUTO_SECONDS_UI = "yue2_auto_seconds";
 const SCORE_EVENT = "yue2-score-written";
 const READ_ROUTE = "/yue2/score/read";
@@ -100,6 +104,8 @@ const RESET_TOOLTIP_OWN =
     "so a new seed gives a new tune.";
 const RESET_TOOLTIP_PLAN =
     "Throw away the edit kept on this node. The next run sings the plan's own score.";
+const RESET_TOOLTIP_TRANSCRIBE =
+    "Throw away the edit kept on this node. The next run outputs the transcription again.";
 
 const HONEST_NOTE =
     "YuE2 usually sings an edited melody, not always: measured on three songs, four rewritten " +
@@ -112,6 +118,10 @@ const RETRY_HERE =
     "if a bar does not take, change the seed on this node: the edit stays, and only the performance " +
     "changes. The edit belongs to these words: with other lyrics or another style the node writes a " +
     "new score instead.";
+const TRANSCRIBE_NOTE =
+    "SheetSage2 writes down what it hears, and a real recording is heard less exactly than a clean mix: " +
+    "play the melody, and fix a wrong note or chord here before the song is sung. The edit belongs to " +
+    "this recording and this 'mode': with another recording the node transcribes anew instead.";
 
 const LIMIT_TOOLTIP =
     "'max_seconds' in YuE2 Options ends the singing here, however far the score runs on. " +
@@ -251,12 +261,30 @@ function isGenerate(node) {
     return node?.type === GENERATE || node?.comfyClass === GENERATE;
 }
 
+function isTranscribe(node) {
+    return node?.type === TRANSCRIBE || node?.comfyClass === TRANSCRIBE;
+}
+
+function isOwn(node) {
+    return isGenerate(node) || isTranscribe(node);
+}
+
+function backLabel(node) {
+    return isTranscribe(node) ? "Back to the transcription" : "Back to the model's score";
+}
+
+function wordsWanted(origin) {
+    if (!isTranscribe(origin)) return origin?.__yue2Words || null;
+    const chosen = widgetNamed(origin, MODE)?.value;
+    return origin.__yue2Marks?.[chosen] || origin.__yue2Words || null;
+}
+
 function isRender(node) {
     return node?.type === RENDER || node?.comfyClass === RENDER;
 }
 
 function scoreSource(node) {
-    if (isGenerate(node)) return { node, own: true };
+    if (isOwn(node)) return { node, own: true };
     const origin = planSource(node);
     return origin ? { node: origin, own: false } : null;
 }
@@ -281,6 +309,7 @@ function optionsNodeFor(node) {
 }
 
 function limitFor(node) {
+    if (isTranscribe(node)) return null;
     const own = isGenerate(node);
     const source = own ? node : planSource(node);
     if (!source) return null;
@@ -460,6 +489,8 @@ class ScoreEditor {
         const source = scoreSource(node);
         this.origin = source?.node ?? null;
         this.own = Boolean(source?.own);
+        this.transcribe = isTranscribe(node);
+        this.back = backLabel(node);
         this.planScore = this.origin?.__yue2Score || null;
         this.planWords = this.origin?.__yue2Words || null;
         this.limit = limitFor(node);
@@ -503,9 +534,10 @@ class ScoreEditor {
         this.close = close;
         handle.onEscape = () => this.escape();
 
-        panel.appendChild(element("h3", "", "Score \u2014 " + (this.node.title || "YuE2 Render Plan")));
-        panel.appendChild(element("p", "yue2-s-sub",
-            "The notes this node sings. Nothing is written to the node until Apply."));
+        panel.appendChild(element("h3", "", "Score \u2014 "
+            + (this.node.title || (this.transcribe ? "YuE2 Transcribe" : "YuE2 Render Plan"))));
+        panel.appendChild(element("p", "yue2-s-sub", (this.transcribe ? "The notes this node sends on."
+            : "The notes this node sings.") + " Nothing is written to the node until Apply."));
 
         const tabs = element("div", "yue2-s-bar");
         this.tabButtons = {};
@@ -605,14 +637,17 @@ class ScoreEditor {
 
         this.status = element("div", "yue2-s-status");
         panel.appendChild(this.status);
-        panel.appendChild(element("p", "yue2-s-hint", HONEST_NOTE + (this.own ? RETRY_HERE : RETRY_ON_PLAN)));
+        panel.appendChild(element("p", "yue2-s-hint",
+            this.transcribe ? TRANSCRIBE_NOTE : HONEST_NOTE + (this.own ? RETRY_HERE : RETRY_ON_PLAN)));
 
         const foot = element("div", "yue2-s-foot");
         this.writeButton = element("button", "", "Write the score");
         this.writeButton.title = "Run only the plan node feeding this one: the score is written, nothing is sung.";
         this.writeButton.addEventListener("click", () => this.writeScore());
-        this.resetButton = element("button", "", "Back to the model's score");
-        this.resetButton.title = this.own
+        this.resetButton = element("button", "", this.back);
+        this.resetButton.title = this.transcribe
+            ? "Throw away the edits and load the score this node transcribed on its last run."
+            : this.own
             ? "Throw away the edits and load the score this node wrote on its last run."
             : "Throw away the edits and load the score the plan node wrote.";
         this.resetButton.addEventListener("click", () => this.reset());
@@ -655,16 +690,20 @@ class ScoreEditor {
         this.fromBox = Boolean(box.score);
         this.opened = box.score || String(this.planScore || "").trim();
         this.baseWords = box.score ? box.words : this.planWords;
-        if (box.score && box.words && this.planWords && box.words !== this.planWords) {
-            this.pendingNote = "This edit was made for other words than " + (this.own ? "the last run had" : "the plan has now")
-                + ", so it is not sung until they come back. 'Back to the model's score' loads the new score.";
+        const wanted = this.origin ? wordsWanted(this.origin) : null;
+        if (box.score && box.words && wanted && box.words !== wanted) {
+            this.pendingNote = this.transcribe
+                ? "This edit was made for another recording or the other 'mode', so the node transcribes anew "
+                    + "instead of sending it on. '" + this.back + "' loads the last transcription."
+                : "This edit was made for other words than " + (this.own ? "the last run had" : "the plan has now")
+                    + ", so it is not sung until they come back. '" + this.back + "' loads the new score.";
             this.pendingBad = true;
         } else if (box.score && this.planScore && base && base !== hashText(String(this.planScore).trim())) {
             this.pendingNote = box.words
                 ? "This edit was made on an earlier take of these words, and it is still sung. "
-                    + "'Back to the model's score' loads the newer take."
+                    + "'" + this.back + "' loads the newer take."
                 : "This edit was made on an earlier score; the plan has written a new one since. "
-                    + "'Back to the model's score' loads the new one.";
+                    + "'" + this.back + "' loads the new one.";
             this.pendingBad = !box.words;
         }
         this.load(this.opened);
@@ -795,6 +834,12 @@ class ScoreEditor {
         this.empty.replaceChildren();
         if (problem) {
             this.empty.appendChild(element("div", "", "The piano roll cannot draw this score. The ABC tab has its text."));
+            return;
+        }
+        if (this.transcribe) {
+            this.empty.appendChild(element("div", "",
+                "There is no score yet. Run the workflow once: the transcription appears here, and fixing "
+                + "a note after that does not listen to the recording again. Or paste a score into the ABC tab."));
             return;
         }
         if (this.own) {
@@ -1616,7 +1661,8 @@ class ScoreEditor {
             this.model = null;
             this.changed = [];
             this.fillEmpty();
-            this.setStatus(this.own ? "The box is empty: the node writes a new score on its next run."
+            this.setStatus(this.transcribe ? "The box is empty: the node outputs the transcription on its next run."
+                : this.own ? "The box is empty: the node writes a new score on its next run."
                 : "The box is empty: the node will sing the plan's own score.");
             return true;
         }
@@ -1756,7 +1802,7 @@ class ScoreEditor {
             return;
         }
         this.setStatus((this.own ? "This node" : "The plan node") + " has written a new score. "
-            + "'Back to the model's score' loads it; the edit stays until then.");
+            + "'" + this.back + "' loads it; the edit stays until then.");
     }
 
     reset() {
@@ -1774,7 +1820,8 @@ class ScoreEditor {
         this.fromBox = false;
         this.baseWords = null;
         this.load("");
-        this.setStatus("Apply removes the edit, and the next run " + (this.own
+        this.setStatus("Apply removes the edit, and the next run " + (this.transcribe
+            ? "outputs the transcription again." : this.own
             ? "writes the model's score again." : "sings the plan's own score."));
     }
 
@@ -1811,7 +1858,7 @@ class ScoreEditor {
             text = typed;
         }
         const model = String(this.planScore || "").trim();
-        const value = text && text !== model ? roll.attachMark(text, this.baseWords) : "";
+        const value = roll.editValue(text, model, this.baseWords);
         setWidgetValue(this.node, SCORE, value);
         this.node.properties = this.node.properties || {};
         if (value) {
@@ -1840,7 +1887,9 @@ function openScoreEditor(node) {
 function resetScoreEdit(node) {
     const box = roll.splitMark(widgetNamed(node, SCORE)?.value ?? "");
     if (!box.score) return;
-    const next = isGenerate(node)
+    const next = isTranscribe(node)
+        ? "The next run outputs the transcription again."
+        : isGenerate(node)
         ? "The next run writes the model's score again, and a new seed gives a new tune."
         : "The next run sings the plan's own score.";
     if (!window.confirm("Throw away the edited score kept on this node?\n\n" + next)) return;
@@ -1891,20 +1940,22 @@ function fillScoreSummary(node, holder) {
     const dim = (text) => element("span", "yue2-s-dim", text);
     const strong = (text) => element("span", "yue2-s-key", text);
     const warn = (text) => element("span", "yue2-s-warn", text);
-    const own = isGenerate(node);
+    const own = isOwn(node);
+    const transcribe = isTranscribe(node);
     const wired = sourceOf(node, SCORE);
     const box = roll.splitMark(widgetNamed(node, SCORE)?.value ?? "");
     if (node.__yue2ResetButton) node.__yue2ResetButton.hidden = Boolean(wired) || !box.score;
     if (wired) {
         row(dim("The score comes in through a wire from "), strong(wired.title || "another node"));
-        row(dim(own ? "Sung as it arrives, whatever the words." : "Edit it where it is written."));
+        row(dim(transcribe ? "Sent on as it arrives, instead of a transcription."
+            : own ? "Sung as it arrives, whatever the words." : "Edit it where it is written."));
         if (node.__yue2ScoreButton) node.__yue2ScoreButton.disabled = true;
         return;
     }
     if (node.__yue2ScoreButton) node.__yue2ScoreButton.disabled = false;
     const origin = scoreSource(node)?.node ?? null;
     const planScore = origin?.__yue2Score || null;
-    const planWords = origin?.__yue2Words || null;
+    const planWords = origin ? wordsWanted(origin) : null;
     const facts = (abc) => {
         const found = roll.headerFacts(abc);
         return [found.key && "Key " + found.key, found.meter, found.bpm && found.bpm + " BPM",
@@ -1924,14 +1975,18 @@ function fillScoreSummary(node, holder) {
         row(strong("Edited score"), dim(" \u00B7 " + facts(box.score)));
         const bars = node.properties?.yue2_score_bars || [];
         const base = node.properties?.yue2_score_base;
-        const rewritten = bars.length ? "Bars " + barList(bars) + " rewritten" : "Sung as it stands";
+        const rewritten = bars.length ? "Bars " + barList(bars) + " rewritten"
+            : transcribe ? "Sent on as it stands" : "Sung as it stands";
         const otherWords = Boolean(box.words && planWords && box.words !== planWords);
         if (otherWords) {
-            row(warn(own ? "Made for other words: this node writes a new score instead."
+            row(warn(transcribe ? "Made for another recording or mode: this node transcribes anew instead."
+                : own ? "Made for other words: this node writes a new score instead."
                 : "Made for other words: the plan's own score is sung instead."));
         } else if (planScore && base && base !== hashText(String(planScore).trim())) {
             row(box.words ? dim(rewritten + " on an earlier take; still sung.")
                 : warn("Edited on an earlier score; the plan has changed since."));
+        } else if (transcribe) {
+            row(dim(bars.length ? rewritten + "; the rest as transcribed." : rewritten + " instead of the transcription."));
         } else if (own) {
             row(dim(rewritten + ". A new seed keeps these notes."));
         } else {
@@ -1941,15 +1996,17 @@ function fillScoreSummary(node, holder) {
         return;
     }
     if (planScore) {
-        row(strong("The model's score"), dim(" \u00B7 " + facts(planScore)));
-        row(dim(own ? "Written by the model on each run. Edit score\u2026 to change notes."
+        row(strong(transcribe ? "The transcription" : "The model's score"), dim(" \u00B7 " + facts(planScore)));
+        row(dim(transcribe ? "Written from the recording, the same on every run. Edit score\u2026 to fix notes."
+            : own ? "Written by the model on each run. Edit score\u2026 to change notes."
             : "Sung exactly as written. Edit score\u2026 to change notes."));
         limitRow(planScore, []);
         return;
     }
     if (own) {
         row(strong("No score yet"));
-        row(dim("Run once, and the score this node writes can be edited here."));
+        row(dim(transcribe ? "Run once, and the transcription can be edited here."
+            : "Run once, and the score this node writes can be edited here."));
         return;
     }
     if (origin) {
@@ -1963,7 +2020,7 @@ function fillScoreSummary(node, holder) {
 
 function refreshScoreSummaries() {
     for (const node of graphNodes()) {
-        if (isRender(node) || isGenerate(node)) paintScoreSummary(node);
+        if (isRender(node) || isOwn(node)) paintScoreSummary(node);
     }
 }
 
@@ -1987,7 +2044,10 @@ function settleBesideTheSongButton(node, buttons) {
     } else {
         const { buttons: made } = buttonRow(node, "yue2_score_edit", [
             { label: EDIT_LABEL, tooltip: EDIT_TOOLTIP, onClick: () => openScoreEditor(node) },
-            { label: RESET_LABEL, tooltip: RESET_TOOLTIP_OWN, onClick: () => resetScoreEdit(node) },
+            {
+                label: RESET_LABEL, tooltip: isTranscribe(node) ? RESET_TOOLTIP_TRANSCRIBE : RESET_TOOLTIP_OWN,
+                onClick: () => resetScoreEdit(node),
+            },
         ]);
         node.__yue2ScoreButton = made[0];
         node.__yue2ResetButton = made[1];
@@ -2011,14 +2071,15 @@ function installScoreEditor(node) {
         if (!node.__yue2ScoreButton?.disabled) openScoreEditor(node);
     });
     node.__yue2ScoreSummary = summary;
-    if (isGenerate(node)) {
+    if (isOwn(node)) {
         const edit = plainButton(EDIT_LABEL, EDIT_TOOLTIP, () => openScoreEditor(node));
-        const reset = plainButton(RESET_LABEL, RESET_TOOLTIP_OWN, () => resetScoreEdit(node));
+        const reset = plainButton(RESET_LABEL, isTranscribe(node) ? RESET_TOOLTIP_TRANSCRIBE : RESET_TOOLTIP_OWN,
+            () => resetScoreEdit(node));
         reset.hidden = true;
         node.__yue2ScoreButton = edit;
         node.__yue2ResetButton = reset;
         panelWidget(node, SCORE_SUMMARY, summary, () => (node.__yue2ScoreRows > 2 ? SUMMARY_H : SONG_SUMMARY_H));
-        repaintOnChange(node, LYRICS);
+        repaintOnChange(node, isTranscribe(node) ? MODE : LYRICS);
         queueMicrotask(() => {
             try {
                 settleBesideTheSongButton(node, [edit, reset]);
@@ -2085,7 +2146,7 @@ app.registerExtension({
             return;
         }
         const plan = PLAN_NODES.includes(nodeData.name);
-        const own = nodeData.name === GENERATE;
+        const own = nodeData.name === GENERATE || nodeData.name === TRANSCRIBE;
         if (plan || own) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (message) {
@@ -2093,9 +2154,14 @@ app.registerExtension({
                 const score = message?.[SCORE_UI]?.[0];
                 const words = message?.[WORDS_UI]?.[0];
                 const auto = message?.[AUTO_SECONDS_UI]?.[0];
+                const track = message?.[TRACK_UI]?.[0];
+                const marks = message?.[MARKS_UI]?.[0];
                 if (typeof score === "string") this.__yue2Score = score;
                 if (typeof words === "string") this.__yue2Words = words;
                 if (typeof auto === "number") this.__yue2AutoSeconds = auto;
+                if (typeof track === "string") {
+                    this.__yue2Marks = marks && typeof marks === "object" ? { ...marks } : null;
+                }
                 if (typeof score === "string" || typeof words === "string") {
                     window.dispatchEvent(new CustomEvent(SCORE_EVENT, { detail: { id: this.id, score, words } }));
                 }

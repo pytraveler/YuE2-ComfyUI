@@ -32,8 +32,10 @@ from typing import NamedTuple
 
 from . import paths
 from .constants import (
+    ASR_BYTES, ASR_DIRNAME, ASR_FILES, ASR_MARKER, ASR_MARKER_SHAPE, ASR_REPO, ASR_TOKENIZER_NAME,
     LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
     REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
+    SHEETSAGE_BYTES, SHEETSAGE_MARKERS, SHEETSAGE_NAME, SHEETSAGE_PATH,
     VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, WEIGHTS_NAME,
 )
 
@@ -89,7 +91,7 @@ def folder_kind(directory: str) -> str:
 
 
 def identify(path: str) -> str:
-    """"lm", "vae", "repack", "repack_int8" or "", as cheaply as possible."""
+    """"lm", "vae", "repack", "repack_int8", "sheetsage" or "", as cheaply as possible."""
     try:
         key = _stamp(path)
     except OSError:
@@ -106,6 +108,8 @@ def identify(path: str) -> str:
         verdict = "repack"
     elif size == REPACK_INT8_BYTES:
         verdict = "repack_int8"
+    elif size == SHEETSAGE_BYTES:
+        verdict = "sheetsage"
     else:
         verdict = _identify_by_header(path)
     _identified[key] = verdict
@@ -124,6 +128,8 @@ def _identify_by_header(path: str) -> str:
     except Exception:
         log.debug("[yue2_comfy.discovery] cannot read %s", path, exc_info=True)
         return ""
+    if all(marker in names for marker in SHEETSAGE_MARKERS):
+        return "sheetsage"
     if all(marker in names for marker in LM_MARKERS):
         return "lm"
     if LM_MARKERS[0] not in names and any(name.startswith(VAE_PREFIX) for name in names):
@@ -394,4 +400,106 @@ def _missing_message(roots: list, found: dict, variant: str, quantization: str) 
         "Set " + paths.ENV_ROOT + " to point at a folder you keep them in, if it is "
         "none of the above.",
     ]
+    return "\n".join(lines)
+
+
+def find_sheetsage(roots=None) -> str:
+    """SheetSage2's file, by its published name first and by its tensors second, or ""."""
+    roots = paths.sheetsage_roots() if roots is None else roots
+    for root in roots:
+        for home in _homes(root):
+            candidate = os.path.join(home, SHEETSAGE_NAME)
+            if os.path.isfile(candidate):
+                return candidate
+    for root in roots:
+        for home in _homes(root):
+            try:
+                entries = sorted(os.listdir(home))
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.lower().endswith(".safetensors"):
+                    candidate = os.path.join(home, entry)
+                    if identify(candidate) == "sheetsage":
+                        return candidate
+    return ""
+
+
+def _audio_encoders_root() -> str:
+    override = os.environ.get(paths.ENV_ROOT)
+    if override:
+        return os.path.join(override, "audio_encoders")
+    try:
+        return paths.audio_encoders_root()
+    except Exception:
+        return os.path.join("ComfyUI", "models", "audio_encoders")
+
+
+def sheetsage_missing_message(roots: list) -> str:
+    """Where SheetSage2 goes and the link to it, for somebody who turned downloading off."""
+    lines = [
+        "SheetSage2, the model that reads a recording into a score, is not on this machine yet.",
+        "",
+        "It is one file ({:.2f} GB), the same one ComfyUI's own audio encoder loader reads:"
+        .format(SHEETSAGE_BYTES / 1024 ** 3),
+        "",
+        "  " + _link(REPACK_REPO, SHEETSAGE_PATH),
+        "  -> " + os.path.join(_audio_encoders_root(), SHEETSAGE_NAME),
+        "",
+    ]
+    if roots:
+        where = "1 place" if len(roots) == 1 else str(len(roots)) + " places"
+        lines += ["Looked in " + where + ", including:", ""]
+        lines += ["  " + path for path in roots[:6]]
+    else:
+        lines += ["There was nowhere to look: no ComfyUI model folders were found."]
+    lines += ["", "Its weights are licensed CC BY-NC 4.0, like YuE2's."]
+    return "\n".join(lines)
+
+
+def is_asr_folder(folder: str) -> bool:
+    """A folder holding Qwen3-ASR-1.7B's weights and tokenizer: known by size, or by the projector's shape."""
+    weights = os.path.join(folder, WEIGHTS_NAME)
+    if not (os.path.isfile(weights) and os.path.isfile(os.path.join(folder, ASR_TOKENIZER_NAME))):
+        return False
+    try:
+        if os.path.getsize(weights) == ASR_BYTES:
+            return True
+        from .loader import read_header
+
+        entry = read_header(weights).get(ASR_MARKER)
+    except Exception:
+        log.debug("[yue2_comfy.discovery] cannot read %s", weights, exc_info=True)
+        return False
+    return isinstance(entry, dict) and entry.get("shape") == ASR_MARKER_SHAPE
+
+
+def find_asr(roots=None) -> str:
+    """The folder of Qwen3-ASR-1.7B's weights, or ""."""
+    roots = paths.asr_roots() if roots is None else roots
+    for root in roots:
+        for home in _homes(root):
+            if is_asr_folder(home):
+                return home
+    return ""
+
+
+def asr_missing_message(roots: list) -> str:
+    """Where the speech model goes and the links to it, for somebody who turned downloading off."""
+    lines = [
+        "Qwen3-ASR-1.7B, the speech model that recognises the sung words, is not on this machine yet.",
+        "",
+        "It is three files from Qwen's own release, the weights {:.2f} GB of them, kept together in one folder:"
+        .format(ASR_BYTES / 1024 ** 3),
+        "",
+    ]
+    lines += ["  " + _link(ASR_REPO, name) for name in ASR_FILES]
+    lines += ["  -> " + os.path.join(_expected_root(), ASR_DIRNAME), ""]
+    if roots:
+        where = "1 place" if len(roots) == 1 else str(len(roots)) + " places"
+        lines += ["Looked in " + where + ", including:", ""]
+        lines += ["  " + path for path in roots[:6]]
+    else:
+        lines += ["There was nowhere to look: no ComfyUI model folders were found."]
+    lines += ["", "Its weights are licensed Apache-2.0."]
     return "\n".join(lines)

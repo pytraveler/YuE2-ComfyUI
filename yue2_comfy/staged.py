@@ -411,6 +411,9 @@ class YuE2RenderPlan:
                                  plan.get("lyrics"), settings["cot"], RENDER_INSTEAD)
         if problem:
             announce(unique_id, [("warn", problem)])
+        given = edits.read(score_abc).score
+        if given and not problem and settings["cot"] == "full" and edits.chordless(given):
+            announce(unique_id, [("warn", edits.CHORDLESS)])
         ids, score = _chosen(plan, "" if problem else score_abc)
         semitones = int(settings.get("transpose") or 0)
         if semitones:

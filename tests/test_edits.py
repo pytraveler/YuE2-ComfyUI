@@ -93,3 +93,24 @@ def test_no_edit_is_never_a_mismatch():
 def test_with_cot_off_no_edit_is_sung_because_nothing_is():
     for text in (SCORE, edits.attach(SCORE, edits.mark("s", "l", "off"))):
         assert edits.mismatch(edits.read(text), "s", "l", "off", INSTEAD) == edits.COT_OFF
+
+
+MELODY_ONLY = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=112\n'
+               'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+               'V: Ins clef=treble name="Ins Melody" snm="Inst."\n'
+               'K:Bm\n% intro\nV: Vocal\nz8B4c4|\nV: Ins\nZ|\n')
+
+
+def test_a_melody_only_transcription_is_chordless_though_its_voice_lines_quote_names():
+    assert edits.chordless(MELODY_ONLY) is True
+
+
+def test_one_chord_symbol_anywhere_in_the_music_is_enough():
+    assert edits.chordless(MELODY_ONLY.replace("z8B4c4|", 'z8"Bm"B4c4|')) is False
+
+
+def test_a_score_with_no_music_lines_is_not_called_chordless():
+    """Nothing to sing is not a melody-only score; the node has other words for that."""
+    assert edits.chordless("") is False
+    assert edits.chordless("X:1\nK:G\n") is False
+    assert edits.chordless('X:1\n% "not a chord"\nK:C\n') is False

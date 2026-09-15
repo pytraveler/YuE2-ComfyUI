@@ -383,6 +383,11 @@ export function attachMark(score, words) {
     return words ? clean + "\n" + MARK_PREFIX + words : clean;
 }
 
+export function editValue(text, base, words) {
+    const clean = String(text ?? "").trim();
+    return clean && clean !== String(base ?? "").trim() ? attachMark(clean, words) : "";
+}
+
 export class History {
     constructor(limit = 200) {
         this.limit = limit;

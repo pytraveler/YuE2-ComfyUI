@@ -1,0 +1,289 @@
+"""A whole song from 300-second windows, and the rows a score is built from.
+
+The model hears at most 300 seconds at a time. A longer song is read in
+windows that start 100 seconds apart: each window keeps what it says about its
+first 200 seconds and leaves the rest to the next one, which starts with the
+events already kept for the overlap as a prefix, so it continues them rather
+than beginning again. Inside a window, events are counted in subbeats and only
+some carry a time stamp; the rest are placed by interpolating between stamps.
+
+What comes out is a list of timed events. ``score_rows`` turns them into the
+beats, chords, keys, sections and notes that ``abc_rebuild`` writes a score
+from, applying the same clean-up the model's authors apply: the beat grid is
+extended to the end of the song, and a note running into the next one in its
+track is cut at that onset.
+"""
+
+from __future__ import annotations
+
+import bisect
+import math
+from fractions import Fraction
+
+from . import vocab
+
+EPS = 1e-4
+
+
+def window_plan(duration: float, window: float = vocab.WINDOW_SECONDS,
+                overlap: float = 200.0, lookahead: float = 100.0) -> list:
+    """Where each window starts and ends, which part of it is kept, and where decoding stops."""
+    if not duration > 0:
+        raise ValueError("a song needs a positive length")
+    if not 0 <= lookahead <= overlap < window:
+        raise ValueError("require 0 <= lookahead <= overlap < window")
+    hop = window - overlap
+    start = 0.0
+    accepted = 0.0
+    plan = []
+    while True:
+        last = start + window >= duration - 1e-6
+        accept_end = duration if last else start + window - lookahead
+        plan.append({"start": start, "end": min(duration, start + window),
+                     "accept_start": accepted, "accept_end": accept_end, "prefix_end": accepted,
+                     "stop": None if last else window - lookahead})
+        if last:
+            return plan
+        accepted = accept_end
+        start = min(start + hop, duration - window)
+
+
+def stop_seconds(window: dict, duration: float, length: float = vocab.WINDOW_SECONDS) -> float:
+    """The window time past which decoding ends, as soon as a time stamp reaches it."""
+    if window["stop"] is not None:
+        return window["stop"]
+    return min(duration - window["start"], length)
+
+
+def _clip(value, low, high):
+    return min(max(value, low), high)
+
+
+def _median(values: list) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _interp(x: float, xs: list, ys: list) -> float:
+    """Linear interpolation inside ``xs``, in the order of operations numpy uses."""
+    index = bisect.bisect_right(xs, x) - 1
+    if xs[index] == x:
+        return ys[index]
+    slope = (ys[index + 1] - ys[index]) / (xs[index + 1] - xs[index])
+    return slope * (x - xs[index]) + ys[index]
+
+
+def time_map(decoded: dict, target: float = vocab.WINDOW_SECONDS):
+    """A function from a window's subbeat to seconds in that window.
+
+    Stamped events are the anchors; between them time is interpolated, and
+    past them it runs on at the median seconds per subbeat. A window with no
+    stamp at all assumes an eighth of a second per subbeat.
+    """
+    anchors = {}
+    for event in decoded["events"]:
+        value = event["values"].get("timestamp")
+        if value is not None:
+            anchors[int(event["subbeat"])] = float(value)
+    target = float(target)
+    if not anchors:
+        return lambda step: min(target, max(0.0, float(step) * 0.125))
+    items = sorted(anchors.items())
+    steps = [float(step) for step, _ in items]
+    times = [time for _, time in items]
+    per_step = 0.125
+    if len(items) >= 2:
+        ratios = [(times[i + 1] - times[i]) / max(steps[i + 1] - steps[i], 1.0)
+                  for i in range(len(items) - 1)]
+        median = _median(ratios)
+        if math.isfinite(median) and median > 0:
+            per_step = median
+
+    def lookup(step):
+        step = float(step)
+        if step <= steps[0]:
+            return _clip(times[0] + (step - steps[0]) * per_step, 0.0, target)
+        if step >= steps[-1]:
+            return _clip(times[-1] + (step - steps[-1]) * per_step, 0.0, target)
+        return _interp(step, steps, times)
+
+    return lookup
+
+
+def _copy(event: dict) -> dict:
+    return {"subbeat": int(event["subbeat"]),
+            "tokens": {field: [int(token) for token in tokens]
+                       for field, tokens in event["tokens"].items()},
+            "values": {field: ([dict(note) for note in value] if field == "melody" else
+                               dict(value) if isinstance(value, dict) else value)
+                       for field, value in event["values"].items()}}
+
+
+def stitch(decoded: dict, lookup, window: dict, duration: float, index: int, base: int = 0) -> list:
+    """A window's events that fall in its kept span, in song time, with note ends placed."""
+    kept = []
+    for event in decoded["events"]:
+        local = float(lookup(event["subbeat"]))
+        absolute = float(window["start"]) + local
+        if absolute < float(window["accept_start"]) - EPS:
+            continue
+        if absolute >= float(window["accept_end"]) - EPS or absolute >= float(duration) - EPS:
+            continue
+        output = _copy(event)
+        output["time"] = _clip(absolute, 0.0, float(duration))
+        output["window_index"] = int(index)
+        output["window_start"] = float(window["start"])
+        output["source_subbeat"] = int(event["subbeat"])
+        output["global_subbeat"] = int(base) + int(event["subbeat"])
+        if "timestamp" in output["values"]:
+            output["values"]["timestamp"] = output["time"]
+        for note in output["values"].get("melody", ()):
+            local_end = float(lookup(int(event["subbeat"]) + int(note["duration_steps"])))
+            end = float(window["start"]) + local_end
+            note["end_time"] = min(float(duration), max(output["time"] + 0.04, end))
+        kept.append(output)
+    return kept
+
+
+def _context_before(events: list, moment: float) -> dict:
+    context = {}
+    for event in events:
+        time = event.get("time")
+        if time is None or float(time) > float(moment) + 1e-6:
+            continue
+        for field in ("structure", "key", "chord"):
+            if event["tokens"].get(field):
+                context[field] = [int(token) for token in event["tokens"][field]]
+        meters = [int(token) for token in event["tokens"].get("rhythm", ())
+                  if vocab.kind(token) == "meter"]
+        if meters:
+            context["meter"] = meters[:1]
+    return context
+
+
+def carried_prefix(stitched: list, prompts, window: dict) -> tuple:
+    """The tokens a window starts from: what is already kept of its overlap.
+
+    Returns ``(tokens, base)``, where base is the song subbeat the prefix's
+    first event sits at, or ``(None, None)`` when the overlap holds no beat.
+    The first event carries the section, key, chord and meter in force there,
+    so the window continues the song's context instead of guessing it.
+    """
+    start = float(window["start"])
+    source = [event for event in stitched
+              if start - EPS <= float(event.get("time", -1.0)) < float(window["prefix_end"]) - EPS]
+    source.sort(key=lambda event: (int(event.get("global_subbeat", event.get("source_subbeat", event["subbeat"]))),
+                                   float(event.get("time", 0.0))))
+    first_beat = next((i for i, event in enumerate(source)
+                       if "timestamp" in event["values"] or "rhythm" in event["values"]), None)
+    if first_beat is None:
+        return None, None
+    source = source[first_beat:]
+
+    def song_subbeat(event):
+        return int(event.get("global_subbeat", event.get("source_subbeat", event["subbeat"])))
+
+    base = song_subbeat(source[0])
+    context = _context_before(stitched, source[0]["time"])
+    prefix = []
+    for original in source:
+        event = _copy(original)
+        event["subbeat"] = max(0, song_subbeat(original) - base)
+        if "timestamp" in event["tokens"]:
+            event["tokens"]["timestamp"] = [vocab.time_token(float(original["time"]) - start)]
+        vocab.refresh_values(event)
+        prefix.append(event)
+    head = prefix[0]
+    for field in ("structure", "key", "chord"):
+        if field not in head["tokens"] and field in context:
+            head["tokens"][field] = list(context[field])
+    rhythm = list(head["tokens"].get("rhythm", ()))
+    kinds = [vocab.kind(token) for token in rhythm]
+    if "eighth" in kinds and "meter" not in kinds and "meter" in context:
+        head["tokens"]["rhythm"] = list(context["meter"]) + rhythm
+    vocab.refresh_values(head)
+    return vocab.encode(prompts, prefix, has_eos=False), base
+
+
+def sort_song(events: list) -> list:
+    """Kept events from every window in song order."""
+    return sorted(events, key=lambda event: (event["time"], event["global_subbeat"]))
+
+
+def _intervals(events: list, field: str, duration: float) -> list:
+    rows = [[event["time"], 0, event["values"][field]] for event in events if field in event["values"]]
+    for i, row in enumerate(rows):
+        row[1] = rows[i + 1][0] if i + 1 < len(rows) else duration
+    return [row for row in rows if row[1] > row[0]]
+
+
+def beats(events: list) -> list:
+    """``[time, beat number, numerator, denominator]`` for every event that places a beat."""
+    rows = []
+    meter = None
+    for event in events:
+        rhythm = event["values"].get("rhythm", {})
+        meter = rhythm.get("meter", meter)
+        eighth = rhythm.get("eighth_position")
+        if eighth is not None and meter is not None:
+            position = Fraction(int(eighth) * int(meter[1]), 8)
+            if position.denominator != 1:
+                raise ValueError("Eighth position {} is off the {}/{} beat grid".format(eighth, meter[0], meter[1]))
+            if not 0 <= position < meter[0]:
+                raise ValueError("Eighth position {} is outside meter {}".format(eighth, meter))
+            rows.append([float(event["time"]), int(position) + 1, int(meter[0]), int(meter[1])])
+    return rows
+
+
+def notation_notes(notes: list) -> list:
+    """One note at a time per track: a note sounding into the next onset is cut there."""
+    result = []
+    for track in (0, 1):
+        ordered = sorted((list(note) for note in notes if note[3] == track),
+                         key=lambda note: (note[0], note[2], note[1]))
+        for i, note in enumerate(ordered):
+            if i + 1 < len(ordered) and note[1] > ordered[i + 1][0] + 1e-6:
+                note[1] = ordered[i + 1][0]
+            if note[1] > note[0] + 1e-6:
+                result.append(note)
+    return sorted(result)
+
+
+def score_rows(events: list, duration: float) -> dict:
+    """Everything ``abc_rebuild.build`` needs, from a song's sorted events.
+
+    Raises ValueError with the reason a score cannot be written: fewer than two
+    beats, beats that do not move forward, or no key at all.
+    """
+    notes = []
+    for event in events:
+        start = float(event["time"])
+        for note in event["values"].get("melody", ()):
+            end = min(duration, float(note["end_time"]))
+            if end > start:
+                notes.append([start, end, int(note["pitch"]), int(note["track"])])
+    notes.sort()
+    rows = beats(events)
+    if len(rows) < 2:
+        raise ValueError("At least two decoded beats are required for ABC")
+    grid = [list(row) for row in rows]
+    recent = [row[0] for row in rows[-9:]]
+    period = _median([b - a for a, b in zip(recent, recent[1:])])
+    if period <= 0:
+        raise ValueError("Decoded beats must increase in time")
+    end = max(duration, max((note[1] for note in notes), default=0))
+    while grid[-1][0] < end - 1e-6:
+        previous = grid[-1]
+        grid.append([previous[0] + period, previous[1] % previous[2] + 1, previous[2], previous[3]])
+    clipped = {}
+    for field in ("chord", "key", "structure"):
+        clipped[field] = [[max(grid[0][0], a), min(grid[-1][0], b), value]
+                          for a, b, value in _intervals(events, field, duration)
+                          if b > grid[0][0] and a < grid[-1][0]]
+    if not _intervals(events, "key", duration):
+        raise ValueError("No key was decoded; cannot construct a keyed ABC score")
+    return {"beats": grid, "chords": clipped["chord"], "keys": clipped["key"],
+            "structures": clipped["structure"], "notes": notation_notes(notes)}

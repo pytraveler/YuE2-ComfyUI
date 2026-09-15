@@ -7,6 +7,49 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.5.0 - 2026-09-15
+
+### Added
+
+- **`YuE2 Transcribe`: a cover from a recording.** A new node listens to a
+  recording and writes what it hears as a score YuE2 sings from -- the vocal
+  and instrumental lines, beats, key and sections, and with `mode` at `full`
+  the chords too. Wired into `YuE2 Generate Song` with `cot` at `melody`, the
+  tune is kept and the style, voice and instruments are whatever the style
+  line says; on three real tracks, 95-97 percent of the melody's pitch order
+  survived the cover. The transcription is this pack's own implementation of
+  SheetSage2, checked against ComfyUI master's: master's tokens for the pack's
+  own songs give the same ABC to the byte. Its weights (1.29 GB, CC BY-NC 4.0,
+  like YuE2's) are downloaded into `models/audio_encoders` on first use. The
+  `lyrics` output is the section tags; with `lyrics_auto_recognition` on, the
+  sung words are recognised by Qwen3-ASR-1.7B (3.8 GB, Apache-2.0, downloaded
+  into `models/YuE2`), cut into the sections and laid out in lines by the
+  writer's language model, under a guard that keeps the words as heard. The
+  score and lyrics editors sit on the node as they do on the song node, and an
+  edit belongs to the recording it was made on. Transcription and recognition
+  are kept per recording, so a new seed only lays the words out again. Inside
+  ComfyUI the recognition's decoding step runs as a CUDA graph -- six seconds
+  for a three-minute song where the plain loop took twenty-six -- and every
+  sixty-fourth token of the replayed step is checked against the plain one,
+  cache and all, with the plain step taking over if they ever disagree.
+- **A warning when a score without chords is sung under `cot` `full`.** A
+  melody-only score -- a transcription made for a cover looks like that -- says
+  nothing about harmony, while `full` tells the model the score carries the
+  harmony too. `YuE2 Generate Song` and `YuE2 Render Plan` still sing it, and
+  say to set `cot` to `melody` so the accompaniment can follow the style.
+
+### Fixed
+
+- **Unload Models now frees the models this pack keeps.** With
+  `keep_model_loaded` on, the YuE2 model and the writer's model sat in the
+  pack's own cache, where ComfyUI's Unload Models button never reached them:
+  the card stayed full until ComfyUI was restarted. The button releases them
+  too now -- measured on the card, from 9.9 GB back down to 2.5 GB.
+- **Lyrics typed in the song editor's text view were lost.** 'Edit as text'
+  read the box only when switching back to sections, so Apply pressed straight
+  from the text view wrote the lyrics as they were before, and Cancel closed
+  without asking. Both see what was typed now.
+
 ## 0.4.1 - 2026-09-14
 
 ### Added

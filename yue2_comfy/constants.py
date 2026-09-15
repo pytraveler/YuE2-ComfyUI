@@ -71,6 +71,26 @@ MERGES_BYTES = 2561218
 REPACK_BF16_BYTES = 7799983228
 REPACK_INT8_BYTES = 3960938800
 
+AUDIO_ENCODERS_SUBDIR = "audio_encoders"
+SHEETSAGE_NAME = "sheetsage2_bf16.safetensors"
+SHEETSAGE_PATH = AUDIO_ENCODERS_SUBDIR + "/" + SHEETSAGE_NAME
+SHEETSAGE_BYTES = 1386868122
+SHEETSAGE_MARKERS = ("encoder.feature_extractor.mel_mean", "decoder.layernorm_embedding.weight",
+                     "layer_weight")
+"""Comfy-Org's SheetSage2 file, beside the YuE2 checkpoint in the same repository, and the
+tensor names no YuE2 file has: the mel statistics, the decoder's embedding norm, the layer mix."""
+
+ASR_REPO = "Qwen/Qwen3-ASR-1.7B-hf"
+ASR_DIRNAME = "Qwen3-ASR-1.7B"
+ASR_TOKENIZER_NAME = "tokenizer.json"
+ASR_FILES = (WEIGHTS_NAME, ASR_TOKENIZER_NAME, CONFIG_NAME)
+ASR_BYTES = 4076193080
+ASR_MARKER = "model.multi_modal_projector.linear_2.weight"
+ASR_MARKER_SHAPE = [2048, 1024]
+"""Qwen's own release of the speech model that recognises sung words, kept in
+models/YuE2 under its size's name. The projector into a 2048-wide language
+model is what tells the 1.7B build from the 0.6B one, which has the same files."""
+
 LM_ALLOW = (WEIGHTS_NAME, MERGES_NAME, CONFIG_NAME, MANIFEST_NAME)
 VAE_ALLOW = (WEIGHTS_NAME, CONFIG_NAME, MANIFEST_NAME)
 

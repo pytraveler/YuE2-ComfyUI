@@ -3,9 +3,13 @@ import {
     ask, buttonRow, element, frame, installStyle, panelWidget,
     setWidgetValue, showWidget, sourceOf, widgetNamed,
 } from "./yue2_controls.js";
+import { editValue, splitMark } from "./yue2_roll.js";
 import * as sheet from "./yue2_sheet.js";
 
-const NODES = ["YuE2GenerateSong", "YuE2Plan", "YuE2PlanBatch"];
+const TRANSCRIBE = "YuE2Transcribe";
+const NODES = ["YuE2GenerateSong", "YuE2Plan", "YuE2PlanBatch", TRANSCRIBE];
+const LYRICS_UI = "yue2_lyrics";
+const TRACK_UI = "yue2_track";
 const STYLE = "style";
 const LYRICS = "lyrics";
 const TOKEN_ROUTE = "/yue2/tokens";
@@ -16,6 +20,26 @@ const EDIT_LABEL = "Edit song\u2026";
 const EDIT_TOOLTIP =
     "Open the song editor: build the style line from parts, and shape the lyrics " +
     "section by section. Nothing changes on the node until you press Apply.";
+
+const LYRICS_LABEL = "Edit lyrics\u2026";
+const LYRICS_TOOLTIP =
+    "Open the lyrics editor on the lyrics this node gives: the section tags of the transcription, " +
+    "with the recognised words under them when 'lyrics_auto_recognition' is on. Nothing changes on " +
+    "the node until you press Apply.";
+const RESET_LYRICS_LABEL = "Reset lyrics";
+const RESET_LYRICS_TOOLTIP =
+    "Throw away the lyrics kept on this node. The next run outputs the node's own lyrics again: " +
+    "the section tags, or the recognised words.";
+const TAGS_NOTE =
+    "The tags are the sections the transcription found, in the order they are sung: one for each " +
+    "section with a voice in it. Write the words under each tag. The edit is kept for this recording.";
+const RECOGNISED_NOTE =
+    "These words were recognised from the recording and laid out under its sections. Recognition " +
+    "mishears some words, and a line can land in the section next door: read them through and fix " +
+    "what is wrong. The edit is kept for this recording.";
+const OTHER_RECORDING_NOTE =
+    "These lyrics were written for another recording, so the node outputs its own lyrics for this " +
+    "recording instead. Apply keeps them for this recording.";
 
 const CASE_NOTE =
     "Click a letter to flip its case; click again to flip it back. A capital inside " +
@@ -48,6 +72,10 @@ const UNKNOWN_TAG = "#9A9A9A";
 
 function tagColor(tag) {
     return TAG_COLORS[tag] || UNKNOWN_TAG;
+}
+
+function isTranscribe(node) {
+    return node?.type === TRANSCRIBE || node?.comfyClass === TRANSCRIBE;
 }
 
 const EDITOR_STYLE_ID = "yue2-editor-style";
@@ -184,6 +212,10 @@ const EDITOR_STYLE = `
 .yue2-sum-dim { color: var(--descrip-text, #999); }
 .yue2-sum-tag { font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-weight: 600; margin-right: 6px; }
+.yue2-sum-warn { color: #E0A45A; }
+.yue2-hint + .yue2-hint { margin-top: 6px; }
+.yue2-hint.yue2-warn-hint { color: #E0A45A; }
+.yue2-buttons button[hidden] { display: none !important; }
 `;
 
 let MENU = null;
@@ -248,11 +280,17 @@ function iconButton(text, title, onClick) {
 class SongEditor {
     constructor(node) {
         this.node = node;
-        this.styleFree = !sourceOf(node, STYLE);
+        this.lyricsOnly = isTranscribe(node);
+        this.styleFree = !this.lyricsOnly && !sourceOf(node, STYLE);
         this.lyricsFree = !sourceOf(node, LYRICS);
 
-        this.styleStart = String(widgetNamed(node, STYLE)?.value ?? "");
-        this.lyricsStart = String(widgetNamed(node, LYRICS)?.value ?? "");
+        const kept = splitMark(widgetNamed(node, LYRICS)?.value ?? "");
+        this.keptWords = kept.words;
+        this.otherRecording = Boolean(this.lyricsOnly && kept.score && kept.words && node.__yue2Track
+            && kept.words !== node.__yue2Track);
+        this.styleStart = this.lyricsOnly ? "" : String(widgetNamed(node, STYLE)?.value ?? "");
+        this.lyricsStart = this.lyricsOnly ? kept.score || String(node.__yue2Lyrics ?? "")
+            : String(widgetNamed(node, LYRICS)?.value ?? "");
         this.styleRaw = this.styleStart;
         this.parts = sheet.parseStyle(this.styleRaw);
         this.styleDirty = false;
@@ -295,15 +333,18 @@ class SongEditor {
         this.close = close;
         handle.onEscape = () => this.escape();
 
-        panel.appendChild(element("h3", "yue2-title", "Song \u2014 " + (this.node.title || "YuE2")));
-        panel.appendChild(element("p", "yue2-sub",
-            "Style and lyrics for this node. Nothing is written to it until Apply."));
+        panel.appendChild(element("h3", "yue2-title", (this.lyricsOnly ? "Lyrics \u2014 " : "Song \u2014 ")
+            + (this.node.title || "YuE2")));
+        panel.appendChild(element("p", "yue2-sub", this.lyricsOnly
+            ? "The lyrics this node outputs. Nothing is written to it until Apply."
+            : "Style and lyrics for this node. Nothing is written to it until Apply."));
 
         const scroll = element("div", "yue2-scroll");
         panel.appendChild(scroll);
         this.styleCard = element("div", "yue2-card");
         this.lyricsCard = element("div", "yue2-card");
-        scroll.append(this.styleCard, this.lyricsCard);
+        if (this.lyricsOnly) scroll.append(this.lyricsCard);
+        else scroll.append(this.styleCard, this.lyricsCard);
 
         const foot = element("div", "yue2-foot");
         this.problem = element("div", "yue2-problem");
@@ -338,6 +379,15 @@ class SongEditor {
 
     apply() {
         if (this.editing) this.finishEdit(true);
+        if (this.lyricsOnly) {
+            if (this.lyricsFree) {
+                setWidgetValue(this.node, LYRICS, editValue(this.lyricsText(), this.node.__yue2Lyrics,
+                    this.node.__yue2Track || this.keptWords));
+            }
+            paintSummary(this.node);
+            this.close();
+            return;
+        }
         if (this.styleFree) setWidgetValue(this.node, STYLE, this.styleText());
         if (this.lyricsFree) setWidgetValue(this.node, LYRICS, this.lyricsText());
         paintSummary(this.node);
@@ -630,11 +680,24 @@ class SongEditor {
         textMode.title = "Switch between the section view and the plain text the model reads";
         textMode.addEventListener("click", () => this.toggleText());
         title.append(addSection, textMode);
+        if (this.lyricsOnly) {
+            const back = element("button", "", "Back to the transcription");
+            back.title = "Throw away these lyrics and load what the last run gave: the section tags, "
+                + "or the recognised words.";
+            back.disabled = !this.node.__yue2Lyrics;
+            back.addEventListener("click", () => this.backToTags());
+            title.append(back);
+        }
 
         if (this.asText) {
             const area = document.createElement("textarea");
             area.value = this.lyricsText();
             area.spellcheck = false;
+            area.addEventListener("input", () => {
+                this.lyricsRaw = area.value;
+                this.blocks = sheet.parseLyrics(area.value);
+                this.lyricsDirty = false;
+            });
             this.textArea = area;
             card.appendChild(area);
             status.textContent = "";
@@ -642,12 +705,18 @@ class SongEditor {
             return;
         }
 
+        if (this.otherRecording) card.appendChild(element("div", "yue2-hint yue2-warn-hint", OTHER_RECORDING_NOTE));
+        if (this.lyricsOnly) {
+            card.appendChild(element("div", "yue2-hint", hasSungLines(this.node.__yue2Lyrics) ? RECOGNISED_NOTE : TAGS_NOTE));
+        }
         card.appendChild(element("div", "yue2-hint", CASE_NOTE));
         this.paintStatus(status);
 
         if (!this.blocks.length) {
-            card.appendChild(element("div", "yue2-empty",
-                "No lyrics: the song will be instrumental. Add a section to write some."));
+            card.appendChild(element("div", "yue2-empty", this.lyricsOnly
+                ? "No lyrics and no section tags yet. Run the node once and the tags of the transcription "
+                    + "appear here, or add a section and write the lyrics now."
+                : "No lyrics: the song will be instrumental. Add a section to write some."));
         }
 
         const lay = sheet.layout(this.blocks);
@@ -870,6 +939,22 @@ class SongEditor {
         else this.renderLyrics();
     }
 
+    backToTags() {
+        const tags = String(this.node.__yue2Lyrics || "");
+        if (!tags) return;
+        if (this.editing) this.finishEdit(true);
+        if (this.lyricsText().trim() !== tags.trim()
+            && !window.confirm("Throw away these lyrics and load what the last run gave?")) return;
+        this.asText = false;
+        this.textArea = null;
+        this.lyricsRaw = tags;
+        this.blocks = sheet.parseLyrics(tags);
+        this.lyricsDirty = false;
+        this.otherRecording = false;
+        this.renderLyrics();
+        this.scheduleTokens(0);
+    }
+
     toggleText() {
         if (this.editing) this.finishEdit(true);
         if (this.asText) {
@@ -967,6 +1052,10 @@ function paintSummary(node) {
     const holder = node.__yue2Summary;
     if (!holder) return;
     holder.replaceChildren();
+    if (isTranscribe(node)) {
+        paintLyricsSummary(node, holder);
+        return;
+    }
 
     const styleFrom = sourceOf(node, STYLE);
     const lyricsFrom = sourceOf(node, LYRICS);
@@ -1028,15 +1117,77 @@ function paintSummary(node) {
     }
 }
 
+function hasSungLines(text) {
+    return sheet.summarize("", String(text || "")).sung > 0;
+}
+
+function paintLyricsSummary(node, holder) {
+    const row = (...children) => {
+        const made = element("div", "yue2-sum-row");
+        made.append(...children);
+        holder.appendChild(made);
+    };
+    const strong = (text) => element("span", "yue2-sum-key", text);
+    const faint = (text) => element("span", "yue2-sum-dim", text);
+    const wired = sourceOf(node, LYRICS);
+    const box = splitMark(widgetNamed(node, LYRICS)?.value ?? "");
+    if (node.__yue2ResetLyrics) node.__yue2ResetLyrics.hidden = Boolean(wired) || !box.score;
+    if (node.__yue2Button) node.__yue2Button.disabled = Boolean(wired);
+    if (wired) {
+        row(faint("The lyrics come in through a wire from "), strong(wired.title || "another node"));
+        row(faint("Sent on as they arrive."));
+        return;
+    }
+    const track = node.__yue2Track || null;
+    const shown = box.score || String(node.__yue2Lyrics || "");
+    const facts = sheet.summarize("", shown);
+    const named = facts.sections.length + (facts.sections.length === 1 ? " section" : " sections");
+    const count = named + ", " + facts.sung + (facts.sung === 1 ? " line" : " lines");
+    if (box.score) {
+        row(strong("Edited lyrics"), faint(" \u00B7 " + count));
+        row(box.words && track && box.words !== track
+            ? element("span", "yue2-sum-warn", "Written for another recording: this recording's own lyrics are sent on instead.")
+            : faint("Sent on instead of the node's own lyrics."));
+    } else if (facts.sung > 0) {
+        row(strong("Recognised lyrics"), faint(" \u00b7 " + count));
+        row(faint("Heard in the recording: read them through in Edit lyrics\u2026"));
+    } else if (shown) {
+        row(strong("Section tags"), faint(" \u00B7 " + named + " found in the transcription"));
+        row(faint("Edit lyrics\u2026 to write the words under them."));
+    } else {
+        row(strong("No section tags yet"));
+        row(faint("Run once, and the tags of the transcription appear here."));
+        return;
+    }
+    holder.appendChild(lyricsPreview(shown));
+}
+
+function resetLyrics(node) {
+    const box = splitMark(widgetNamed(node, LYRICS)?.value ?? "");
+    if (!box.score) return;
+    if (!window.confirm("Throw away the lyrics kept on this node?\n\n"
+        + "The next run outputs the node's own lyrics again.")) return;
+    setWidgetValue(node, LYRICS, "");
+    paintSummary(node);
+}
+
 function install(node) {
     installStyle(EDITOR_STYLE_ID, EDITOR_STYLE);
-    const { widget: row, buttons } = buttonRow(node, "yue2_song_edit", [
+    const lyricsOnly = isTranscribe(node);
+    const { buttons } = buttonRow(node, "yue2_song_edit", lyricsOnly ? [
+        { label: LYRICS_LABEL, tooltip: LYRICS_TOOLTIP, onClick: () => openEditor(node) },
+        { label: RESET_LYRICS_LABEL, tooltip: RESET_LYRICS_TOOLTIP, onClick: () => resetLyrics(node) },
+    ] : [
         { label: EDIT_LABEL, tooltip: EDIT_TOOLTIP, onClick: () => openEditor(node) },
     ]);
     node.__yue2Button = buttons[0];
+    if (lyricsOnly) {
+        node.__yue2ResetLyrics = buttons[1];
+        buttons[1].hidden = true;
+    }
 
     const summary = element("div", "yue2-summary");
-    summary.title = "Click to open the song editor";
+    summary.title = lyricsOnly ? "Click to open the lyrics editor" : "Click to open the song editor";
     summary.addEventListener("click", () => {
         if (!node.__yue2Button?.disabled) openEditor(node);
     });
@@ -1107,6 +1258,19 @@ app.registerExtension({
     name: "yue2.song_editor",
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (!NODES.includes(nodeData.name)) return;
+
+        if (nodeData.name === TRANSCRIBE) {
+            const onExecuted = nodeType.prototype.onExecuted;
+            nodeType.prototype.onExecuted = function (message) {
+                const result = onExecuted?.apply(this, arguments);
+                const tags = message?.[LYRICS_UI]?.[0];
+                const track = message?.[TRACK_UI]?.[0];
+                if (typeof tags === "string") this.__yue2Lyrics = tags;
+                if (typeof track === "string") this.__yue2Track = track;
+                if (typeof tags === "string" || typeof track === "string") paintSummary(this);
+                return result;
+            };
+        }
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {

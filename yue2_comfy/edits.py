@@ -118,3 +118,52 @@ def mismatch(edit, style, lyrics, cot, instead) -> str:
     if edit.words is not None and edit.words != mark(style, lyrics, cot):
         return OTHER_WORDS.format(instead=instead)
     return ""
+
+
+LYRICS_UI = "yue2_lyrics"
+"""Where 'YuE2 Transcribe' hands the lyrics it would output -- its section tags -- to the browser."""
+
+TRACK_UI = "yue2_track"
+"""Where 'YuE2 Transcribe' hands over the mark of the recording it transcribed."""
+
+MARKS_UI = "yue2_marks"
+"""Where 'YuE2 Transcribe' hands over the score marks of that recording in every mode, so the browser need not hash."""
+
+
+def audio_mark(data: bytes, rate) -> str:
+    """Sixteen hex digits that name a recording: its samples and their rate.
+
+    The transcriber's edits belong to a recording the way the singer's belong
+    to words, so this is the mark they carry instead of ``mark``.
+    """
+    digest = hashlib.sha256()
+    digest.update(str(int(rate)).encode("ascii") + b"\0")
+    digest.update(memoryview(data))
+    return digest.hexdigest()[:16]
+
+
+def track_mark(audio: str, mode: str) -> str:
+    """The mark of a score transcribed from a recording in one mode: melody alone, or with chords."""
+    return hashlib.sha256(json.dumps([str(audio), str(mode)]).encode("utf-8")).hexdigest()[:16]
+
+
+CHORDLESS = (
+    "The score to sing has no chord symbols -- a melody-only transcription looks "
+    "like that -- but 'cot' is 'full', which tells the model the score carries the "
+    "harmony as well. It is sung anyway; set 'cot' to 'melody' in YuE2 Options to "
+    "let the accompaniment follow the style instead."
+)
+
+_CHORD_SYMBOL = re.compile(r'"[^"\n]*"')
+_FIELD_LINE = re.compile(r"^\s*(%|[A-Za-z]:)")
+
+
+def chordless(score) -> bool:
+    """Whether a score has music in it but not one chord symbol.
+
+    Header, voice and comment lines are passed over: the ``V:`` lines quote the
+    voice names, and a quoted name is not a chord.
+    """
+    music = [line for line in str(score or "").split("\n")
+             if line.strip() and not _FIELD_LINE.match(line)]
+    return bool(music) and not any(_CHORD_SYMBOL.search(line) for line in music)

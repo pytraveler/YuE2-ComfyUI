@@ -592,3 +592,32 @@ def test_the_summary_counts_sung_lines_per_section():
         json.dumps(constants.DEFAULT_STYLE), json.dumps(constants.DEFAULT_LYRICS)))
     assert got["sung"] == constants.sung_lines(constants.DEFAULT_LYRICS)
     assert [(x["name"], x["lines"]) for x in got["sections"]] == [("Verse", 2), ("Chorus", 2)]
+
+
+@needs_node
+def test_an_edit_goes_on_the_node_only_when_it_differs_and_reads_back_as_written():
+    """What Apply puts on a node is what the node reads back: the text and its mark, or no edit at all."""
+    from yue2_comfy import edits
+    track = edits.audio_mark(b"recording", 44100)
+    cases = [["[Verse]\nla la\n", "[Verse]\n", track], ["  [Verse]\n\n", "[Verse]", track],
+             ["", "[Verse]", track], ["[Chorus]\nhey", None, None], [ROLL_SCORE, ROLL_SCORE + "\n", track]]
+    got = run_roll("console.log(JSON.stringify({}.map(([t, b, w]) => r.editValue(t, b, w))));".format(
+        json.dumps(cases)))
+    assert [(found.score, found.words) for found in map(edits.read, got)] == [
+        ("[Verse]\nla la", track), ("", None), ("", None), ("[Chorus]\nhey", None), ("", None)]
+
+
+def test_the_transcribe_node_is_named_and_heard_the_same_on_both_sides():
+    """The editors find the node, its modes and its ui keys by name; a rename on one side loses them silently."""
+    from yue2_comfy import edits, transcribe
+    score = (WEB / "yue2_score.js").read_text(encoding="utf-8")
+    editor = (WEB / "yue2_editor.js").read_text(encoding="utf-8")
+    name = next(iter(transcribe.TRANSCRIBE_CLASSES))
+    for source in (score, editor):
+        assert 'const TRANSCRIBE = "{}";'.format(name) in source
+        assert 'const TRACK_UI = "{}";'.format(edits.TRACK_UI) in source
+    assert 'const LYRICS_UI = "{}";'.format(edits.LYRICS_UI) in editor
+    assert 'const MARKS_UI = "{}";'.format(edits.MARKS_UI) in score
+    assert re.search(r"const NODES = \[[^\]]*\bTRANSCRIBE\]", editor)
+    assert 'const MODE = "mode";' in score
+    assert "mode" in transcribe.YuE2Transcribe.INPUT_TYPES()["required"]

@@ -29,7 +29,7 @@ import logging
 
 from . import edits
 from .constants import CATEGORY, OPTIONS_TYPE
-from .progress import NodeProgress, announce, interrupted, refuse, translate_interrupt
+from .progress import Band, NodeProgress, announce, interrupted, refuse, translate_interrupt
 from .staged import resolve
 
 log = logging.getLogger(__name__)
@@ -139,33 +139,6 @@ def _sections(score: str) -> list:
         return sections.sections(score)
     except ValueError:
         return []
-
-
-class Band:
-    """A share of the node's bar: a fraction reported here fills only ``low`` to ``high`` of it.
-
-    A download or the language model reports counts against a total of its
-    own; those are scaled into the share too, so the bar never runs ahead of
-    the stage it is in.
-    """
-
-    def __init__(self, progress, low: float, high: float):
-        self._progress = progress
-        self._low = low
-        self._high = high
-        self._total = 1.0
-
-    def ratio(self, fraction: float, text=None) -> None:
-        self._progress.ratio(self._low + (self._high - self._low) * max(0.0, min(1.0, fraction)), text)
-
-    def set_total(self, total: float) -> None:
-        self._total = max(float(total), 1.0)
-
-    def update(self, value: float, text=None) -> None:
-        self.ratio(float(value) / self._total, text)
-
-    def __getattr__(self, name):
-        return getattr(self._progress, name)
 
 
 class YuE2Transcribe:

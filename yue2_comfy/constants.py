@@ -10,6 +10,7 @@ so an unconnected options socket is never a special case.
 
 from __future__ import annotations
 
+import re
 import sys
 
 PACK = "YuE2-ComfyUI"
@@ -37,6 +38,7 @@ AUTO_BASE_SECONDS = 12.0
 AUTO_SECONDS_PER_LINE = 12.0
 AUTO_MIN_SECONDS = 40.0
 AUTO_INSTRUMENTAL_SECONDS = 180.0
+AUTO_WORDS_PER_LINE = 8
 
 LM_REPO = "m-a-p/YuE2-3B"
 VAE_REPO = "m-a-p/YuE2-Vae"
@@ -90,6 +92,18 @@ ASR_MARKER_SHAPE = [2048, 1024]
 """Qwen's own release of the speech model that recognises sung words, kept in
 models/YuE2 under its size's name. The projector into a 2048-wide language
 model is what tells the 1.7B build from the 0.6B one, which has the same files."""
+
+VOCALS_REPO = "KimberleyJSN/melbandroformer"
+VOCALS_REVISION = "ac9b0614ab3cd7f77219e18ba494dfd93956c348"
+VOCALS_NAME = "MelBandRoformer.ckpt"
+VOCALS_BYTES = 913106900
+VOCALS_KNOWN_BYTES = (912885656, 456479072)
+VOCALS_MARKERS = ("band_split.to_features.0.0.gamma", "mask_estimators.0.to_freqs.0.0.0.weight",
+                  "layers.0.0.layers.0.0.to_gates.weight")
+"""Kimberley Jensen's Mel-Band RoFormer vocal model (MIT), the one file that separates the voice,
+fetched at the revision this pack was checked against and kept in models/YuE2. The two other sizes
+are kijai's safetensors conversions of the same weights, fp32 and fp16: never downloaded, but used
+when a machine already has one. The markers are tensor names only this network has."""
 
 LM_ALLOW = (WEIGHTS_NAME, MERGES_NAME, CONFIG_NAME, MANIFEST_NAME)
 VAE_ALLOW = (WEIGHTS_NAME, CONFIG_NAME, MANIFEST_NAME)
@@ -156,6 +170,7 @@ DEFAULT_OPTIONS = {
     "repetition_penalty": SEMANTIC_REPETITION_PENALTY,
     "offload": "auto",
     "transpose": 0,
+    "vocals_only": False,
 }
 
 TRANSPOSE_LIMIT = 12
@@ -209,15 +224,28 @@ def sung_lines(lyrics: str) -> int:
     """How many lines are actually sung.
 
     Section markers -- [Verse], [Chorus] -- are directions, not words, and the
-    model sings none of them, so they do not lengthen the song.
+    model sings none of them, so they do not lengthen the song. The same goes
+    for a bracketed direction inside a line: a line written as
+    "[Only bass] I don't need a map ... [Guitar stab]" used to be taken for a
+    marker because it starts and ends with a bracket, and its words went
+    uncounted.
+
+    A line counts by its words too, one line for every AUTO_WORDS_PER_LINE
+    rounded to the nearest. People paste a whole verse onto one line, and
+    counted as one line such a song got a ceiling of a minute and was cut off
+    mid-verse. A lyric line of up to eleven words still counts as one. Text
+    written without spaces between words counts one per line, as before.
     """
     count = 0
     for line in (lyrics or "").splitlines():
-        line = line.strip()
-        if not line or (line.startswith("[") and line.endswith("]")):
+        words = _DIRECTION.sub(" ", line).split()
+        if not any(ch.isalnum() for word in words for ch in word):
             continue
-        count += 1
+        count += max(1, (len(words) + AUTO_WORDS_PER_LINE // 2) // AUTO_WORDS_PER_LINE)
     return count
+
+
+_DIRECTION = re.compile(r"\[[^\]]*\]")
 
 
 def auto_seconds(lyrics: str) -> float:

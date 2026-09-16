@@ -27,8 +27,9 @@ from .constants import (
     SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, auto_seconds, normalize_seed,
 )
 from .edits import AUTO_SECONDS_UI, SCORE_UI, WORDS_UI
-from .progress import (NodeProgress, announce, interrupted, refuse,
+from .progress import (Band, NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
+from .vocals_only import VOICE_SHARE, separator_weights, voice_of
 
 log = logging.getLogger(__name__)
 
@@ -433,15 +434,22 @@ class YuE2RenderPlan:
             ids = None
         stages = generate.alone(generate.Stages.SEMANTIC, generate.Stages.ACOUSTIC,
                                 generate.Stages.DECODE)
+        voice = bool(settings.get("vocals_only"))
+        song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
 
-        with session(settings, unique_id, progress) as models:
+        separator = separator_weights(settings, unique_id, song_progress) if voice else None
+        with session(settings, unique_id, song_progress) as models:
             latents, timing = generate.sing(
                 models, plan["style"], plan["lyrics"], plan["seed"], settings,
-                abc_ids=ids, abc=score, progress=progress, cancelled=interrupted,
+                abc_ids=ids, abc=score, progress=song_progress, cancelled=interrupted,
                 stages=stages[:2], tune_seconds=tune_seconds)
-            waveform, spent = generate.decode(models, latents, progress, interrupted,
+            waveform, spent = generate.decode(models, latents, song_progress, interrupted,
                                               stages=stages[2:])
+        del models
         timing.update(spent)
+        if voice:
+            waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
+                                Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
 
         log.info("[yue2_comfy] %.1f s of audio from a %s score | seed %s",
                  timing["seconds_of_audio"],
@@ -493,12 +501,19 @@ class YuE2DecodeLatents:
         if options:
             settings.update(options)
 
-        with session(settings, unique_id, progress) as models:
+        voice = bool(settings.get("vocals_only"))
+        song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
+        separator = separator_weights(settings, unique_id, song_progress) if voice else None
+        with session(settings, unique_id, song_progress) as models:
             tensor = latents["latents"]
             moved = tensor.to(models.device) if hasattr(tensor, "to") else tensor
-            waveform, timing = generate.decode(models, moved, progress, interrupted,
+            waveform, timing = generate.decode(models, moved, song_progress, interrupted,
                                                stages=generate.alone(
                                                    generate.Stages.DECODE))
+        del models, moved
+        if voice:
+            waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
+                                Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
 
         log.info("[yue2_comfy] decoded %.1f s of audio with the %s decoder",
                  timing["seconds_of_audio"], settings["vae"])

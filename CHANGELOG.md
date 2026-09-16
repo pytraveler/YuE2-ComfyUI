@@ -7,6 +7,60 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.6.1 - 2026-09-16
+
+### Added
+
+- **`vocals_only`: a song with nothing but the voice.** A new last switch in
+  `YuE2 Options`, off by default. With it on, `YuE2 Generate Song`,
+  `YuE2 Render Plan` and `YuE2 Decode Latents` make the song as always and then
+  separate its voice from the band: `audio` carries the voice alone, at the
+  song's length and rate, and the same seed still gives the same song with the
+  switch off. YuE2 writes one stream for the whole mix and has no voice-only
+  output of its own. Asked for "a cappella" in the style, it still left a soft
+  held pad under the voice in 61 of 72 songs measured, and "no instruments"
+  changed nothing -- so the voice is taken from the finished mix, and "a
+  cappella" in the style keeps it free of the silences an ordinary song's intro
+  and breaks leave.
+- **`YuE2 Vocals Only`: the voice of any recording.** The same separation as a
+  node of its own: audio from anywhere in, its voice out, in the shape and at
+  the rate it came in.
+- **Mel-Band RoFormer, run by this pack's own code.** Kimberley Jensen's vocal
+  model (MIT, 0.85 GB) is downloaded on first use into `models/YuE2`, pinned to
+  the revision the pack was checked against; a copy already on the machine,
+  kijai's conversions included, is used instead. The network matches the
+  reference code the model was trained with to the last bit in float32, a
+  three-minute song takes about 7 seconds on an RTX 5090, and the words come
+  through: 91 percent of the lyrics were heard in order both in the separated
+  voices and in the full songs, over 72.
+- **Template 9.** `9 - An a cappella song` sets the switch up with an a cappella
+  style.
+
+### Fixed
+
+- **The bar under a song node stood full while the song was sung.** The stages
+  reported percentages to a bar whose total is one, so it filled at the first
+  percent past one and stayed full to the end. It fills with the stages now.
+- **A song whose lyrics put a whole verse on one line was cut off at a minute.**
+  With `max_seconds` at 0 the length ceiling counts sung lines, and it counted
+  such a verse as one line; a line that began and ended with a direction, like
+  `[Only bass] I don't need a map ... [Guitar stab]`, was taken for a section
+  marker and not counted at all. One such song of about sixteen sung lines got
+  four and a ceiling of 60 seconds. Directions in brackets are now taken out of
+  a line before its words are counted, and a long line counts one line for
+  every eight words, so that song gets 264 seconds. Lines of up to eleven words
+  count as before, and the dashed line on the piano roll moves with it.
+- **`YuE2 Transcribe` could hear nothing but "Ooh" in a song that opens with
+  one.** On a song that begins with vocalising, the speech model could start
+  writing "Ooh, ooh" and keep on to its token limit, and the node then gave
+  almost no words. Such a loop begins where the model all but ties between two
+  picks -- in bfloat16 they tie outright now and then -- so an answer that says
+  the same few tokens twenty times over is now taken back to the narrowest
+  choice where the repeating began, and the other pick is taken there. Measured
+  on 20 loops, three songs heard at several volumes: every one came back with
+  all the words the same song gave without the loop, in about a second rather
+  than five, and over 150 recordings nothing else changed.
+
 ## 0.6.0 - 2026-09-16
 
 ### Added

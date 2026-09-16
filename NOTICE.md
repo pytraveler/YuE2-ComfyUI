@@ -1,6 +1,6 @@
 # Licenses and provenance
 
-This pack carries seven kinds of material under their own terms.
+This pack carries eight kinds of material under their own terms.
 
 ## The pack's own code
 
@@ -19,6 +19,16 @@ neither is copied here; the transcriptions are checked against ComfyUI master's
 instead, and match it to the byte on the pack's own songs. The speech model's
 log-mel front end follows the arithmetic of OpenAI's Whisper (MIT) and of
 Hugging Face's feature extractor (Apache-2.0), as Qwen3-ASR's own release does.
+
+`yue2_comfy/vocals/` is this pack's own implementation of Mel-Band RoFormer
+(Wang, Lu and Won, 2023), under the same terms. Its shapes and arithmetic follow
+[lucidrains/BS-RoFormer](https://github.com/lucidrains/BS-RoFormer) at commit
+`93a07dd` (Copyright (c) 2023 Phil Wang, MIT), the implementation the vocal
+model was trained with, and its output was checked against that code to the
+last bit in float32; nothing of it is copied. The mel band plan follows the
+arithmetic of librosa's `filters.mel` (ISC), the rotary positions that of
+rotary-embedding-torch (MIT), and the chunking the settings published with the
+model: eight-second windows overlapping by half.
 
 ## Vendored YuE2 code
 
@@ -94,6 +104,18 @@ with Qwen3-ASR-1.7B from
 [Qwen/Qwen3-ASR-1.7B-hf](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf), which
 it downloads on first use and does not redistribute. The pack runs it with its
 own code rather than with Qwen's package or transformers.
+
+## The voice separator
+
+**MIT.**
+
+With `vocals_only` on, and in `YuE2 Vocals Only`, the voice is separated with
+Kimberley Jensen's Mel-Band RoFormer vocal model from
+[KimberleyJSN/melbandroformer](https://huggingface.co/KimberleyJSN/melbandroformer),
+which the pack downloads on first use, pinned to one revision, and does not
+redistribute. A conversion of the same weights already on the machine, such as
+kijai's `MelBandRoformer_fp16.safetensors`, is used in its place; that file is
+the user's own and carries whatever terms it came with.
 
 ## The llama.cpp binaries
 

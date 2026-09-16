@@ -22,11 +22,12 @@ from .constants import (
     WRITER_REPETITION_PENALTY, WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P,
     auto_seconds, length_lines,
 )
-from .progress import (NodeProgress, announce, interrupted, refuse,
+from .progress import (Band, NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 from .load_midi import MIDI_CLASSES, MIDI_NAMES
 from .staged import (STAGED_CLASSES, STAGED_NAMES, resolve, session, words)
 from .transcribe import TRANSCRIBE_CLASSES, TRANSCRIBE_NAMES
+from .vocals_only import VOCALS_CLASSES, VOCALS_NAMES, VOICE_SHARE, separator_weights, voice_of
 
 log = logging.getLogger(__name__)
 
@@ -199,6 +200,18 @@ TRANSPOSE_TOOLTIP = (
     "is the one moved."
 )
 
+VOCALS_ONLY_TOOLTIP = (
+    "Outputs only the voice. The song is made as always, then Mel-Band RoFormer separates the "
+    "vocals from the band, and 'audio' carries the voice alone, the same length and rate.\n\n"
+    "The song is the one this seed gives with the switch off, so an ordinary song keeps silence "
+    "where its intro and instrumental breaks were. For an a cappella song, write 'a cappella' in "
+    "the style: the model then keeps the voice going, while 'no instruments' in the style was "
+    "measured to change nothing. Without separating, even an a cappella style leaves a soft pad "
+    "under the voice in most songs.\n\n"
+    "The first time, this downloads the separator (0.85 GB, MIT) into models/YuE2. For a "
+    "recording made elsewhere, use 'YuE2 Vocals Only'."
+)
+
 SAMPLING_TOOLTIP = "Sampling for the {} stage. The defaults are the released values."
 
 
@@ -263,6 +276,8 @@ class YuE2Options:
                 "transpose": ("INT", {"default": d["transpose"], "min": -TRANSPOSE_LIMIT,
                                       "max": TRANSPOSE_LIMIT, "step": 1,
                                       "tooltip": TRANSPOSE_TOOLTIP}),
+                "vocals_only": ("BOOLEAN", {"default": d["vocals_only"],
+                                            "tooltip": VOCALS_ONLY_TOOLTIP}),
             },
         }
 
@@ -359,12 +374,19 @@ class YuE2GenerateSong:
             log.info("[yue2_comfy] singing the score given to the node, kept on it or "
                      "wired in; no score is written this run")
 
-        with session(settings, unique_id, progress) as models:
+        voice = bool(settings.get("vocals_only"))
+        song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
+        separator = separator_weights(settings, unique_id, song_progress) if voice else None
+        with session(settings, unique_id, song_progress) as models:
             waveform, score, written, timing = generate.run(
                 models, style, lyrics, seed, settings,
-                progress=progress, cancelled=interrupted, edited=edited,
+                progress=song_progress, cancelled=interrupted, edited=edited,
                 tune_seconds=tune_seconds,
             )
+        del models
+        if voice:
+            waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
+                                Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
 
         log.info(
             "[yue2_comfy] %.1f s of audio in %.1f s | %d semantic tokens at %.1f tok/s "
@@ -373,7 +395,7 @@ class YuE2GenerateSong:
             timing["semantic"]["output_tokens"], timing["semantic"]["output_tps"],
             timing["semantic"]["execution"], timing["semantic"]["attention"], seed,
         )
-        progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
+        progress.finish("{:.0f} seconds of {}".format(timing["seconds_of_audio"], "vocals" if voice else "audio"))
         ui = {edits.WORDS_UI: [edits.mark(style, lyrics, settings["cot"])],
               edits.AUTO_SECONDS_UI: [auto_seconds(lyrics)]}
         if edited is None:
@@ -507,6 +529,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_CLASS_MAPPINGS.update(STAGED_CLASSES)
 NODE_CLASS_MAPPINGS.update(TRANSCRIBE_CLASSES)
 NODE_CLASS_MAPPINGS.update(MIDI_CLASSES)
+NODE_CLASS_MAPPINGS.update(VOCALS_CLASSES)
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
@@ -516,6 +539,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS.update(STAGED_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(TRANSCRIBE_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(MIDI_NAMES)
+NODE_DISPLAY_NAME_MAPPINGS.update(VOCALS_NAMES)
 """One registry, so that whatever reads this module sees every node.
 
 The release workflow and the tests both import these two names to check that

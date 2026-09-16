@@ -364,9 +364,30 @@ class Network(nn.Module):
                 "[yue2_comfy.asr] the captured step disagreed with the plain one; decoding without it")
             static["step"] = None
 
+        first = logits[0]
+
+        def ranked(token, position, banned):
+            if token is None:
+                scores = first.clone()
+            else:
+                step = self.language_model.embed_tokens(torch.tensor([[token]], device=device))
+                scores = self._forward(step, cos, sin, cache, position)[0]
+            if banned:
+                scores[list(banned)] = float("-inf")
+            values, tokens = torch.topk(scores, 2)
+            return [(int(tokens[0]), float(values[0])), (int(tokens[1]), float(values[1]))]
+
+        def looped(index, size, count):
+            import logging
+
+            logging.getLogger(__name__).info(
+                "[yue2_comfy.asr] the answer said the same %d tokens %d times over; decoding again from token %d "
+                "with the other pick where the model all but tied", size, count, index)
+
         replayed = None if stepper is None else (lambda token, position: int(stepper(token, position)))
-        return decode.greedy(int(torch.argmax(logits[0])), len(ids), limit, prompt.STOP_TOKENS, plain, replayed,
-                             cancelled, progress, disagreed, check)
+        return decode.greedy(int(torch.argmax(first)), len(ids), limit, prompt.STOP_TOKENS, plain, replayed,
+                             cancelled, progress, disagreed, check, ranked=ranked,
+                             rewind=None if stepper is None else stepper.reset, looped=looped)
 
     def _static_for(self, room: int, device, dtype) -> dict:
         """The cache and rotary tables for at least ``room`` positions, kept until a request needs more.

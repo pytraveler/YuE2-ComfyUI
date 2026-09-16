@@ -94,12 +94,16 @@ def _make_room(device) -> None:
         log.debug("[yue2_comfy.sheetsage] ComfyUI's models left in place", exc_info=True)
     try:
         from .. import loader
+        from ..vocals import runtime as vocals_runtime
 
-        if _free_bytes(device) < ROOM_BYTES and loader.is_loaded():
-            log.info("[yue2_comfy.sheetsage] unloading the kept YuE2 model to make room")
-            loader.unload()
+        for name, keeper in (("Mel-Band RoFormer", vocals_runtime), ("YuE2", loader)):
+            if _free_bytes(device) >= ROOM_BYTES:
+                break
+            if keeper.is_loaded():
+                log.info("[yue2_comfy.sheetsage] unloading the kept %s model to make room", name)
+                keeper.unload()
     except Exception:
-        log.debug("[yue2_comfy.sheetsage] the YuE2 model left in place", exc_info=True)
+        log.debug("[yue2_comfy.sheetsage] the pack's other models left in place", exc_info=True)
 
 
 def acquire(path: str, device, progress=None):

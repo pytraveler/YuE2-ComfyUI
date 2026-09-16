@@ -41,6 +41,26 @@ def test_section_markers_are_not_sung():
     assert constants.sung_lines("   \n\n") == 0
 
 
+def test_directions_inside_a_line_are_not_sung_and_do_not_hide_its_words():
+    """A line that starts and ends with a direction still has words between them."""
+    assert constants.sung_lines("[Only bass] Neon fades along the lane [Guitar stab]") == 1
+    assert constants.sung_lines("[Bass Solo] [Only percussion and clapping]") == 0
+    assert constants.sung_lines('[Male: "Yeah, that is it"] [End]') == 0
+    assert constants.sung_lines("[Verse] ...") == 0
+    assert constants.sung_lines("[unclosed direction") == 1
+
+
+def test_a_verse_pasted_onto_one_line_counts_by_its_words():
+    """A pasted song counted as four lines got a one minute ceiling and was cut off mid-verse."""
+    verse = ("I don't need a map, I don't need a light, My blood is a compass in the middle of the night. "
+             "It's a pull in the chest, it's a heat in the bone, A frequency calling that I've always known.")
+    assert constants.sung_lines(verse) == 5
+    assert constants.sung_lines("one two three four five six seven eight nine ten eleven") == 1
+    assert constants.sung_lines("one two three four five six seven eight nine ten eleven twelve") == 2
+    assert constants.sung_lines("\u4f60\u597d\u4e16\u754c\u6211\u4eec\u4e00\u8d77\u5531\u6b4c") == 1
+    assert constants.auto_seconds("[Verse]\n" + verse) > 60.0
+
+
 def test_the_automatic_ceiling_clears_a_measured_song():
     """Four sung lines ran to 34 seconds before the model stopped on its own.
 

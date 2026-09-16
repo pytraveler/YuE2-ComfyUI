@@ -1,0 +1,510 @@
+{
+  "id": "887e550c-501b-4f6a-be1f-0bae87f67a15",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "YuE2Options",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        430,
+        520
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "cot",
+          "name": "cot",
+          "type": "COMBO",
+          "widget": {
+            "name": "cot"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "max_seconds",
+          "name": "max_seconds",
+          "type": "FLOAT",
+          "widget": {
+            "name": "max_seconds"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "keep_model_loaded",
+          "name": "keep_model_loaded",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "keep_model_loaded"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg_scale",
+          "name": "cfg_scale",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg_scale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "vae"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "attention_backend",
+          "name": "attention_backend",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "attention_backend"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "download",
+          "name": "download",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "download"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "quantization",
+          "name": "quantization",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "quantization"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ode_steps",
+          "name": "ode_steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "ode_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_temperature",
+          "name": "abc_temperature",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "abc_temperature"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_top_p",
+          "name": "abc_top_p",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "abc_top_p"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_top_k",
+          "name": "abc_top_k",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "abc_top_k"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "temperature",
+          "name": "temperature",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "temperature"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "top_p",
+          "name": "top_p",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "top_p"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "top_k",
+          "name": "top_k",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "top_k"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "repetition_penalty",
+          "name": "repetition_penalty",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "repetition_penalty"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "offload",
+          "name": "offload",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "offload"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "transpose",
+          "name": "transpose",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "transpose"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vocals_only",
+          "name": "vocals_only",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "vocals_only"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "type": "YUE2_OPTIONS",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "Settings",
+      "properties": {
+        "cnr_id": "yue2-comfyui",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2Options",
+        "aux_id": "pytraveler/YuE2-ComfyUI"
+      },
+      "widgets_values": [
+        "full",
+        0,
+        false,
+        0,
+        "standard",
+        "auto",
+        "sdpa",
+        "auto",
+        "bf16",
+        32,
+        0.7,
+        0.9,
+        30,
+        1,
+        0.95,
+        100,
+        1.2,
+        "auto",
+        0,
+        true
+      ],
+      "widgets_values_named": {
+        "cot": "full",
+        "max_seconds": 0,
+        "keep_model_loaded": false,
+        "cfg_scale": 0,
+        "vae": "standard",
+        "device": "auto",
+        "attention_backend": "sdpa",
+        "download": "auto",
+        "quantization": "bf16",
+        "ode_steps": 32,
+        "abc_temperature": 0.7,
+        "abc_top_p": 0.9,
+        "abc_top_k": 30,
+        "temperature": 1,
+        "top_p": 0.95,
+        "top_k": 100,
+        "repetition_penalty": 1.2,
+        "offload": "auto",
+        "transpose": 0,
+        "vocals_only": true
+      }
+    },
+    {
+      "id": 2,
+      "type": "YuE2GenerateSong",
+      "pos": [
+        490,
+        0
+      ],
+      "size": [
+        430,
+        640
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": 1
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "style"
+          }
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "lyrics"
+          }
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "shape": 7,
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "score_abc"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            2
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "title": "Sing it",
+      "properties": {
+        "cnr_id": "yue2-comfyui",
+        "ver": "075fd5fc870dfee91b24b4258d48df9bb2d238a8",
+        "Node name for S&R": "YuE2GenerateSong",
+        "aux_id": "pytraveler/YuE2-ComfyUI"
+      },
+      "widgets_values": [
+        "English, a cappella, expressive female voice, unhurried phrasing, 88 BPM",
+        "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        831001,
+        "fixed",
+        ""
+      ],
+      "widgets_values_named": {
+        "style": "English, a cappella, expressive female voice, unhurried phrasing, 88 BPM",
+        "lyrics": "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        "seed": 831001,
+        "control_after_generate": "fixed",
+        "score_abc": ""
+      }
+    },
+    {
+      "id": 3,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        990,
+        0
+      ],
+      "size": [
+        400,
+        140
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 2
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "The voice",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.5",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2",
+        "format": "flac"
+      }
+    },
+    {
+      "id": 5,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        800
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 9 - An a cappella song\n\nA song with nothing but the voice. **YuE2 Generate Song** makes the song, and\n**vocals_only** in *Settings* hands on only its voice: the band is separated\nout of the finished mix, and the voice keeps the song's length and timing.\n\n## What it needs\n\n- The YuE2-3B weights, 7.26 GB.\n- Mel-Band RoFormer, 0.85 GB, which separates the voice. A copy already on\n  this machine -- kijai's conversions included -- is used instead.\n\nBoth download on the first run, with progress on the node.\n\n## Before pressing Run\n\n1. **Write the style** on *Sing it*, and keep **a cappella** in it. Asked\n   for that, the model leaves out instrumental intros and breaks, so the voice\n   runs from the first bar to the last without long silences.\n2. **Write the lyrics** under section tags, as for any song.\n\n## Why the separation\n\nYuE2 writes one stream for the whole mix and has no voice-only output. Asked\nfor **a cappella**, it still left a soft held pad under the voice in most of\n72 songs measured, and writing \"no instruments\" or \"no drums\" in the style\nchanged nothing. Taking the voice out of the mix is what removes the pad.\n\n## The song itself\n\nTurn **vocals_only** off in *Settings*: the same seed gives the same song,\nwith everything under the voice.\n\n## Next\n\n**YuE2 Vocals Only** does the same for any recording: put it between a\n**Load Audio** node and **Save Audio**.\n"
+      ],
+      "widgets_values_named": {
+        "text": "# 9 - An a cappella song\n\nA song with nothing but the voice. **YuE2 Generate Song** makes the song, and\n**vocals_only** in *Settings* hands on only its voice: the band is separated\nout of the finished mix, and the voice keeps the song's length and timing.\n\n## What it needs\n\n- The YuE2-3B weights, 7.26 GB.\n- Mel-Band RoFormer, 0.85 GB, which separates the voice. A copy already on\n  this machine -- kijai's conversions included -- is used instead.\n\nBoth download on the first run, with progress on the node.\n\n## Before pressing Run\n\n1. **Write the style** on *Sing it*, and keep **a cappella** in it. Asked\n   for that, the model leaves out instrumental intros and breaks, so the voice\n   runs from the first bar to the last without long silences.\n2. **Write the lyrics** under section tags, as for any song.\n\n## Why the separation\n\nYuE2 writes one stream for the whole mix and has no voice-only output. Asked\nfor **a cappella**, it still left a soft held pad under the voice in most of\n72 songs measured, and writing \"no instruments\" or \"no drums\" in the style\nchanged nothing. Taking the voice out of the mix is what removes the pad.\n\n## The song itself\n\nTurn **vocals_only** off in *Settings*: the same seed gives the same song,\nwith everything under the voice.\n\n## Next\n\n**YuE2 Vocals Only** does the same for any recording: put it between a\n**Load Audio** node and **Save Audio**.\n"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "YUE2_OPTIONS"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        710.6,
+        129.4
+      ]
+    }
+  },
+  "version": 0.4
+}

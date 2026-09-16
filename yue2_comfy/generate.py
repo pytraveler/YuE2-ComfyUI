@@ -47,12 +47,17 @@ class Stages:
 
 
 def _band(progress, stage, done, total, suffix="") -> None:
-    """Report a fraction of one stage as a fraction of the whole bar."""
+    """Report a fraction of one stage as a fraction of the whole bar.
+
+    The table is in percent and the bar takes a fraction, so the value goes
+    through ``ratio``: sent as it stands, the first percent past one filled a bar
+    whose total is one, and it stood full for the whole of the singing.
+    """
     if progress is None:
         return
     low, high, title = stage
     share = 0.0 if total <= 0 else max(0.0, min(1.0, float(done) / float(total)))
-    progress.update(low + (high - low) * share, title + suffix)
+    progress.ratio((low + (high - low) * share) / 100.0, title + suffix)
 
 
 def alone(*stages):

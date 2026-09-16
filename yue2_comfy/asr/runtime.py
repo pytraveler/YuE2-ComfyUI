@@ -103,8 +103,10 @@ def _make_room(device) -> None:
     try:
         from .. import loader
         from ..sheetsage import runtime as sheetsage_runtime
+        from ..vocals import runtime as vocals_runtime
 
-        for name, keeper in (("SheetSage2", sheetsage_runtime), ("YuE2", loader)):
+        for name, keeper in (("SheetSage2", sheetsage_runtime), ("Mel-Band RoFormer", vocals_runtime),
+                             ("YuE2", loader)):
             if _free_bytes(device) >= ROOM_BYTES:
                 break
             if keeper.is_loaded():

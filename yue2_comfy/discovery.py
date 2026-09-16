@@ -36,7 +36,8 @@ from .constants import (
     LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
     REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
     SHEETSAGE_BYTES, SHEETSAGE_MARKERS, SHEETSAGE_NAME, SHEETSAGE_PATH,
-    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, WEIGHTS_NAME,
+    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VOCALS_BYTES, VOCALS_KNOWN_BYTES,
+    VOCALS_MARKERS, VOCALS_NAME, VOCALS_REPO, VOCALS_REVISION, WEIGHTS_NAME,
 )
 
 log = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def folder_kind(directory: str) -> str:
 
 
 def identify(path: str) -> str:
-    """"lm", "vae", "repack", "repack_int8", "sheetsage" or "", as cheaply as possible."""
+    """"lm", "vae", "repack", "repack_int8", "sheetsage", "vocals" or "", as cheaply as possible."""
     try:
         key = _stamp(path)
     except OSError:
@@ -110,6 +111,8 @@ def identify(path: str) -> str:
         verdict = "repack_int8"
     elif size == SHEETSAGE_BYTES:
         verdict = "sheetsage"
+    elif size in VOCALS_KNOWN_BYTES:
+        verdict = "vocals"
     else:
         verdict = _identify_by_header(path)
     _identified[key] = verdict
@@ -130,6 +133,8 @@ def _identify_by_header(path: str) -> str:
         return ""
     if all(marker in names for marker in SHEETSAGE_MARKERS):
         return "sheetsage"
+    if all(marker in names for marker in VOCALS_MARKERS):
+        return "vocals"
     if all(marker in names for marker in LM_MARKERS):
         return "lm"
     if LM_MARKERS[0] not in names and any(name.startswith(VAE_PREFIX) for name in names):
@@ -342,8 +347,8 @@ def _checkpoints_root() -> str:
         return os.path.join("ComfyUI", "models", "checkpoints")
 
 
-def _link(repo: str, repo_path: str) -> str:
-    return "https://huggingface.co/" + repo + "/resolve/main/" + repo_path
+def _link(repo: str, repo_path: str, revision: str = "main") -> str:
+    return "https://huggingface.co/" + repo + "/resolve/" + revision + "/" + repo_path
 
 
 def _missing_message(roots: list, found: dict, variant: str, quantization: str) -> str:
@@ -502,4 +507,63 @@ def asr_missing_message(roots: list) -> str:
     else:
         lines += ["There was nowhere to look: no ComfyUI model folders were found."]
     lines += ["", "Its weights are licensed Apache-2.0."]
+    return "\n".join(lines)
+
+
+def find_vocals(roots=None) -> str:
+    """The voice separator's weights: the released file by name and size, then a conversion by its tensors, or "".
+
+    The released file is preferred when both are on the machine: it is the one
+    the pack was checked against, in full precision.
+    """
+    roots = paths.search_roots() if roots is None else roots
+    for root in roots:
+        for home in _homes(root):
+            candidate = os.path.join(home, VOCALS_NAME)
+            try:
+                if os.path.getsize(candidate) == VOCALS_BYTES:
+                    return candidate
+            except OSError:
+                continue
+    for root in roots:
+        for home in _homes(root):
+            try:
+                entries = sorted(os.listdir(home))
+            except OSError:
+                continue
+            for entry in entries:
+                candidate = os.path.join(home, entry)
+                lowered = entry.lower()
+                if lowered.endswith(".ckpt") and _size(candidate) == VOCALS_BYTES:
+                    return candidate
+                if lowered.endswith(".safetensors") and identify(candidate) == "vocals":
+                    return candidate
+    return ""
+
+
+def _size(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return -1
+
+
+def vocals_missing_message(roots: list) -> str:
+    """Where the voice separator goes and the link to it, for somebody who turned downloading off."""
+    lines = [
+        "Mel-Band RoFormer, the model that separates the voice from a song, is not on this machine yet.",
+        "",
+        "It is one file ({:.2f} GB):".format(VOCALS_BYTES / 1024 ** 3),
+        "",
+        "  " + _link(VOCALS_REPO, VOCALS_NAME, VOCALS_REVISION),
+        "  -> " + os.path.join(_expected_root(), VOCALS_NAME),
+        "",
+    ]
+    if roots:
+        where = "1 place" if len(roots) == 1 else str(len(roots)) + " places"
+        lines += ["Looked in " + where + ", including:", ""]
+        lines += ["  " + path for path in roots[:6]]
+    else:
+        lines += ["There was nowhere to look: no ComfyUI model folders were found."]
+    lines += ["", "Its weights are licensed MIT."]
     return "\n".join(lines)

@@ -1,0 +1,2357 @@
+{
+ "source": "KimberleyJSN/melbandroformer at ac9b0614ab3cd7f77219e18ba494dfd93956c348, MelBandRoformer.ckpt: every tensor's name and shape, in the file's order",
+ "tensors": {
+  "layers.0.0.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.0.0.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.0.0.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.0.0.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.0.0.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.0.0.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.0.0.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.0.0.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.0.0.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.0.0.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.0.0.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.0.1.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.0.1.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.0.1.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.0.1.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.0.1.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.0.1.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.0.1.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.0.1.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.0.1.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.0.1.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.0.1.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.0.1.norm.gamma": [
+   384
+  ],
+  "layers.1.0.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.1.0.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.1.0.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.1.0.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.1.0.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.1.0.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.1.0.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.1.0.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.1.0.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.1.0.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.1.0.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.1.0.norm.gamma": [
+   384
+  ],
+  "layers.1.1.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.1.1.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.1.1.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.1.1.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.1.1.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.1.1.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.1.1.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.1.1.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.1.1.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.1.1.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.1.1.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.1.1.norm.gamma": [
+   384
+  ],
+  "layers.2.0.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.2.0.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.2.0.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.2.0.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.2.0.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.2.0.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.2.0.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.2.0.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.2.0.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.2.0.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.2.0.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.2.0.norm.gamma": [
+   384
+  ],
+  "layers.2.1.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.2.1.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.2.1.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.2.1.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.2.1.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.2.1.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.2.1.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.2.1.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.2.1.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.2.1.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.2.1.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.2.1.norm.gamma": [
+   384
+  ],
+  "layers.3.0.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.3.0.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.3.0.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.3.0.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.3.0.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.3.0.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.3.0.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.3.0.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.3.0.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.3.0.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.3.0.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.3.0.norm.gamma": [
+   384
+  ],
+  "layers.3.1.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.3.1.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.3.1.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.3.1.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.3.1.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.3.1.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.3.1.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.3.1.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.3.1.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.3.1.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.3.1.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.3.1.norm.gamma": [
+   384
+  ],
+  "layers.4.0.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.4.0.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.4.0.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.4.0.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.4.0.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.4.0.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.4.0.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.4.0.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.4.0.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.4.0.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.4.0.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.4.0.norm.gamma": [
+   384
+  ],
+  "layers.4.1.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.4.1.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.4.1.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.4.1.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.4.1.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.4.1.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.4.1.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.4.1.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.4.1.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.4.1.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.4.1.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.4.1.norm.gamma": [
+   384
+  ],
+  "layers.5.0.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.5.0.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.5.0.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.5.0.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.5.0.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.5.0.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.5.0.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.5.0.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.5.0.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.5.0.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.5.0.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.5.0.norm.gamma": [
+   384
+  ],
+  "layers.5.1.layers.0.0.rotary_embed.freqs": [
+   32
+  ],
+  "layers.5.1.layers.0.0.norm.gamma": [
+   384
+  ],
+  "layers.5.1.layers.0.0.to_qkv.weight": [
+   1536,
+   384
+  ],
+  "layers.5.1.layers.0.0.to_gates.weight": [
+   8,
+   384
+  ],
+  "layers.5.1.layers.0.0.to_gates.bias": [
+   8
+  ],
+  "layers.5.1.layers.0.0.to_out.0.weight": [
+   384,
+   512
+  ],
+  "layers.5.1.layers.0.1.net.0.gamma": [
+   384
+  ],
+  "layers.5.1.layers.0.1.net.1.weight": [
+   1536,
+   384
+  ],
+  "layers.5.1.layers.0.1.net.1.bias": [
+   1536
+  ],
+  "layers.5.1.layers.0.1.net.4.weight": [
+   384,
+   1536
+  ],
+  "layers.5.1.layers.0.1.net.4.bias": [
+   384
+  ],
+  "layers.5.1.norm.gamma": [
+   384
+  ],
+  "band_split.to_features.0.0.gamma": [
+   28
+  ],
+  "band_split.to_features.0.1.weight": [
+   384,
+   28
+  ],
+  "band_split.to_features.0.1.bias": [
+   384
+  ],
+  "band_split.to_features.1.0.gamma": [
+   24
+  ],
+  "band_split.to_features.1.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.1.1.bias": [
+   384
+  ],
+  "band_split.to_features.2.0.gamma": [
+   24
+  ],
+  "band_split.to_features.2.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.2.1.bias": [
+   384
+  ],
+  "band_split.to_features.3.0.gamma": [
+   24
+  ],
+  "band_split.to_features.3.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.3.1.bias": [
+   384
+  ],
+  "band_split.to_features.4.0.gamma": [
+   24
+  ],
+  "band_split.to_features.4.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.4.1.bias": [
+   384
+  ],
+  "band_split.to_features.5.0.gamma": [
+   24
+  ],
+  "band_split.to_features.5.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.5.1.bias": [
+   384
+  ],
+  "band_split.to_features.6.0.gamma": [
+   24
+  ],
+  "band_split.to_features.6.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.6.1.bias": [
+   384
+  ],
+  "band_split.to_features.7.0.gamma": [
+   24
+  ],
+  "band_split.to_features.7.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.7.1.bias": [
+   384
+  ],
+  "band_split.to_features.8.0.gamma": [
+   24
+  ],
+  "band_split.to_features.8.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.8.1.bias": [
+   384
+  ],
+  "band_split.to_features.9.0.gamma": [
+   24
+  ],
+  "band_split.to_features.9.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.9.1.bias": [
+   384
+  ],
+  "band_split.to_features.10.0.gamma": [
+   24
+  ],
+  "band_split.to_features.10.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.10.1.bias": [
+   384
+  ],
+  "band_split.to_features.11.0.gamma": [
+   24
+  ],
+  "band_split.to_features.11.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.11.1.bias": [
+   384
+  ],
+  "band_split.to_features.12.0.gamma": [
+   24
+  ],
+  "band_split.to_features.12.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.12.1.bias": [
+   384
+  ],
+  "band_split.to_features.13.0.gamma": [
+   24
+  ],
+  "band_split.to_features.13.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.13.1.bias": [
+   384
+  ],
+  "band_split.to_features.14.0.gamma": [
+   24
+  ],
+  "band_split.to_features.14.1.weight": [
+   384,
+   24
+  ],
+  "band_split.to_features.14.1.bias": [
+   384
+  ],
+  "band_split.to_features.15.0.gamma": [
+   28
+  ],
+  "band_split.to_features.15.1.weight": [
+   384,
+   28
+  ],
+  "band_split.to_features.15.1.bias": [
+   384
+  ],
+  "band_split.to_features.16.0.gamma": [
+   28
+  ],
+  "band_split.to_features.16.1.weight": [
+   384,
+   28
+  ],
+  "band_split.to_features.16.1.bias": [
+   384
+  ],
+  "band_split.to_features.17.0.gamma": [
+   28
+  ],
+  "band_split.to_features.17.1.weight": [
+   384,
+   28
+  ],
+  "band_split.to_features.17.1.bias": [
+   384
+  ],
+  "band_split.to_features.18.0.gamma": [
+   36
+  ],
+  "band_split.to_features.18.1.weight": [
+   384,
+   36
+  ],
+  "band_split.to_features.18.1.bias": [
+   384
+  ],
+  "band_split.to_features.19.0.gamma": [
+   36
+  ],
+  "band_split.to_features.19.1.weight": [
+   384,
+   36
+  ],
+  "band_split.to_features.19.1.bias": [
+   384
+  ],
+  "band_split.to_features.20.0.gamma": [
+   36
+  ],
+  "band_split.to_features.20.1.weight": [
+   384,
+   36
+  ],
+  "band_split.to_features.20.1.bias": [
+   384
+  ],
+  "band_split.to_features.21.0.gamma": [
+   40
+  ],
+  "band_split.to_features.21.1.weight": [
+   384,
+   40
+  ],
+  "band_split.to_features.21.1.bias": [
+   384
+  ],
+  "band_split.to_features.22.0.gamma": [
+   40
+  ],
+  "band_split.to_features.22.1.weight": [
+   384,
+   40
+  ],
+  "band_split.to_features.22.1.bias": [
+   384
+  ],
+  "band_split.to_features.23.0.gamma": [
+   44
+  ],
+  "band_split.to_features.23.1.weight": [
+   384,
+   44
+  ],
+  "band_split.to_features.23.1.bias": [
+   384
+  ],
+  "band_split.to_features.24.0.gamma": [
+   52
+  ],
+  "band_split.to_features.24.1.weight": [
+   384,
+   52
+  ],
+  "band_split.to_features.24.1.bias": [
+   384
+  ],
+  "band_split.to_features.25.0.gamma": [
+   52
+  ],
+  "band_split.to_features.25.1.weight": [
+   384,
+   52
+  ],
+  "band_split.to_features.25.1.bias": [
+   384
+  ],
+  "band_split.to_features.26.0.gamma": [
+   52
+  ],
+  "band_split.to_features.26.1.weight": [
+   384,
+   52
+  ],
+  "band_split.to_features.26.1.bias": [
+   384
+  ],
+  "band_split.to_features.27.0.gamma": [
+   60
+  ],
+  "band_split.to_features.27.1.weight": [
+   384,
+   60
+  ],
+  "band_split.to_features.27.1.bias": [
+   384
+  ],
+  "band_split.to_features.28.0.gamma": [
+   64
+  ],
+  "band_split.to_features.28.1.weight": [
+   384,
+   64
+  ],
+  "band_split.to_features.28.1.bias": [
+   384
+  ],
+  "band_split.to_features.29.0.gamma": [
+   68
+  ],
+  "band_split.to_features.29.1.weight": [
+   384,
+   68
+  ],
+  "band_split.to_features.29.1.bias": [
+   384
+  ],
+  "band_split.to_features.30.0.gamma": [
+   76
+  ],
+  "band_split.to_features.30.1.weight": [
+   384,
+   76
+  ],
+  "band_split.to_features.30.1.bias": [
+   384
+  ],
+  "band_split.to_features.31.0.gamma": [
+   80
+  ],
+  "band_split.to_features.31.1.weight": [
+   384,
+   80
+  ],
+  "band_split.to_features.31.1.bias": [
+   384
+  ],
+  "band_split.to_features.32.0.gamma": [
+   80
+  ],
+  "band_split.to_features.32.1.weight": [
+   384,
+   80
+  ],
+  "band_split.to_features.32.1.bias": [
+   384
+  ],
+  "band_split.to_features.33.0.gamma": [
+   88
+  ],
+  "band_split.to_features.33.1.weight": [
+   384,
+   88
+  ],
+  "band_split.to_features.33.1.bias": [
+   384
+  ],
+  "band_split.to_features.34.0.gamma": [
+   96
+  ],
+  "band_split.to_features.34.1.weight": [
+   384,
+   96
+  ],
+  "band_split.to_features.34.1.bias": [
+   384
+  ],
+  "band_split.to_features.35.0.gamma": [
+   104
+  ],
+  "band_split.to_features.35.1.weight": [
+   384,
+   104
+  ],
+  "band_split.to_features.35.1.bias": [
+   384
+  ],
+  "band_split.to_features.36.0.gamma": [
+   112
+  ],
+  "band_split.to_features.36.1.weight": [
+   384,
+   112
+  ],
+  "band_split.to_features.36.1.bias": [
+   384
+  ],
+  "band_split.to_features.37.0.gamma": [
+   116
+  ],
+  "band_split.to_features.37.1.weight": [
+   384,
+   116
+  ],
+  "band_split.to_features.37.1.bias": [
+   384
+  ],
+  "band_split.to_features.38.0.gamma": [
+   124
+  ],
+  "band_split.to_features.38.1.weight": [
+   384,
+   124
+  ],
+  "band_split.to_features.38.1.bias": [
+   384
+  ],
+  "band_split.to_features.39.0.gamma": [
+   132
+  ],
+  "band_split.to_features.39.1.weight": [
+   384,
+   132
+  ],
+  "band_split.to_features.39.1.bias": [
+   384
+  ],
+  "band_split.to_features.40.0.gamma": [
+   144
+  ],
+  "band_split.to_features.40.1.weight": [
+   384,
+   144
+  ],
+  "band_split.to_features.40.1.bias": [
+   384
+  ],
+  "band_split.to_features.41.0.gamma": [
+   156
+  ],
+  "band_split.to_features.41.1.weight": [
+   384,
+   156
+  ],
+  "band_split.to_features.41.1.bias": [
+   384
+  ],
+  "band_split.to_features.42.0.gamma": [
+   164
+  ],
+  "band_split.to_features.42.1.weight": [
+   384,
+   164
+  ],
+  "band_split.to_features.42.1.bias": [
+   384
+  ],
+  "band_split.to_features.43.0.gamma": [
+   176
+  ],
+  "band_split.to_features.43.1.weight": [
+   384,
+   176
+  ],
+  "band_split.to_features.43.1.bias": [
+   384
+  ],
+  "band_split.to_features.44.0.gamma": [
+   188
+  ],
+  "band_split.to_features.44.1.weight": [
+   384,
+   188
+  ],
+  "band_split.to_features.44.1.bias": [
+   384
+  ],
+  "band_split.to_features.45.0.gamma": [
+   200
+  ],
+  "band_split.to_features.45.1.weight": [
+   384,
+   200
+  ],
+  "band_split.to_features.45.1.bias": [
+   384
+  ],
+  "band_split.to_features.46.0.gamma": [
+   216
+  ],
+  "band_split.to_features.46.1.weight": [
+   384,
+   216
+  ],
+  "band_split.to_features.46.1.bias": [
+   384
+  ],
+  "band_split.to_features.47.0.gamma": [
+   228
+  ],
+  "band_split.to_features.47.1.weight": [
+   384,
+   228
+  ],
+  "band_split.to_features.47.1.bias": [
+   384
+  ],
+  "band_split.to_features.48.0.gamma": [
+   244
+  ],
+  "band_split.to_features.48.1.weight": [
+   384,
+   244
+  ],
+  "band_split.to_features.48.1.bias": [
+   384
+  ],
+  "band_split.to_features.49.0.gamma": [
+   264
+  ],
+  "band_split.to_features.49.1.weight": [
+   384,
+   264
+  ],
+  "band_split.to_features.49.1.bias": [
+   384
+  ],
+  "band_split.to_features.50.0.gamma": [
+   284
+  ],
+  "band_split.to_features.50.1.weight": [
+   384,
+   284
+  ],
+  "band_split.to_features.50.1.bias": [
+   384
+  ],
+  "band_split.to_features.51.0.gamma": [
+   304
+  ],
+  "band_split.to_features.51.1.weight": [
+   384,
+   304
+  ],
+  "band_split.to_features.51.1.bias": [
+   384
+  ],
+  "band_split.to_features.52.0.gamma": [
+   320
+  ],
+  "band_split.to_features.52.1.weight": [
+   384,
+   320
+  ],
+  "band_split.to_features.52.1.bias": [
+   384
+  ],
+  "band_split.to_features.53.0.gamma": [
+   344
+  ],
+  "band_split.to_features.53.1.weight": [
+   384,
+   344
+  ],
+  "band_split.to_features.53.1.bias": [
+   384
+  ],
+  "band_split.to_features.54.0.gamma": [
+   372
+  ],
+  "band_split.to_features.54.1.weight": [
+   384,
+   372
+  ],
+  "band_split.to_features.54.1.bias": [
+   384
+  ],
+  "band_split.to_features.55.0.gamma": [
+   396
+  ],
+  "band_split.to_features.55.1.weight": [
+   384,
+   396
+  ],
+  "band_split.to_features.55.1.bias": [
+   384
+  ],
+  "band_split.to_features.56.0.gamma": [
+   420
+  ],
+  "band_split.to_features.56.1.weight": [
+   384,
+   420
+  ],
+  "band_split.to_features.56.1.bias": [
+   384
+  ],
+  "band_split.to_features.57.0.gamma": [
+   452
+  ],
+  "band_split.to_features.57.1.weight": [
+   384,
+   452
+  ],
+  "band_split.to_features.57.1.bias": [
+   384
+  ],
+  "band_split.to_features.58.0.gamma": [
+   488
+  ],
+  "band_split.to_features.58.1.weight": [
+   384,
+   488
+  ],
+  "band_split.to_features.58.1.bias": [
+   384
+  ],
+  "band_split.to_features.59.0.gamma": [
+   520
+  ],
+  "band_split.to_features.59.1.weight": [
+   384,
+   520
+  ],
+  "band_split.to_features.59.1.bias": [
+   384
+  ],
+  "mask_estimators.0.to_freqs.0.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.0.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.0.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.0.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.0.0.4.weight": [
+   56,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.0.0.4.bias": [
+   56
+  ],
+  "mask_estimators.0.to_freqs.1.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.1.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.1.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.1.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.1.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.1.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.2.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.2.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.2.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.2.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.2.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.2.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.3.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.3.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.3.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.3.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.3.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.3.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.4.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.4.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.4.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.4.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.4.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.4.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.5.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.5.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.5.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.5.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.5.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.5.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.6.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.6.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.6.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.6.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.6.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.6.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.7.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.7.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.7.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.7.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.7.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.7.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.8.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.8.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.8.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.8.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.8.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.8.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.9.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.9.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.9.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.9.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.9.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.9.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.10.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.10.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.10.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.10.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.10.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.10.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.11.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.11.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.11.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.11.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.11.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.11.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.12.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.12.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.12.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.12.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.12.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.12.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.13.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.13.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.13.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.13.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.13.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.13.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.14.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.14.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.14.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.14.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.14.0.4.weight": [
+   48,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.14.0.4.bias": [
+   48
+  ],
+  "mask_estimators.0.to_freqs.15.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.15.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.15.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.15.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.15.0.4.weight": [
+   56,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.15.0.4.bias": [
+   56
+  ],
+  "mask_estimators.0.to_freqs.16.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.16.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.16.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.16.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.16.0.4.weight": [
+   56,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.16.0.4.bias": [
+   56
+  ],
+  "mask_estimators.0.to_freqs.17.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.17.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.17.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.17.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.17.0.4.weight": [
+   56,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.17.0.4.bias": [
+   56
+  ],
+  "mask_estimators.0.to_freqs.18.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.18.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.18.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.18.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.18.0.4.weight": [
+   72,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.18.0.4.bias": [
+   72
+  ],
+  "mask_estimators.0.to_freqs.19.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.19.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.19.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.19.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.19.0.4.weight": [
+   72,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.19.0.4.bias": [
+   72
+  ],
+  "mask_estimators.0.to_freqs.20.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.20.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.20.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.20.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.20.0.4.weight": [
+   72,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.20.0.4.bias": [
+   72
+  ],
+  "mask_estimators.0.to_freqs.21.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.21.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.21.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.21.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.21.0.4.weight": [
+   80,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.21.0.4.bias": [
+   80
+  ],
+  "mask_estimators.0.to_freqs.22.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.22.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.22.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.22.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.22.0.4.weight": [
+   80,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.22.0.4.bias": [
+   80
+  ],
+  "mask_estimators.0.to_freqs.23.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.23.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.23.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.23.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.23.0.4.weight": [
+   88,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.23.0.4.bias": [
+   88
+  ],
+  "mask_estimators.0.to_freqs.24.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.24.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.24.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.24.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.24.0.4.weight": [
+   104,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.24.0.4.bias": [
+   104
+  ],
+  "mask_estimators.0.to_freqs.25.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.25.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.25.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.25.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.25.0.4.weight": [
+   104,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.25.0.4.bias": [
+   104
+  ],
+  "mask_estimators.0.to_freqs.26.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.26.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.26.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.26.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.26.0.4.weight": [
+   104,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.26.0.4.bias": [
+   104
+  ],
+  "mask_estimators.0.to_freqs.27.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.27.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.27.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.27.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.27.0.4.weight": [
+   120,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.27.0.4.bias": [
+   120
+  ],
+  "mask_estimators.0.to_freqs.28.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.28.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.28.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.28.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.28.0.4.weight": [
+   128,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.28.0.4.bias": [
+   128
+  ],
+  "mask_estimators.0.to_freqs.29.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.29.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.29.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.29.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.29.0.4.weight": [
+   136,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.29.0.4.bias": [
+   136
+  ],
+  "mask_estimators.0.to_freqs.30.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.30.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.30.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.30.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.30.0.4.weight": [
+   152,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.30.0.4.bias": [
+   152
+  ],
+  "mask_estimators.0.to_freqs.31.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.31.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.31.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.31.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.31.0.4.weight": [
+   160,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.31.0.4.bias": [
+   160
+  ],
+  "mask_estimators.0.to_freqs.32.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.32.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.32.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.32.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.32.0.4.weight": [
+   160,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.32.0.4.bias": [
+   160
+  ],
+  "mask_estimators.0.to_freqs.33.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.33.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.33.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.33.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.33.0.4.weight": [
+   176,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.33.0.4.bias": [
+   176
+  ],
+  "mask_estimators.0.to_freqs.34.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.34.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.34.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.34.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.34.0.4.weight": [
+   192,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.34.0.4.bias": [
+   192
+  ],
+  "mask_estimators.0.to_freqs.35.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.35.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.35.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.35.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.35.0.4.weight": [
+   208,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.35.0.4.bias": [
+   208
+  ],
+  "mask_estimators.0.to_freqs.36.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.36.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.36.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.36.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.36.0.4.weight": [
+   224,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.36.0.4.bias": [
+   224
+  ],
+  "mask_estimators.0.to_freqs.37.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.37.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.37.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.37.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.37.0.4.weight": [
+   232,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.37.0.4.bias": [
+   232
+  ],
+  "mask_estimators.0.to_freqs.38.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.38.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.38.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.38.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.38.0.4.weight": [
+   248,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.38.0.4.bias": [
+   248
+  ],
+  "mask_estimators.0.to_freqs.39.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.39.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.39.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.39.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.39.0.4.weight": [
+   264,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.39.0.4.bias": [
+   264
+  ],
+  "mask_estimators.0.to_freqs.40.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.40.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.40.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.40.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.40.0.4.weight": [
+   288,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.40.0.4.bias": [
+   288
+  ],
+  "mask_estimators.0.to_freqs.41.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.41.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.41.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.41.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.41.0.4.weight": [
+   312,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.41.0.4.bias": [
+   312
+  ],
+  "mask_estimators.0.to_freqs.42.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.42.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.42.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.42.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.42.0.4.weight": [
+   328,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.42.0.4.bias": [
+   328
+  ],
+  "mask_estimators.0.to_freqs.43.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.43.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.43.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.43.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.43.0.4.weight": [
+   352,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.43.0.4.bias": [
+   352
+  ],
+  "mask_estimators.0.to_freqs.44.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.44.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.44.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.44.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.44.0.4.weight": [
+   376,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.44.0.4.bias": [
+   376
+  ],
+  "mask_estimators.0.to_freqs.45.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.45.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.45.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.45.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.45.0.4.weight": [
+   400,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.45.0.4.bias": [
+   400
+  ],
+  "mask_estimators.0.to_freqs.46.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.46.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.46.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.46.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.46.0.4.weight": [
+   432,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.46.0.4.bias": [
+   432
+  ],
+  "mask_estimators.0.to_freqs.47.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.47.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.47.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.47.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.47.0.4.weight": [
+   456,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.47.0.4.bias": [
+   456
+  ],
+  "mask_estimators.0.to_freqs.48.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.48.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.48.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.48.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.48.0.4.weight": [
+   488,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.48.0.4.bias": [
+   488
+  ],
+  "mask_estimators.0.to_freqs.49.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.49.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.49.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.49.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.49.0.4.weight": [
+   528,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.49.0.4.bias": [
+   528
+  ],
+  "mask_estimators.0.to_freqs.50.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.50.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.50.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.50.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.50.0.4.weight": [
+   568,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.50.0.4.bias": [
+   568
+  ],
+  "mask_estimators.0.to_freqs.51.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.51.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.51.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.51.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.51.0.4.weight": [
+   608,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.51.0.4.bias": [
+   608
+  ],
+  "mask_estimators.0.to_freqs.52.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.52.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.52.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.52.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.52.0.4.weight": [
+   640,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.52.0.4.bias": [
+   640
+  ],
+  "mask_estimators.0.to_freqs.53.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.53.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.53.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.53.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.53.0.4.weight": [
+   688,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.53.0.4.bias": [
+   688
+  ],
+  "mask_estimators.0.to_freqs.54.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.54.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.54.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.54.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.54.0.4.weight": [
+   744,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.54.0.4.bias": [
+   744
+  ],
+  "mask_estimators.0.to_freqs.55.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.55.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.55.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.55.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.55.0.4.weight": [
+   792,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.55.0.4.bias": [
+   792
+  ],
+  "mask_estimators.0.to_freqs.56.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.56.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.56.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.56.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.56.0.4.weight": [
+   840,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.56.0.4.bias": [
+   840
+  ],
+  "mask_estimators.0.to_freqs.57.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.57.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.57.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.57.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.57.0.4.weight": [
+   904,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.57.0.4.bias": [
+   904
+  ],
+  "mask_estimators.0.to_freqs.58.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.58.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.58.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.58.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.58.0.4.weight": [
+   976,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.58.0.4.bias": [
+   976
+  ],
+  "mask_estimators.0.to_freqs.59.0.0.weight": [
+   1536,
+   384
+  ],
+  "mask_estimators.0.to_freqs.59.0.0.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.59.0.2.weight": [
+   1536,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.59.0.2.bias": [
+   1536
+  ],
+  "mask_estimators.0.to_freqs.59.0.4.weight": [
+   1040,
+   1536
+  ],
+  "mask_estimators.0.to_freqs.59.0.4.bias": [
+   1040
+  ]
+ }
+}

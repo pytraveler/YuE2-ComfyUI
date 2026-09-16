@@ -544,7 +544,11 @@ def test_the_mark_of_the_words_comes_off_and_goes_on_as_the_server_does_it():
 def test_the_length_limit_is_the_ceiling_the_singing_stage_stops_at():
     """The red line on the piano roll has to fall where the song really stops."""
     lyrics = ["", "[Intro]\n[Outro]", "one line", constants.DEFAULT_LYRICS,
-              "[Verse]\r\na\r\n\r\n  b  \n[Chorus]\n\tc", "line\n" * 40, "[Verse] sung anyway\n[x]"]
+              "[Verse]\r\na\r\n\r\n  b  \n[Chorus]\n\tc", "line\n" * 40, "[Verse] sung anyway\n[x]",
+              "[Only bass] Neon fades along the lane [Stab]\n[Solo] [Claps]\n[End",
+              "one two three four five six seven eight nine ten eleven twelve\n" * 3,
+              "\u041f\u0435\u0441\u043d\u044f \u043e \u0437\u0438\u043c\u0435\n[Male: \"Yeah...\"] ...",
+              "\u4f60\u597d\u4e16\u754c\u6211\u4eec\u4e00\u8d77\u5531\u6b4c"]
     maxima = [0, 60, 12.5, -3]
     got = run_roll("""
         const lyrics = {lyrics};

@@ -98,15 +98,18 @@ export const AUTO_SECONDS_PER_LINE = 12;
 export const AUTO_MIN_SECONDS = 40;
 export const AUTO_INSTRUMENTAL_SECONDS = 180;
 export const MAX_SECONDS = 360;
+export const AUTO_WORDS_PER_LINE = 8;
 
 const LINE_BREAKS = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+const DIRECTION = /\[[^\]]*\]/g;
+const LETTER = /[\p{L}\p{N}]/u;
 
 export function sungLines(lyrics) {
     let count = 0;
     for (const piece of String(lyrics ?? "").split(LINE_BREAKS)) {
-        const line = piece.trim();
-        if (!line || (line.startsWith("[") && line.endsWith("]"))) continue;
-        count += 1;
+        const words = piece.replace(DIRECTION, " ").split(/\s+/).filter(Boolean);
+        if (!words.some((word) => LETTER.test(word))) continue;
+        count += Math.max(1, Math.floor((words.length + Math.floor(AUTO_WORDS_PER_LINE / 2)) / AUTO_WORDS_PER_LINE));
     }
     return count;
 }

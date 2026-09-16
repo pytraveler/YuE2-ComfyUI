@@ -584,6 +584,45 @@ def ensure_asr(settings: dict, progress=None) -> str:
     return folder
 
 
+def vocals_wanted() -> dict:
+    """The voice separator's one file, into models/YuE2."""
+    from .constants import VOCALS_NAME
+
+    return {VOCALS_NAME: os.path.join(paths.models_root(), VOCALS_NAME)}
+
+
+def fetch_vocals(progress=None) -> str:
+    """Kimberley Jensen's released weights at the pinned revision, whatever 'download' names; the file's path.
+
+    Pinned because the repository is one person's and a later upload under the
+    same name would be a different model from the one this pack was checked
+    against.
+    """
+    from .constants import VOCALS_BYTES, VOCALS_REPO, VOCALS_REVISION
+
+    wanted = vocals_wanted()
+    fetch(VOCALS_REPO, wanted, "Downloading Mel-Band RoFormer ({})".format(human_size(VOCALS_BYTES)), progress,
+          revision=VOCALS_REVISION)
+    return list(wanted.values())[0]
+
+
+def ensure_vocals(settings: dict, progress=None) -> str:
+    """The voice separator's weights, fetched first when the machine has not got them and downloading is on."""
+    from . import discovery
+
+    found = discovery.find_vocals()
+    if found:
+        return found
+    if settings.get("download", "auto") == "off":
+        raise FileNotFoundError(
+            discovery.vocals_missing_message(paths.search_roots())
+            + "\n\nOr set 'download' in YuE2 Options to 'auto', and the node will fetch it itself.")
+    path = fetch_vocals(progress)
+    if progress is not None:
+        progress.text("Download finished")
+    return path
+
+
 def verify_folder(directory: str, progress=None) -> None:
     """Check a folder against the manifest that came down with it.
 

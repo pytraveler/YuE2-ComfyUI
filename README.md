@@ -79,6 +79,15 @@ words included:
 
 See [YuE2 Load MIDI](#yue2-load-midi).
 
+A fifth node takes the voice out of any recording, and the same step is a
+switch on the song nodes, `vocals_only` in `YuE2 Options`:
+
+    [YuE2 Vocals Only]
+      audio  (a song, or any recording)
+      -> vocals
+
+See [YuE2 Vocals Only](#yue2-vocals-only).
+
 ## Contents
 
 - [What you need before installing](#what-you-need-before-installing)
@@ -86,7 +95,7 @@ See [YuE2 Load MIDI](#yue2-load-midi).
 - [Example workflows](#example-workflows)
 - [Nodes](#nodes) - [YuE2 Generate Song](#yue2-generate-song) -
   [YuE2 Write Song](#yue2-write-song) - [YuE2 Transcribe](#yue2-transcribe) -
-  [YuE2 Load MIDI](#yue2-load-midi) -
+  [YuE2 Load MIDI](#yue2-load-midi) - [YuE2 Vocals Only](#yue2-vocals-only) -
   [YuE2 Options](#yue2-options) - [Staged nodes](#staged-nodes)
 - [Song length](#song-length)
 - [Writing lyrics](#writing-lyrics) -
@@ -104,8 +113,8 @@ See [YuE2 Load MIDI](#yue2-load-midi).
 | Resource | Requirement |
 |---|---|
 | GPU | An NVIDIA GPU with BF16 support. CPU works and is roughly an hour per song |
-| VRAM | **~5 GiB** for a 40-second song and **~11.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card. A card with room to spare keeps the whole model on it and uses more: 7.6 and 15 GiB. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.3 GiB while it recognises the words of a three-minute song |
-| Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words |
+| VRAM | **~5 GiB** for a 40-second song and **~11.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card. A card with room to spare keeps the whole model on it and uses more: 7.6 and 15 GiB. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.3 GiB while it recognises the words of a three-minute song. Separating the voice, with `vocals_only` or `YuE2 Vocals Only`, peaks at 2.5 GiB |
+| Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words. `vocals_only` and `YuE2 Vocals Only` add 0.85 GB |
 | Packages | `tiktoken`, which ComfyUI does not ship. It is the only thing this pack adds; `requests`, which the downloader uses, is already in every ComfyUI install. `llama-cpp-python` is optional -- `YuE2 Write Song` uses it when it is there and official llama.cpp binaries when it is not |
 
 If `tiktoken` is missing the node says so, with the right pip line for the
@@ -127,7 +136,7 @@ live until the server restarts.
 
 ## Example workflows
 
-Eight workflows ship with the pack and appear in ComfyUI's template browser
+Nine workflows ship with the pack and appear in ComfyUI's template browser
 (*Workflow -> Browse Templates*) under this node pack's name once it is
 installed. Each is a card of its own and each runs on its own: nothing is
 bypassed on open, and there is no second branch to mute before pressing Run.
@@ -142,8 +151,9 @@ bypassed on open, and there is no second branch to mute before pressing Run.
 | 6 | **One take, both decoders** -- one performance decoded twice | the YuE2 weights and the 0.53 GB legacy decoder |
 | 7 | **Sing a MIDI file** -- a tune you have as MIDI, sung in the style you describe | the YuE2 weights |
 | 8 | **Cover a song** -- a recording's tune and words, sung again in another style | the YuE2 weights, SheetSage2 (1.29 GB), and for the words Qwen3-ASR (3.8 GB) and a 2.7 GB writer |
+| 9 | **An a cappella song** -- a song with nothing but the voice | the YuE2 weights and the 0.85 GB voice separator |
 
-Templates 1 to 3, 7 and 8 use the `YuE2` menu. Templates 4 to 6 open a run up
+Templates 1 to 3 and 7 to 9 use the `YuE2` menu. Templates 4 to 6 open a run up
 into its stages, which is what `YuE2/Advanced` is for.
 
 Every one carries a **Read me first** note: what it does, what it downloads,
@@ -639,6 +649,53 @@ error rate of 0.50, and every song ended with the tune, at 18 to 23 seconds,
 where without the ceiling five of the eight had run on to as much as 85: a theme
 that fast, with no breaths, is hard to sing words to, and it gets the warning.
 
+### YuE2 Vocals Only
+
+The voice of a song, without the band. YuE2 writes a song as one stream, voice
+and accompaniment together, and has no voice-only output of its own, so the
+voice is taken out of the finished mix. That comes two ways:
+
+- **`vocals_only` in [YuE2 Options](#yue2-options).** `YuE2 Generate Song`,
+  `YuE2 Render Plan` and `YuE2 Decode Latents` make the song as always and then
+  hand on only its voice: the same length and rate and the same timing, so it
+  lines up with the song it came from. `score_abc` is untouched, and with the
+  switch off the same seed gives the same song with its accompaniment.
+- **The `YuE2 Vocals Only` node.** Any audio in -- a song from this pack, a
+  recording from Load Audio, the output of another node -- and its voice out,
+  at the rate and in the channels it arrived with. Placed after
+  `YuE2 Generate Song`, it gives the song and its voice from one run.
+
+      [YuE2 Vocals Only]
+        audio    (a song, or any recording)
+        options  (optional: download, device, keep_model_loaded)
+        -> vocals
+
+**For an a cappella song, write "a cappella" in the style as well.** The voice
+comes from the song the seed gives, and an ordinary song keeps silence where
+its intro and instrumental breaks were: in eight of nine pop songs the separated
+voice began after 1 to 14 seconds of nothing. Asked for "a cappella", the model
+leaves those out and keeps the voice going from the first bar, harmonies
+included.
+
+The style line alone is not enough, though, which is why the separation is
+there. Asked for an a cappella in every way tried -- "a cappella", "acapella",
+"no instruments, no drums", a choir, gospel, barbershop, chant, an
+unaccompanied folk song, a male voice, a Russian song, each `cot`, `cfg_scale`
+1.5 and 3 -- 61 of 72 songs kept a soft held pad of chords under the voice,
+within 10 dB of it, as close as the band in an ordinary pop song. Two came out
+clean. "No instruments" changed nothing, and "a cappella rap" got a beat.
+
+The separator is Mel-Band RoFormer, Kimberley Jensen's vocal model, run by this
+pack's own implementation. Its numbers are those of the reference code the
+model was trained with, to the last bit in float32. A three-minute song takes
+about 7 seconds on an RTX 5090, at a peak of 2.5 GiB. The words survive it:
+heard back by a speech model over 72 songs, 91 percent of the lyrics came
+through in order both in the separated voice and in the full song. The model is
+downloaded on first use, 0.85 GB under MIT; see
+[Where the weights go](#where-the-weights-go).
+
+Template 9, *An a cappella song*, is the switch set up with such a style.
+
 ### YuE2 Options
 
 Everything the main node deliberately does not ask about. An unconnected socket
@@ -692,6 +749,8 @@ and the node ran for 58.5 s on an RTX 5090.*
   than the old recording pitched. It needs a score, so not with `cot` set to
   `off`, and a score the parser cannot read is refused; none of the 52 the
   model wrote in testing was.
+- `vocals_only` -- hands on only the voice of the song, separated from the band
+  once the song is made. See [YuE2 Vocals Only](#yue2-vocals-only).
 
 ### Staged nodes
 
@@ -869,6 +928,21 @@ already on disk is used where it lies: SheetSage2 is recognised by its tensors
 whatever the file is called, and the speech model by the shape of its weights
 next to its `tokenizer.json`.
 
+`vocals_only` and `YuE2 Vocals Only` share one model, fetched on first use with
+`download` at anything but `off`:
+
+| File | Size | Repository | Licence |
+| --- | --- | --- | --- |
+| `YuE2/MelBandRoformer.ckpt` | 0.85 GB | [KimberleyJSN/melbandroformer](https://huggingface.co/KimberleyJSN/melbandroformer) | MIT |
+
+It is fetched at the one revision this pack was checked against, because a
+later upload under the same name would be a different model. A copy already on
+disk is used where it lies: the released file by its name and size, and a
+safetensors conversion of it by its tensors -- such as kijai's
+`MelBandRoformer_fp16.safetensors`, which ComfyUI-MelBandRoFormer keeps in
+`models/diffusion_models`. The `.ckpt` is read with torch's `weights_only`, which
+loads tensors and runs no code.
+
 `ComfyUI/models/YuE2/` is registered with ComfyUI, so `extra_model_paths.yaml`
 can redirect it like any other model folder, and `checkpoints` is whatever that
 file already says it is.
@@ -968,8 +1042,9 @@ trusts. Nothing is skipped: the certificate is still verified.
 
 ## Licence
 
-The code here is Apache-2.0, the SheetSage2 and Qwen3-ASR implementations
-included. The YuE2 and SheetSage2 weights are CC BY-NC 4.0, which is
-non-commercial, and the vendored upstream inference code keeps its own licence.
-The writer's default language model and the Qwen3-ASR speech model are
-Apache-2.0 and belong to neither. See [NOTICE.md](NOTICE.md).
+The code here is Apache-2.0, the SheetSage2, Qwen3-ASR and Mel-Band RoFormer
+implementations included. The YuE2 and SheetSage2 weights are CC BY-NC 4.0,
+which is non-commercial, and the vendored upstream inference code keeps its own
+licence. The writer's default language model and the Qwen3-ASR speech model are
+Apache-2.0, the voice separator's weights are MIT, and they belong to neither.
+See [NOTICE.md](NOTICE.md).

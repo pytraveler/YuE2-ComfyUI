@@ -28,13 +28,15 @@ def test_the_menu_offers_four_nodes_and_hides_the_rest_one_level_down():
     in, so demoting a headline node or promoting a staged one has to be done on
     purpose rather than by editing a class and not noticing. Transcribe is a
     headline node: covering a song is a thing people come for. So is Load
-    MIDI, the other way in for a tune someone already has.
+    MIDI, the other way in for a tune someone already has, and Vocals Only,
+    the way to an a cappella of any recording.
     """
     plain = {name for name, cls in node_classes()
              if cls.CATEGORY == constants.CATEGORY}
     advanced = {name for name, cls in node_classes()
                 if cls.CATEGORY == constants.ADVANCED_CATEGORY}
-    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe", "YuE2LoadMidi"}
+    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe", "YuE2LoadMidi",
+                     "YuE2VocalsOnly"}
     assert advanced == set(nodes.STAGED_CLASSES)
 
 
@@ -84,10 +86,11 @@ def test_new_widgets_go_last_so_saved_options_keep_their_places():
     A widget added anywhere but the end would move every value after it into
     the wrong widget, in every workflow saved before it existed. At the end, an
     older workflow simply has a value or two fewer, and the new widgets take
-    their defaults. 'offload' was added first and 'transpose' after it.
+    their defaults. 'offload' was added first, 'transpose' after it and
+    'vocals_only' after that.
     """
     spec = nodes.YuE2Options.INPUT_TYPES()
-    assert list(spec["optional"])[-2:] == ["offload", "transpose"]
+    assert list(spec["optional"])[-3:] == ["offload", "transpose", "vocals_only"]
 
 
 def test_transpose_reaches_an_octave_either_way_and_starts_at_zero():

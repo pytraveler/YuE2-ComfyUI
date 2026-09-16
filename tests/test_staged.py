@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from yue2_comfy import constants, edits, generate, staged, transpose
+from yue2_comfy import constants, edits, generate, phrasing, staged, transpose
 
 SCORE = "X:1\nK:C\nCDEF|\n"
 IDS = [88, 58, 49]
@@ -76,9 +76,10 @@ def stub_singing(monkeypatch, seconds=42.0):
     calls = []
 
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
-             progress=None, cancelled=None, stages=None):
+             progress=None, cancelled=None, stages=None, tune_seconds=None):
         calls.append({"ids": None if abc_ids is None else list(abc_ids), "abc": abc,
-                      "seed": seed, "settings": dict(settings), "stages": stages})
+                      "seed": seed, "settings": dict(settings), "stages": stages,
+                      "tune_seconds": tune_seconds})
         return FakeLatents(), {"semantic": {}, "acoustic": {}}
 
     def decode(models, latents, progress=None, cancelled=None, stages=None):
@@ -214,6 +215,35 @@ def test_the_render_node_warns_when_a_melody_only_score_meets_cot_full(monkeypat
     said.clear()
     staged.YuE2RenderPlan().render(plan, score_abc='X:1\nK:G\n"G"GABc|\n', unique_id="9")
     assert said == []
+
+
+BARE_TUNE = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=100\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+             'V: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\nV: Vocal\nz2C2D2E2F2G2A2B2|\nV: Ins\nZ|\n')
+
+
+def test_the_render_node_lays_the_plans_lyrics_along_a_bare_tune(monkeypatch):
+    """The same rule as the song node's: a tune that names no section gets the plan's words laid along it."""
+    calls = stub_singing(monkeypatch)
+    said = []
+    monkeypatch.setattr(staged, "announce",
+                        lambda node, findings, kind="notice": said.append(findings))
+    plan = plain_plan()
+    plan["lyrics"] = "[Chorus]\nla la la la la la la"
+    plan["settings"]["cot"] = "melody"
+    staged.YuE2RenderPlan().render(plan, score_abc=BARE_TUNE, unique_id="9")
+    laid = phrasing.lay(BARE_TUNE, plan["lyrics"])
+    assert calls[0]["ids"] is None
+    assert calls[0]["abc"] == laid.score
+    assert calls[0]["tune_seconds"] == laid.seconds
+    assert [level for level, _message in said[0]] == ["notice"]
+
+
+def test_a_song_laid_along_a_tune_is_let_sing_as_long_as_the_tune_and_a_little_over():
+    """At 'max_seconds' 0 the ceiling comes from the tune, not from twelve seconds a line; a set value still wins."""
+    assert generate.song_ceiling(0, "one line", 18.8) == phrasing.ceiling(18.8) == 22.7
+    assert generate.song_ceiling(0, "one line", None) == constants.length_ceiling(0, "one line")
+    assert generate.song_ceiling(30, "one line", 18.8) == 30.0
+    assert generate.song_ceiling(0, "", 1000.0) == constants.MAX_SECONDS
 
 
 def test_the_render_node_passes_an_untouched_score_as_ids(monkeypatch):
@@ -352,7 +382,7 @@ def test_the_single_node_still_walks_the_same_three_stages(monkeypatch):
         return SCORE, IDS, {"abc": {"seconds": 1.0}}
 
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
-             progress=None, cancelled=None, stages=None):
+             progress=None, cancelled=None, stages=None, tune_seconds=None):
         seen.append(("sing", list(abc_ids or [])))
         return "latents", {"semantic": {}, "acoustic": {}}
 
@@ -383,7 +413,7 @@ def test_the_single_node_sings_an_edit_without_writing_a_score(monkeypatch):
         return SCORE, IDS, {"abc": {"seconds": 1.0}}
 
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
-             progress=None, cancelled=None, stages=None):
+             progress=None, cancelled=None, stages=None, tune_seconds=None):
         seen.append(("sing", abc_ids, abc, stages))
         return "latents", {"semantic": {}, "acoustic": {}}
 
@@ -495,7 +525,7 @@ def test_the_single_node_sings_the_moved_score_and_hands_it_back(monkeypatch):
         return MOVABLE, IDS, {"abc": {"seconds": 1.0}}
 
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
-             progress=None, cancelled=None, stages=None):
+             progress=None, cancelled=None, stages=None, tune_seconds=None):
         seen.update(ids=abc_ids, abc=abc)
         return "latents", {"semantic": {}, "acoustic": {}}
 

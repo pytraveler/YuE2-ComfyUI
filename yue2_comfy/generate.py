@@ -17,9 +17,9 @@ import dataclasses
 import logging
 import time
 
-from . import placement, runtime, transpose
+from . import phrasing, placement, runtime, transpose
 from .constants import (
-    AUTO_MIN_SECONDS, CONTEXT, FRAME_SECONDS, SAMPLE_RATE, length_ceiling,
+    AUTO_MIN_SECONDS, CONTEXT, FRAME_SECONDS, MAX_SECONDS, SAMPLE_RATE, length_ceiling,
     normalize_seed, seconds_to_tokens, sung_lines,
 )
 
@@ -142,8 +142,21 @@ def write_score(models, style, lyrics, seed, settings, progress=None,
     return models.tokenizer.decode(ids), list(ids), {"abc": spent}
 
 
+def song_ceiling(max_seconds, lyrics: str, tune_seconds=None) -> float:
+    """The most seconds a run sings: 'max_seconds', or at 0 the tune's ceiling, or the one the lyrics give.
+
+    A score the lyrics were laid along (see ``phrasing``) knows how long the song
+    is, so at 0 the ceiling is that length and a little over rather than twelve
+    seconds a line: over a tune the words do not fit, the model runs on past the
+    last bar in words of its own.
+    """
+    if float(max_seconds or 0) <= 0 and tune_seconds:
+        return min(MAX_SECONDS, phrasing.ceiling(tune_seconds))
+    return length_ceiling(max_seconds, lyrics)
+
+
 def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
-         progress=None, cancelled=None, stages=None):
+         progress=None, cancelled=None, stages=None, tune_seconds=None):
     """Stages two and three: a score becomes acoustic latents.
 
     ``abc_ids`` wins when it is given, and ``abc`` is encoded when it is not,
@@ -177,8 +190,11 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
     from .vendor.yue2.sampling import generate_tokens
 
     automatic = float(settings["max_seconds"]) <= 0
-    seconds = length_ceiling(settings["max_seconds"], lyrics)
-    if automatic:
+    seconds = song_ceiling(settings["max_seconds"], lyrics, tune_seconds)
+    if automatic and tune_seconds:
+        log.info("[yue2_comfy.generate] length ceiling %.0f s, from the %.0f s tune the lyrics were laid along",
+                 seconds, tune_seconds)
+    elif automatic:
         log.info("[yue2_comfy.generate] length ceiling %.0f s, from %d sung lines",
                  seconds, sung_lines(lyrics))
 
@@ -274,7 +290,7 @@ def moved(score, semitones, cot):
 
 
 def run(models, style, lyrics, seed, settings, progress=None, cancelled=None,
-        edited=None):
+        edited=None, tune_seconds=None):
     """One song. Returns (waveform, sung, written, timing).
 
     The waveform is exactly what ComfyUI's AUDIO type wants: float32 [1, 2, S]
@@ -295,7 +311,8 @@ def run(models, style, lyrics, seed, settings, progress=None, cancelled=None,
     With 'edited', a score a person changed, the first call is skipped: the edit
     is sung as text, exactly as 'YuE2 Render Plan' sings one, on a progress bar
     the three remaining stages fill by themselves. 'written' is then empty,
-    because the model wrote nothing.
+    because the model wrote nothing. 'tune_seconds' is how long an edit laid
+    along its lyrics runs, which then sets the length ceiling at 'max_seconds' 0.
     """
     started = time.perf_counter()
     if edited:
@@ -310,7 +327,8 @@ def run(models, style, lyrics, seed, settings, progress=None, cancelled=None,
         abc_text, abc_ids = moved(abc_text, semitones, settings["cot"]), None
     latents, spent = sing(models, style, lyrics, seed, settings, abc_ids,
                           abc=abc_text, progress=progress, cancelled=cancelled,
-                          stages=None if bands is None else bands[:2])
+                          stages=None if bands is None else bands[:2],
+                          tune_seconds=tune_seconds)
     timing.update(spent)
     waveform, spent = decode(models, latents, progress, cancelled,
                              stages=None if bands is None else bands[2:])

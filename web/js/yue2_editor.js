@@ -7,7 +7,8 @@ import { editValue, splitMark } from "./yue2_roll.js";
 import * as sheet from "./yue2_sheet.js";
 
 const TRANSCRIBE = "YuE2Transcribe";
-const NODES = ["YuE2GenerateSong", "YuE2Plan", "YuE2PlanBatch", TRANSCRIBE];
+const LOAD_MIDI = "YuE2LoadMidi";
+const NODES = ["YuE2GenerateSong", "YuE2Plan", "YuE2PlanBatch", TRANSCRIBE, LOAD_MIDI];
 const LYRICS_UI = "yue2_lyrics";
 const TRACK_UI = "yue2_track";
 const STYLE = "style";
@@ -40,6 +41,48 @@ const RECOGNISED_NOTE =
 const OTHER_RECORDING_NOTE =
     "These lyrics were written for another recording, so the node outputs its own lyrics for this " +
     "recording instead. Apply keeps them for this recording.";
+
+const SOURCE_TEXTS = {
+    [TRANSCRIBE]: {
+        lyricsTooltip: LYRICS_TOOLTIP,
+        resetTooltip: RESET_LYRICS_TOOLTIP,
+        tagsNote: TAGS_NOTE,
+        wordsNote: RECOGNISED_NOTE,
+        otherNote: OTHER_RECORDING_NOTE,
+        back: "Back to the transcription",
+        backTitle: "Throw away these lyrics and load what the last run gave: the section tags, "
+            + "or the recognised words.",
+        empty: "No lyrics and no section tags yet. Run the node once and the tags of the transcription "
+            + "appear here, or add a section and write the lyrics now.",
+        otherRow: "Written for another recording: this recording's own lyrics are sent on instead.",
+        wordsHeading: "Recognised lyrics",
+        wordsRow: "Heard in the recording: read them through in Edit lyrics\u2026",
+        tagsFound: " found in the transcription",
+        noTags: "Run once, and the tags of the transcription appear here.",
+    },
+    [LOAD_MIDI]: {
+        lyricsTooltip: "Open the lyrics editor on the lyrics this node gives: the karaoke words of the file under "
+            + "their section tags, or the tags alone. Nothing changes on the node until you press Apply.",
+        resetTooltip: "Throw away the lyrics kept on this node. The next run outputs the node's own lyrics again: "
+            + "the file's karaoke words, or the section tags.",
+        tagsNote: "The tags are the sections of the file: its markers, or one verse when it names none. Write the "
+            + "words under each tag, and add sections where the song has them. The edit is kept for this file.",
+        wordsNote: "These are the file's own karaoke words, in its lines and sections; a section sung twice is taken "
+            + "for the chorus. Check the tags and fix what the file got wrong. The edit is kept for this file.",
+        otherNote: "These lyrics were written for another file, so the node outputs its own lyrics for this file "
+            + "instead. Apply keeps them for this file.",
+        back: "Back to the file's lyrics",
+        backTitle: "Throw away these lyrics and load what the last run gave: the file's karaoke words, "
+            + "or the section tags.",
+        empty: "No lyrics and no section tags yet. Run the node once and the file's words or tags appear here, "
+            + "or add a section and write the lyrics now.",
+        otherRow: "Written for another file: this file's own lyrics are sent on instead.",
+        wordsHeading: "Karaoke lyrics",
+        wordsRow: "The file's own words: read them through in Edit lyrics\u2026",
+        tagsFound: " found in the file",
+        noTags: "Run once, and the tags of the file appear here.",
+    },
+};
 
 const CASE_NOTE =
     "Click a letter to flip its case; click again to flip it back. A capital inside " +
@@ -76,6 +119,14 @@ function tagColor(tag) {
 
 function isTranscribe(node) {
     return node?.type === TRANSCRIBE || node?.comfyClass === TRANSCRIBE;
+}
+
+function isLoadMidi(node) {
+    return node?.type === LOAD_MIDI || node?.comfyClass === LOAD_MIDI;
+}
+
+function sourceTexts(node) {
+    return isTranscribe(node) ? SOURCE_TEXTS[TRANSCRIBE] : isLoadMidi(node) ? SOURCE_TEXTS[LOAD_MIDI] : null;
 }
 
 const EDITOR_STYLE_ID = "yue2-editor-style";
@@ -280,7 +331,8 @@ function iconButton(text, title, onClick) {
 class SongEditor {
     constructor(node) {
         this.node = node;
-        this.lyricsOnly = isTranscribe(node);
+        this.source = sourceTexts(node);
+        this.lyricsOnly = Boolean(this.source);
         this.styleFree = !this.lyricsOnly && !sourceOf(node, STYLE);
         this.lyricsFree = !sourceOf(node, LYRICS);
 
@@ -681,9 +733,8 @@ class SongEditor {
         textMode.addEventListener("click", () => this.toggleText());
         title.append(addSection, textMode);
         if (this.lyricsOnly) {
-            const back = element("button", "", "Back to the transcription");
-            back.title = "Throw away these lyrics and load what the last run gave: the section tags, "
-                + "or the recognised words.";
+            const back = element("button", "", this.source.back);
+            back.title = this.source.backTitle;
             back.disabled = !this.node.__yue2Lyrics;
             back.addEventListener("click", () => this.backToTags());
             title.append(back);
@@ -705,17 +756,17 @@ class SongEditor {
             return;
         }
 
-        if (this.otherRecording) card.appendChild(element("div", "yue2-hint yue2-warn-hint", OTHER_RECORDING_NOTE));
+        if (this.otherRecording) card.appendChild(element("div", "yue2-hint yue2-warn-hint", this.source.otherNote));
         if (this.lyricsOnly) {
-            card.appendChild(element("div", "yue2-hint", hasSungLines(this.node.__yue2Lyrics) ? RECOGNISED_NOTE : TAGS_NOTE));
+            card.appendChild(element("div", "yue2-hint", hasSungLines(this.node.__yue2Lyrics)
+                ? this.source.wordsNote : this.source.tagsNote));
         }
         card.appendChild(element("div", "yue2-hint", CASE_NOTE));
         this.paintStatus(status);
 
         if (!this.blocks.length) {
             card.appendChild(element("div", "yue2-empty", this.lyricsOnly
-                ? "No lyrics and no section tags yet. Run the node once and the tags of the transcription "
-                    + "appear here, or add a section and write the lyrics now."
+                ? this.source.empty
                 : "No lyrics: the song will be instrumental. Add a section to write some."));
         }
 
@@ -1052,7 +1103,7 @@ function paintSummary(node) {
     const holder = node.__yue2Summary;
     if (!holder) return;
     holder.replaceChildren();
-    if (isTranscribe(node)) {
+    if (sourceTexts(node)) {
         paintLyricsSummary(node, holder);
         return;
     }
@@ -1122,6 +1173,7 @@ function hasSungLines(text) {
 }
 
 function paintLyricsSummary(node, holder) {
+    const texts = sourceTexts(node);
     const row = (...children) => {
         const made = element("div", "yue2-sum-row");
         made.append(...children);
@@ -1146,17 +1198,17 @@ function paintLyricsSummary(node, holder) {
     if (box.score) {
         row(strong("Edited lyrics"), faint(" \u00B7 " + count));
         row(box.words && track && box.words !== track
-            ? element("span", "yue2-sum-warn", "Written for another recording: this recording's own lyrics are sent on instead.")
+            ? element("span", "yue2-sum-warn", texts.otherRow)
             : faint("Sent on instead of the node's own lyrics."));
     } else if (facts.sung > 0) {
-        row(strong("Recognised lyrics"), faint(" \u00b7 " + count));
-        row(faint("Heard in the recording: read them through in Edit lyrics\u2026"));
+        row(strong(texts.wordsHeading), faint(" \u00b7 " + count));
+        row(faint(texts.wordsRow));
     } else if (shown) {
-        row(strong("Section tags"), faint(" \u00B7 " + named + " found in the transcription"));
+        row(strong("Section tags"), faint(" \u00B7 " + named + texts.tagsFound));
         row(faint("Edit lyrics\u2026 to write the words under them."));
     } else {
         row(strong("No section tags yet"));
-        row(faint("Run once, and the tags of the transcription appear here."));
+        row(faint(texts.noTags));
         return;
     }
     holder.appendChild(lyricsPreview(shown));
@@ -1173,10 +1225,11 @@ function resetLyrics(node) {
 
 function install(node) {
     installStyle(EDITOR_STYLE_ID, EDITOR_STYLE);
-    const lyricsOnly = isTranscribe(node);
+    const texts = sourceTexts(node);
+    const lyricsOnly = Boolean(texts);
     const { buttons } = buttonRow(node, "yue2_song_edit", lyricsOnly ? [
-        { label: LYRICS_LABEL, tooltip: LYRICS_TOOLTIP, onClick: () => openEditor(node) },
-        { label: RESET_LYRICS_LABEL, tooltip: RESET_LYRICS_TOOLTIP, onClick: () => resetLyrics(node) },
+        { label: LYRICS_LABEL, tooltip: texts?.lyricsTooltip, onClick: () => openEditor(node) },
+        { label: RESET_LYRICS_LABEL, tooltip: texts?.resetTooltip, onClick: () => resetLyrics(node) },
     ] : [
         { label: EDIT_LABEL, tooltip: EDIT_TOOLTIP, onClick: () => openEditor(node) },
     ]);
@@ -1259,7 +1312,7 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (!NODES.includes(nodeData.name)) return;
 
-        if (nodeData.name === TRANSCRIBE) {
+        if (nodeData.name === TRANSCRIBE || nodeData.name === LOAD_MIDI) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (message) {
                 const result = onExecuted?.apply(this, arguments);

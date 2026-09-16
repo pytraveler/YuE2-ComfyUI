@@ -20,7 +20,7 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from . import devices, edits
+from . import devices, edits, phrasing
 from .constants import (
     ADVANCED_CATEGORY, DEFAULT_LYRICS, DEFAULT_OPTIONS, DEFAULT_STYLE,
     LATENTS_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE, PLANS_TYPE,
@@ -52,7 +52,10 @@ SCORE_TOOLTIP = (
     "still matches the plan, sings the model's own score token for token: the same "
     "song 'YuE2 Generate Song' would have produced from the same seed. An edit made "
     "for other words than the plan's is not sung, and the node says so. A score can "
-    "also come in through a wire, and is then sung as it arrives."
+    "also come in through a wire, and is then sung as it arrives.\n\n"
+    "A score that names no section -- a bare tune, as 'YuE2 Load MIDI' hands one on "
+    "-- has the plan's lyrics laid along it first, as 'YuE2 Generate Song' does, and "
+    "the node says which bars each section is sung on."
 )
 
 LATENTS_TOOLTIP = (
@@ -415,6 +418,12 @@ class YuE2RenderPlan:
         if given and not problem and settings["cot"] == "full" and edits.chordless(given):
             announce(unique_id, [("warn", edits.CHORDLESS)])
         ids, score = _chosen(plan, "" if problem else score_abc)
+        tune_seconds = None
+        if ids is None and score:
+            laid = phrasing.lay(score, plan["lyrics"])
+            if laid is not None:
+                score, tune_seconds = laid.score, laid.seconds
+                announce(unique_id, laid.notices)
         semitones = int(settings.get("transpose") or 0)
         if semitones:
             try:
@@ -429,7 +438,7 @@ class YuE2RenderPlan:
             latents, timing = generate.sing(
                 models, plan["style"], plan["lyrics"], plan["seed"], settings,
                 abc_ids=ids, abc=score, progress=progress, cancelled=interrupted,
-                stages=stages[:2])
+                stages=stages[:2], tune_seconds=tune_seconds)
             waveform, spent = generate.decode(models, latents, progress, interrupted,
                                               stages=stages[2:])
         timing.update(spent)

@@ -69,6 +69,16 @@ describes:
 
 See [YuE2 Transcribe](#yue2-transcribe).
 
+A fourth node sings a tune you already have as a MIDI file, a karaoke file's
+words included:
+
+    [YuE2 Load MIDI]
+      midi  (a .mid, .midi, .kar or .rmi file)
+      -> score_abc  -> [YuE2 Generate Song]  with cot at melody
+      -> lyrics     ->
+
+See [YuE2 Load MIDI](#yue2-load-midi).
+
 ## Contents
 
 - [What you need before installing](#what-you-need-before-installing)
@@ -76,6 +86,7 @@ See [YuE2 Transcribe](#yue2-transcribe).
 - [Example workflows](#example-workflows)
 - [Nodes](#nodes) - [YuE2 Generate Song](#yue2-generate-song) -
   [YuE2 Write Song](#yue2-write-song) - [YuE2 Transcribe](#yue2-transcribe) -
+  [YuE2 Load MIDI](#yue2-load-midi) -
   [YuE2 Options](#yue2-options) - [Staged nodes](#staged-nodes)
 - [Song length](#song-length)
 - [Writing lyrics](#writing-lyrics) -
@@ -116,7 +127,7 @@ live until the server restarts.
 
 ## Example workflows
 
-Six workflows ship with the pack and appear in ComfyUI's template browser
+Eight workflows ship with the pack and appear in ComfyUI's template browser
 (*Workflow -> Browse Templates*) under this node pack's name once it is
 installed. Each is a card of its own and each runs on its own: nothing is
 bypassed on open, and there is no second branch to mute before pressing Run.
@@ -129,9 +140,11 @@ bypassed on open, and there is no second branch to mute before pressing Run.
 | 4 | **The score first** -- write the score, read it, edit it, then sing it | the YuE2 weights |
 | 5 | **Four scores, one song** -- four takes on the same words, chosen by ear | the YuE2 weights |
 | 6 | **One take, both decoders** -- one performance decoded twice | the YuE2 weights and the 0.53 GB legacy decoder |
+| 7 | **Sing a MIDI file** -- a tune you have as MIDI, sung in the style you describe | the YuE2 weights |
+| 8 | **Cover a song** -- a recording's tune and words, sung again in another style | the YuE2 weights, SheetSage2 (1.29 GB), and for the words Qwen3-ASR (3.8 GB) and a 2.7 GB writer |
 
-The first three are the `YuE2` menu. The last three open a run up into its
-stages, which is what `YuE2/Advanced` is for.
+Templates 1 to 3, 7 and 8 use the `YuE2` menu. Templates 4 to 6 open a run up
+into its stages, which is what `YuE2/Advanced` is for.
 
 Every one carries a **Read me first** note: what it does, what it downloads,
 what to set before pressing Run, and where to go next. Every seed is left on
@@ -170,7 +183,10 @@ stages, and releases the VRAM again.
   value the model was released with.
 - `score_abc` -- an edited score for the node to sing instead of writing one,
   filled by `Edit score...` and hidden behind it. Empty, as it starts, the node
-  works exactly as before. See [The score editor](#the-score-editor).
+  works exactly as before. See [The score editor](#the-score-editor). A score
+  wired in is sung as it arrives, unless it names no section -- a bare tune, as
+  `YuE2 Load MIDI` hands one on -- when the lyrics are laid along it first; see
+  [Words on a MIDI tune](#words-on-a-midi-tune).
 
 Progress is reported per stage on the node, and Cancel stops a run in under a
 second -- between tokens during generation, between tiles during decoding.
@@ -221,11 +237,12 @@ a summary of the score they will sing. The button opens a window over the
 canvas with three views of one score, and nothing is written to the node until
 Apply.
 
-<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song. On top the Piano roll, Notes and ABC tabs, with Key Dm, 4/4, 66 BPM, 29 bars, 1:45 on the right; under them Play and From start, the voice and instrument boxes ticked and chords not, the Voice part list, an Eighth notes grid with zoom buttons, Whole song, Undo and Redo. The roll shows the intro, bars 1 to 8, the chords Dm, C6, Bb, F, C/E, Dm7 and Am7/C in the lane under the bar numbers, and the instrument part drawn faintly. Under the roll the line No changes. This is the score as it came in, the note on what YuE2 does with an edit, Back to the model's score on the left, and Cancel and Apply on the right">
+<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- The MIDI file, the name of the YuE2 Load MIDI node in template 7. On top the Piano roll, Notes and ABC tabs, with Key Gm, 4/4, 97 BPM, 12 bars, 0:29 on the right; under them Play and From start, the voice and instrument boxes ticked and chords not, the Voice part list, an Eighth notes grid with zoom buttons, Whole song, Undo and Redo. The roll shows bars 5 to 12 of one unnamed section, the chords Cm, Gsus4, Cm, Cm, Gsus4, Cm, Gm7, Eb, Gm7 and Gm in the lane under the bar numbers, the green notes of the voice with their names, and a keyboard from A1 to C7 with every white key named and the Cs in bold. Under the roll the line No changes. This is the score as it came in, the note on how the file's score is written, Back to the file's score and Save as MIDI... on the left, and Cancel and Apply on the right">
 
-*An instrumental piece in D minor: the voice part, open for editing, is empty,
-and the instrument part shows faintly behind it. 1:45 is how long the score
-runs; with a lower `max_seconds` the singing stops sooner.*
+*The same window on `YuE2 Load MIDI`, for a MIDI file read with `mode` at
+`full`: the voice line in green and, in the lane under the bar numbers, the
+chords guessed from what the file's other tracks play. A click in that lane
+types a chord or changes one.*
 
 On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
 run, so run it once first. The next run sings the edit instead of writing a
@@ -235,11 +252,12 @@ node feeding it, so there is a score to edit before anything is sung. That is
 why `YuE2 Plan` and `YuE2 Select Plan` are output nodes: ComfyUI runs a node on
 its own only when it is one.
 
-- **Piano roll**, in the look most music software shares: green notes with
-  their names on them, a blue-grey grid and a keyboard down the side. The voice
-  part and the instrument part are edited one at a time, with the other drawn
-  faintly behind; the sections run along the top, and a chord lane sits under
-  the bar numbers. A click draws a note, a drag moves it, and a right-click or
+- **Piano roll**, in the look most music software shares: green notes
+  with their names on them, a blue-grey grid and a keyboard down the
+  side with every white key named. The voice part and the instrument
+  part are edited one at a time, with the other drawn faintly behind;
+  the sections run along the top, and a chord lane sits under the bar
+  numbers. A click draws a note, a drag moves it, and a right-click or
   Delete removes it. The right edge stretches a note, into the next one too,
   which then starts later and keeps its end. Shift or Ctrl with a click or a
   drag selects several, and selected notes turn red; the arrow keys move them
@@ -310,6 +328,12 @@ sample for sample.
 And one edit made in the finished window: in a short piano pop song, one note
 in each of three phrases raised from D to A. All three left the old D; two
 landed within a semitone of the new A, the third a tone short of it.
+
+**Save as MIDI...** downloads the score as it stands in the window, edits
+included: the voice, the instrument line and the chord symbols held as chords,
+each on a track of its own, with the tempo, meters, keys and sections. Loaded
+into `YuE2 Load MIDI`, the file gives the same notes in the same bars at the
+same tempo -- checked on sixteen of the model's and SheetSage2's scores.
 
 Every edit is a new take of the whole song, not a patch on the old recording.
 The window is in English only.
@@ -493,6 +517,127 @@ note F1 of 0.96 to 0.99 counted in beats, and on three real tracks covered with
 are clean mixes; on an arbitrary recording, expect the vocal F1 of 82.5 percent
 that the model card reports for RWC-Pop. Recognition runs its decoding step as a
 CUDA graph, and inside ComfyUI it heard a 190-second song in 5.2 s.
+
+### YuE2 Load MIDI
+
+A MIDI file in; a score YuE2 can sing and its lyrics out. Where
+`YuE2 Transcribe` listens to a recording, this node reads the notes a MIDI file
+already holds -- from a sequencer, a karaoke collection or a notation program --
+so nothing is downloaded and no note has to be heard.
+
+![YuE2 Load MIDI, titled The MIDI file as in template 7, after a 0.017 s run. Inputs score_abc and lyrics; the score_abc output wired on. Widgets: midi with a file chosen, mode full, vocal_track auto, instrument_track auto, without_sections true. Under them the Choose MIDI file... button and the list of tracks: 12 bars, 97 BPM, 4/4, Key Gm, 0:29, voice down an octave; 1 Track 1, Brass, 78 notes, G3-G6, voice (auto: highest line); 2 Bass, Bass, 60 notes, F1-G#2; 3 Drumkit, Drums, 48 notes, drums, not sung. Then the Edit lyrics... and Edit score... buttons. The lyrics summary: Section tags, 1 section found in the file, Edit lyrics... to write the words under them, [Verse]. The score summary: The file's score, Key Gm, 4/4, 97 BPM, 12 bars, Written from the MIDI file, the same on every run. Edit score... to change notes. Under them the caption 12 bars at 97 BPM, 30 seconds](docs/node_midi_file.png)
+
+*A file of three tracks -- a brass line, a bass and drums -- read in 0.017 s.
+The list shows why the voice took track 1: it is the highest line, sung an
+octave lower than the file plays it; the drums are not sung. The file has no
+words, so the lyrics are one section tag to write them under.*
+
+**Outputs**
+
+| Name | Contents |
+|---|---|
+| `score_abc` | The score written from the file -- the vocal line from one track, the instrumental line from another, bars, tempo, key and sections, and chord symbols too when `mode` is `full` -- or the edit kept on the node; its section comments are left out while `without_sections` is on |
+| `lyrics` | A karaoke file's words under their section tags, or the section tags alone to write words under, or the edited lyrics kept on the node |
+
+**Inputs**
+
+- `midi` -- a `.mid`, `.midi`, `.kar` or `.rmi` file in ComfyUI's `input`
+  folder. `Choose MIDI file...` on the node uploads one there, and so does
+  dropping the file on the node.
+- `mode` -- `melody` writes the two lines without chords, for `cot` at
+  `melody`. `full` adds chord symbols guessed from what the file's tracks play
+  together, for `cot` at `full`; they are a guess, so read them over in
+  `Edit score...`.
+- `vocal_track` -- the track the voice sings, by its number in the list on the
+  node. `auto` takes the track a karaoke file's words fall on, then a track
+  named as the voice or the melody, then the highest line that is not a bass.
+- `instrument_track` -- the track for the score's instrumental line, by number,
+  or `none`. `auto` takes a track named for it, then the busiest remaining
+  track above G3 that is neither a bass nor mostly chords, or leaves the line
+  empty.
+- `score_abc`, `lyrics` -- the edits kept on the node, filled by the editors, as
+  on `YuE2 Transcribe`.
+- `without_sections` -- on, as it starts, the score goes out without section
+  comments, as a bare tune, and the singing node lays its lyrics along it; see
+  [Words on a MIDI tune](#words-on-a-midi-tune). Off, the score keeps the
+  sections the file names -- its markers, or a karaoke file's paragraphs -- or
+  is one verse, and is sung as it arrives: for a karaoke file sung with its own
+  words.
+
+**The list on the node** names every track that plays -- its number, name,
+instrument family, how many notes and their range -- and shows which track the
+voice takes, which the instrument takes and why, before anything runs. A choice
+that cannot be sung says why in the same place: drums have no tune, and a
+number the file does not have is answered with the numbers it has.
+
+**From notes to a score.** A score keeps one tempo, so a file's changing tempo
+is averaged, and the node says so. Bars come from the file's meters. The grid is
+sixteenths when every note starts and ends on one and thirty-seconds when nine
+in ten do; a file played in by hand is rounded to sixteenths, with a notice.
+Each line of the score holds one note at a time, so of notes struck together
+the top one is kept, and the node says how many it dropped. A line whose middle
+pitch lies outside C4 to A#5 is moved by whole octaves, since YuE2 sings the
+octave it is given and its own scores keep the voice there. The key comes from
+the file's key signature when it fits the notes, and is estimated from the
+notes otherwise. Markers named after sections -- `Verse`, `Chorus 2` -- become
+the score's sections.
+
+**Karaoke files.** The words of a `.kar` file, or of any MIDI file with lyric
+events, become the `lyrics` output, a line for each line of the file and a tag
+for each paragraph; a paragraph sung twice is taken for the chorus. Russian
+files in Windows-1251 are read as Russian.
+
+**The editors.** As on `YuE2 Transcribe`: `Edit lyrics...` and `Edit score...`
+open the editors on what the file gave, and an edit belongs to the file it was
+made for -- an edited score to its `mode` and tracks as well.
+
+**Measured.** Reading a file took 3 to 140 ms on the two files tried here, the
+GTA San Andreas intro and the Pirates of the Caribbean theme, both instrumental
+arrangements. Sung through `YuE2 Generate Song` and heard back by SheetSage2,
+the GTA song kept all 39 notes of the voice line in order and at the pitch
+written, and the Pirates songs kept 76 percent of the theme's 296 notes with
+`cot` at `melody` and 87 percent at `full`; against another song's melody the
+same measure gives 10 percent. How the words fare is below.
+
+#### Words on a MIDI tune
+
+A MIDI file has a tune and no words. YuE2 learned from songs whose words and
+score belong together -- a line of words on a phrase with about as many notes as
+the line has syllables, and a breath before the next -- and words written for
+something else, sung over a tune as the file has it, come out as something
+else. With the template's eight lines, 0 of 46 words were heard in order over
+the Pirates of the Caribbean theme, and over the GTA San Andreas intro the
+chorus fell on a riff of three notes a bar and was lost.
+
+So when `YuE2 Generate Song` or `YuE2 Render Plan` is given a score that names
+no section -- which is how `YuE2 Load MIDI` hands one on -- the lyrics are laid
+along the tune before it is sung:
+
+- The tune is split into phrases where a singer breathes -- at rests of an
+  eighth note or more and after held notes -- and at its bar lines.
+- Each line takes the phrase whose notes come nearest its syllables, at a pace
+  that can be sung. A riff with no room for a line is passed over, the tune
+  comes round again when the words outlast it, and a chorus sung twice is sung
+  on the same bars.
+- Silent bars before the first phrase stay as the intro, and the score ends one
+  empty bar after the last line. With `max_seconds` at `0` the song is stopped a
+  little past that -- the tune's length times 1.1, plus 2 seconds -- rather than
+  at 12 seconds a line, since over a tune that does not fit the words the model
+  runs on in words of its own.
+
+The node says which bars each section is sung on and which bars of the tune are
+not sung, and warns when the lines have half again as many notes as syllables,
+or the other way round. Syllables are counted from the letters, with the common
+words songs shorten, such as `every`, counted as sung.
+
+Measured with Qwen3-ASR listening to template 7 as it ships, eight seeds each:
+laid along the GTA intro the words were heard 83 to 100 percent in order, 97 on
+average, with a median word error rate of 0.02 -- as clearly as over a score the
+model writes for the same words itself, 94 to 100 percent. Laid along the
+Pirates theme they were heard 22 to 98 percent, 73 on average, with a median
+error rate of 0.50, and every song ended with the tune, at 18 to 23 seconds,
+where without the ceiling five of the eight had run on to as much as 85: a theme
+that fast, with no breaths, is hard to sing words to, and it gets the warning.
 
 ### YuE2 Options
 

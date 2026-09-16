@@ -3,8 +3,9 @@
 The score's bars come from the beats themselves: a bar runs from one downbeat
 to the next, a first span before any downbeat is a pickup, and a last span
 after the final downbeat is a partial bar. Every beat is split into four
-subbeats, and everything else -- notes, chords, keys, section labels -- is
-snapped to that grid by the midpoints between its points. The unit length is
+subbeats -- the count a transcription uses; a MIDI file asks for its own --
+and everything else -- notes, chords, keys, section labels -- is snapped to
+that grid by the midpoints between its points. The unit length is
 the smallest note the grid needs in every meter present, and the tempo is the
 average over the whole grid.
 
@@ -83,10 +84,10 @@ class Bar:
     """A bar as a span of beats, the meter it has, and the meter it is written in."""
 
     __slots__ = ("index", "start", "end", "numerator", "denominator", "pickup", "partial",
-                 "written_numerator", "written_denominator", "pad_before")
+                 "written_numerator", "written_denominator", "pad_before", "subbeats")
 
     def __init__(self, index, start, end, numerator, denominator, pickup=False, partial=False,
-                 written_numerator=None, written_denominator=None, pad_before=False):
+                 written_numerator=None, written_denominator=None, pad_before=False, subbeats=SUBBEATS):
         self.index = index
         self.start = start
         self.end = end
@@ -97,14 +98,15 @@ class Bar:
         self.written_numerator = written_numerator
         self.written_denominator = written_denominator
         self.pad_before = pad_before
+        self.subbeats = subbeats
 
     @property
     def start_t(self):
-        return self.start * SUBBEATS
+        return self.start * self.subbeats
 
     @property
     def end_t(self):
-        return self.end * SUBBEATS
+        return self.end * self.subbeats
 
     @property
     def abc_numerator(self):
@@ -231,8 +233,8 @@ def _first_most_common(values: list) -> int:
     return next(value for value in values if counts[value] == top)
 
 
-def infer_bars(beats: list) -> list:
-    """Bars from the downbeats, with the meter each one actually has."""
+def infer_bars(beats: list, subbeats: int = SUBBEATS) -> list:
+    """Bars from the downbeats, with the meter each one actually has, each beat split into ``subbeats``."""
     downbeats = [i for i, beat in enumerate(beats) if beat.number == 1]
     if not downbeats:
         raise NotationError("no beat is numbered 1, so no bar has a downbeat")
@@ -260,7 +262,7 @@ def infer_bars(beats: list) -> list:
         pad_final = (partial and len(set(numerators)) == 1
                      and all(value == denominator for value in denominators) and declared >= count)
         bars.append(Bar(index, start, end, count, denominator, pickup, partial,
-                        written_numerator=declared if pad_final else count))
+                        written_numerator=declared if pad_final else count, subbeats=subbeats))
     if len(bars) >= 2:
         first, second = bars[0], bars[1]
         if first.numerator / first.denominator < second.abc_numerator / second.abc_denominator:
@@ -273,7 +275,8 @@ def infer_bars(beats: list) -> list:
 class Grid:
     """The subbeat grid: when each point sounds, its quarter-note position, and its beat's denominator."""
 
-    def __init__(self, beats: list, bars: list):
+    def __init__(self, beats: list, bars: list, subbeats: int = SUBBEATS):
+        self.subbeats = subbeats
         interval_denominators = [0] * (len(beats) - 1)
         for bar in bars:
             for i in range(bar.start, bar.end):
@@ -286,12 +289,12 @@ class Grid:
         quarter = 0.0
         for i in range(len(beats) - 1):
             start, end = beats[i].time, beats[i + 1].time
-            step = (end - start) / SUBBEATS
+            step = (end - start) / subbeats
             denominator = interval_denominators[i]
-            for k in range(SUBBEATS):
+            for k in range(subbeats):
                 self.times.append(float(k) * step + start)
                 self.denominators.append(denominator)
-                quarter += 4.0 / denominator / SUBBEATS
+                quarter += 4.0 / denominator / subbeats
                 self.quarters.append(quarter)
         self.times.append(beats[-1].time)
         self.denominators.append(interval_denominators[-1])
@@ -347,6 +350,7 @@ class Score:
     """Everything the writer reads: bars, grid, per-point keys and chords, section starts, voices."""
 
     def __init__(self, beats, bars, grid, keys, chords, sections, voices):
+        self.subbeats = grid.subbeats
         self.beats = beats
         self.bars = bars
         self.grid = grid
@@ -370,7 +374,8 @@ def _parse_rows(rows: list, what: str, check=None) -> list:
     return parsed
 
 
-def score(beat_rows, chord_rows, key_rows, structure_rows, notes, melody_only: bool = False) -> Score:
+def score(beat_rows, chord_rows, key_rows, structure_rows, notes, melody_only: bool = False,
+          subbeats: int = SUBBEATS) -> Score:
     """The score these rows describe; notes are ``[start, end, pitch, track]``, track 0 the vocal."""
     beats = []
     for row in beat_rows:
@@ -391,8 +396,8 @@ def score(beat_rows, chord_rows, key_rows, structure_rows, notes, melody_only: b
     chords = [] if melody_only else _parse_rows(chord_rows, "chord")
     for _start, _end, chord in chords:
         chord_text(chord)
-    bars = infer_bars(beats)
-    grid = Grid(beats, bars)
+    bars = infer_bars(beats, subbeats)
+    grid = Grid(beats, bars, subbeats)
     voices = {name: _voice([(s, e, p) for s, e, p, track in notes if track == index], grid, name)
               for index, name in enumerate(VOICES)}
     key_values = _fill(keys, grid, keys[0][2])
@@ -403,7 +408,7 @@ def score(beat_rows, chord_rows, key_rows, structure_rows, notes, melody_only: b
 
 def unit_denominator(score_: Score) -> int:
     """The ABC unit length that expresses every subbeat of every meter exactly."""
-    values = [denominator * SUBBEATS for bar in score_.bars
+    values = [denominator * score_.subbeats for bar in score_.bars
               for denominator in (bar.denominator, bar.abc_denominator)]
     denominator = math.lcm(*values)
     if denominator > 1024:
@@ -414,7 +419,7 @@ def unit_denominator(score_: Score) -> int:
 def _units(score_: Score, start: int, end: int, unit: int) -> int:
     total = 0
     for denominator in score_.grid.denominators[start:end]:
-        divisor = denominator * SUBBEATS
+        divisor = denominator * score_.subbeats
         if unit % divisor:
             raise NotationError("a unit note of 1/{} does not divide a 1/{} subbeat".format(unit, divisor))
         total += unit // divisor
@@ -613,7 +618,7 @@ def write(score_: Score) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build(rows: dict, melody_only: bool = False) -> str:
+def build(rows: dict, melody_only: bool = False, subbeats: int = SUBBEATS) -> str:
     """ABC from the rows ``events.score_rows`` returns."""
     return write(score(rows["beats"], rows["chords"], rows["keys"], rows["structures"],
-                       rows["notes"], melody_only))
+                       rows["notes"], melody_only, subbeats))

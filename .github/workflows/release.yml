@@ -104,7 +104,7 @@ jobs:
                         yue2_comfy/routes.py yue2_comfy/tokens.py \
                         yue2_comfy/placement.py yue2_comfy/transpose.py \
                         yue2_comfy/notation.py yue2_comfy/edits.py \
-                        yue2_comfy/memory.py \
+                        yue2_comfy/memory.py yue2_comfy/phrasing.py \
                         yue2_comfy/asr/__init__.py yue2_comfy/asr/align.py \
                         yue2_comfy/asr/decode.py yue2_comfy/asr/layout.py \
                         yue2_comfy/asr/model.py yue2_comfy/asr/network.py \
@@ -114,11 +114,16 @@ jobs:
                         yue2_comfy/sheetsage/events.py yue2_comfy/sheetsage/abc_rebuild.py \
                         yue2_comfy/sheetsage/network.py yue2_comfy/sheetsage/model.py \
                         yue2_comfy/sheetsage/runtime.py yue2_comfy/sheetsage/sections.py \
-                        yue2_comfy/transcribe.py \
+                        yue2_comfy/transcribe.py yue2_comfy/load_midi.py \
+                        yue2_comfy/midi/__init__.py yue2_comfy/midi/smf.py \
+                        yue2_comfy/midi/tracks.py yue2_comfy/midi/score.py \
+                        yue2_comfy/midi/chords.py yue2_comfy/midi/karaoke.py \
+                        yue2_comfy/midi/export.py \
                         tests/data/sheetsage_pack.json \
                         web/js/yue2_editor.js web/js/yue2_sheet.js \
                         web/js/yue2_controls.js web/js/yue2_score.js \
                         web/js/yue2_roll.js web/js/yue2_notices.js \
+                        web/js/yue2_midi.js \
                         web/js/vendor/abcjs-basic-min.cjs \
                         web/js/vendor/abcjs-LICENSE.md \
                         yue2_comfy/vendor/yue2/protocol.py \
@@ -134,7 +139,9 @@ jobs:
                       "3 - A longer song" \
                       "4 - The score first" \
                       "5 - Four scores, one song" \
-                      "6 - One take, both decoders"; do
+                      "6 - One take, both decoders" \
+                      "7 - Sing a MIDI file" \
+                      "8 - Cover a song"; do
             for needed in "example_workflows/$stem.json" "example_workflows/$stem.jpg"; do
               echo "$listed" | grep -qxF "$PREFIX/$needed" || {
                 echo "::error::$needed is missing from $ARCHIVE"

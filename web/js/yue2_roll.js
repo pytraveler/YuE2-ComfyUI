@@ -421,3 +421,49 @@ export class History {
         return this.undone.length > 0;
     }
 }
+
+export const MIDI_EXTENSIONS = [".mid", ".midi", ".kar", ".rmi"];
+
+export const PART_REASONS = {
+    karaoke: "karaoke words", name: "by name", highest: "highest line", busiest: "busiest track",
+};
+
+export function isMidiFile(name) {
+    const lower = String(name ?? "").toLowerCase();
+    return MIDI_EXTENSIONS.some((ending) => lower.endsWith(ending));
+}
+
+export function midiFileName(title) {
+    const clean = String(title ?? "").replace(/[^\p{L}\p{N} _().-]+/gu, "_").replace(/\s+/g, " ").trim()
+        .replace(/^[._ ]+|[._ ]+$/g, "").slice(0, 80);
+    return (clean || "YuE2 score") + ".mid";
+}
+
+export function partLine(part) {
+    const pieces = [part.number + " " + (part.name || part.family)];
+    if (part.name && part.family) pieces.push(part.family);
+    pieces.push(part.notes + (part.notes === 1 ? " note" : " notes"));
+    if (!part.drums) pieces.push(noteName(part.low) + "\u2013" + noteName(part.high));
+    return pieces.join(" \u00b7 ");
+}
+
+export function partRole(part) {
+    if (part.drums) return "drums, not sung";
+    if (!part.role) return "";
+    const why = PART_REASONS[part.why];
+    return part.role + (why ? " (auto: " + why + ")" : "");
+}
+
+export function octaveMove(semitones) {
+    const octaves = Math.abs(Math.round(Number(semitones) / 12));
+    if (!octaves) return "";
+    return (semitones > 0 ? "up " : "down ") + (octaves === 1 ? "an octave" : octaves + " octaves");
+}
+
+export function midiFacts(facts) {
+    if (!facts) return "";
+    const moved = octaveMove(facts.voice_shift);
+    return [facts.bars + (facts.bars === 1 ? " bar" : " bars"), facts.bpm + " BPM", facts.meter,
+        facts.key && "Key " + facts.key, clock(facts.seconds), moved && "voice " + moved,
+        facts.karaoke && "karaoke words"].filter(Boolean).join(" \u00b7 ");
+}

@@ -121,13 +121,16 @@ def mismatch(edit, style, lyrics, cot, instead) -> str:
 
 
 LYRICS_UI = "yue2_lyrics"
-"""Where 'YuE2 Transcribe' hands the lyrics it would output -- its section tags -- to the browser."""
+"""Where 'YuE2 Transcribe' and 'YuE2 Load MIDI' hand the lyrics they would output to the browser."""
 
 TRACK_UI = "yue2_track"
-"""Where 'YuE2 Transcribe' hands over the mark of the recording it transcribed."""
+"""Where 'YuE2 Transcribe' hands over the mark of the recording it transcribed, and 'YuE2 Load MIDI' that of its file."""
 
 MARKS_UI = "yue2_marks"
-"""Where 'YuE2 Transcribe' hands over the score marks of that recording in every mode, so the browser need not hash."""
+"""Where those two nodes hand over the score marks of that recording or file in every mode, so the browser need not hash."""
+
+MIDI_UI = "yue2_midi"
+"""Where 'YuE2 Load MIDI' hands over the file's tracks and the facts of the score written from them, for its list."""
 
 
 def audio_mark(data: bytes, rate) -> str:
@@ -145,6 +148,17 @@ def audio_mark(data: bytes, rate) -> str:
 def track_mark(audio: str, mode: str) -> str:
     """The mark of a score transcribed from a recording in one mode: melody alone, or with chords."""
     return hashlib.sha256(json.dumps([str(audio), str(mode)]).encode("utf-8")).hexdigest()[:16]
+
+
+def file_mark(data: bytes) -> str:
+    """Sixteen hex digits that name a file by its bytes: the MIDI loader's edits belong to a file, not a name."""
+    return hashlib.sha256(bytes(data)).hexdigest()[:16]
+
+
+def midi_mark(file: str, mode: str, vocal, instrument) -> str:
+    """The mark of a score written from a file in one mode, with one choice of voice and instrument tracks."""
+    payload = json.dumps([str(file), str(mode), str(vocal), str(instrument)])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 CHORDLESS = (

@@ -4,7 +4,7 @@ import contextlib
 
 import pytest
 
-from yue2_comfy import constants, edits, nodes
+from yue2_comfy import constants, edits, nodes, phrasing
 
 
 def node_classes():
@@ -27,13 +27,14 @@ def test_the_menu_offers_four_nodes_and_hides_the_rest_one_level_down():
     staged four and their selector earn their place by being one click further
     in, so demoting a headline node or promoting a staged one has to be done on
     purpose rather than by editing a class and not noticing. Transcribe is a
-    headline node: covering a song is a thing people come for.
+    headline node: covering a song is a thing people come for. So is Load
+    MIDI, the other way in for a tune someone already has.
     """
     plain = {name for name, cls in node_classes()
              if cls.CATEGORY == constants.CATEGORY}
     advanced = {name for name, cls in node_classes()
                 if cls.CATEGORY == constants.ADVANCED_CATEGORY}
-    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe"}
+    assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe", "YuE2LoadMidi"}
     assert advanced == set(nodes.STAGED_CLASSES)
 
 
@@ -210,8 +211,11 @@ def stub_run(monkeypatch):
     def session(settings, unique_id, progress):
         yield FakeModels()
 
-    def run(models, style, lyrics, seed, settings, progress=None, cancelled=None, edited=None):
+    def run(models, style, lyrics, seed, settings, progress=None, cancelled=None, edited=None,
+            tune_seconds=None):
         calls.append({"edited": edited, "cot": settings["cot"]})
+        if tune_seconds is not None:
+            calls[-1]["tune_seconds"] = tune_seconds
         sung = edited or WRITTEN
         return "waveform", sung, "" if edited else WRITTEN, fake_timing(3.0)
 
@@ -284,6 +288,33 @@ def test_a_melody_only_score_sung_under_cot_full_is_sung_with_a_warning(monkeypa
     sing_with(MELODY_ONLY, options=dict(constants.DEFAULT_OPTIONS, cot="full"))
     assert calls == [{"edited": MELODY_ONLY, "cot": "full"}]
     assert said == [[("warn", edits.CHORDLESS)]]
+
+
+BARE_TUNE = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=100\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+             'V: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\nV: Vocal\nz2C2D2E2F2G2A2B2|\nV: Ins\nZ|\n')
+
+
+def test_a_bare_tune_wired_in_is_sung_with_the_lyrics_laid_along_it(monkeypatch):
+    """A MIDI file's tune names no section; the words decide them, and the node says on which bars."""
+    calls, said = stub_run(monkeypatch)
+    out = sing_with(BARE_TUNE, lyrics="[Chorus]\nla la la la la la la",
+                    options=dict(constants.DEFAULT_OPTIONS, cot="melody"))
+    sung = calls[0]["edited"]
+    laid = phrasing.lay(BARE_TUNE, "[Chorus]\nla la la la la la la")
+    assert sung == laid.score
+    assert calls[0]["tune_seconds"] == laid.seconds == 4.8
+    assert "% chorus" in sung.splitlines()
+    assert [level for level, _message in said[0]] == ["notice"]
+    assert "[Chorus] on bar 1" in said[0][0][1]
+    assert out["result"][1] == sung
+
+
+def test_a_score_that_names_its_sections_is_sung_as_it_arrives(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    named = BARE_TUNE.replace("K:C\n", "K:C\n% verse\n")
+    sing_with(named, lyrics="[Chorus]\nla la la la la la la", options=dict(constants.DEFAULT_OPTIONS, cot="melody"))
+    assert calls[0]["edited"] == named.strip()
+    assert said == []
 
 
 def test_a_melody_only_score_under_cot_melody_says_nothing(monkeypatch):

@@ -1,4 +1,4 @@
-"""HTTP routes behind the song editor's and the score editor's windows.
+"""HTTP routes behind the song editor's and the score editor's windows, and the MIDI node's list.
 
 Registered on import. A failure here must never stop the nodes from loading --
 both editors are conveniences on top of widgets that work without them -- so
@@ -91,6 +91,50 @@ def answer_score_write(body) -> tuple:
         return _score_problem(error), 200
 
 
+def answer_midi_tracks(body) -> tuple:
+    """``(payload, status)`` for 'YuE2 Load MIDI' asking what a file in the input folder holds.
+
+    Asked before any run, so the list on the node names the tracks while they
+    are still being chosen. A file that cannot be read, or a choice of tracks
+    that cannot be sung, is 200 with ``ok: false`` and the reason -- with the
+    tracks, when the file itself could be read.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("name"), str):
+        return {"ok": False, "error": "Send a JSON object with the file's name as 'name'."}, 400
+
+    from . import load_midi
+
+    choice = [str(body.get(key) or default)
+              for key, default in (("mode", "melody"), ("vocal_track", "auto"), ("instrument_track", "auto"))]
+    try:
+        return load_midi.summary(body["name"], *choice), 200
+    except (OSError, ValueError) as error:
+        return {"ok": False, "error": str(error), "parts": []}, 200
+    except Exception as error:  # noqa: BLE001 - the node shows what went wrong
+        log.warning("[yue2_comfy.routes] reading a MIDI file failed: %s", error, exc_info=True)
+        return {"ok": False, "parts": [],
+                "error": "Reading the file hit an error it did not expect: {}".format(error)}, 200
+
+
+def answer_score_midi(body) -> tuple:
+    """``(payload, status)`` for the score editor saving a score as a MIDI file, handed back as base64."""
+    if not isinstance(body, dict) or not isinstance(body.get("abc"), str):
+        return {"ok": False, "error": "Send a JSON object with the score as 'abc'."}, 400
+    if len(body["abc"]) > LONGEST:
+        return {"ok": False, "error": "That is far longer than any score."}, 413
+
+    import base64
+
+    from . import edits
+    from .midi import export
+
+    try:
+        data = export.midi_of(edits.read(body["abc"]).score)
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        return _score_problem(error), 200
+    return {"ok": True, "data": base64.b64encode(data).decode("ascii")}, 200
+
+
 def register() -> None:
     from aiohttp import web
     from server import PromptServer
@@ -113,6 +157,18 @@ def register() -> None:
     async def score_write(request):
         """Edited notes written back into the score."""
         payload, status = await asyncio.to_thread(answer_score_write, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/score/midi")
+    async def score_midi(request):
+        """The score as a MIDI file, for 'Save as MIDI...'."""
+        payload, status = await asyncio.to_thread(answer_score_midi, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/midi/tracks")
+    async def midi_tracks(request):
+        """What a MIDI file in the input folder holds, for the list on 'YuE2 Load MIDI'."""
+        payload, status = await asyncio.to_thread(answer_midi_tracks, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/tokens")

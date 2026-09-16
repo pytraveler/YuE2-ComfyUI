@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 
-from . import devices, edits, transpose
+from . import devices, edits, phrasing, transpose
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
@@ -24,6 +24,7 @@ from .constants import (
 )
 from .progress import (NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
+from .load_midi import MIDI_CLASSES, MIDI_NAMES
 from .staged import (STAGED_CLASSES, STAGED_NAMES, resolve, session, words)
 from .transcribe import TRANSCRIBE_CLASSES, TRANSCRIBE_NAMES
 
@@ -285,7 +286,12 @@ EDITED_SCORE_TOOLTIP = (
     "again. The edit belongs to the "
     "style and lyrics it was made for -- with other words the node writes a new "
     "score and says so -- while a new seed sings the same edit as a new take. A "
-    "score wired in is sung as it arrives."
+    "score wired in is sung as it arrives.\n\n"
+    "A score that names no section -- a bare tune, as 'YuE2 Load MIDI' hands one on "
+    "-- has the lyrics laid along it first: each line on a phrase with about as many "
+    "notes as the line has syllables, the tune repeated when the words outlast it, "
+    "and the song ending one bar after the last line. The node says which bars "
+    "each section is sung on."
 )
 
 GENERATE_INSTEAD = "the model wrote a new score for these words"
@@ -341,16 +347,23 @@ class YuE2GenerateSong:
         if problem:
             announce(unique_id, [("warn", problem)])
         edited = edit.score if edit.score and not problem else None
+        tune_seconds = None
+        if edited:
+            laid = phrasing.lay(edited, lyrics)
+            if laid is not None:
+                edited, tune_seconds = laid.score, laid.seconds
+                announce(unique_id, laid.notices)
         if edited and settings["cot"] == "full" and edits.chordless(edited):
             announce(unique_id, [("warn", edits.CHORDLESS)])
         if edited:
-            log.info("[yue2_comfy] singing the edited score kept on the node; "
-                     "no score is written this run")
+            log.info("[yue2_comfy] singing the score given to the node, kept on it or "
+                     "wired in; no score is written this run")
 
         with session(settings, unique_id, progress) as models:
             waveform, score, written, timing = generate.run(
                 models, style, lyrics, seed, settings,
                 progress=progress, cancelled=interrupted, edited=edited,
+                tune_seconds=tune_seconds,
             )
 
         log.info(
@@ -493,6 +506,7 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_CLASS_MAPPINGS.update(STAGED_CLASSES)
 NODE_CLASS_MAPPINGS.update(TRANSCRIBE_CLASSES)
+NODE_CLASS_MAPPINGS.update(MIDI_CLASSES)
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
@@ -501,6 +515,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS.update(STAGED_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(TRANSCRIBE_NAMES)
+NODE_DISPLAY_NAME_MAPPINGS.update(MIDI_NAMES)
 """One registry, so that whatever reads this module sees every node.
 
 The release workflow and the tests both import these two names to check that

@@ -7,6 +7,61 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.6.0 - 2026-09-16
+
+### Added
+
+- **`YuE2 Load MIDI`: a song from a MIDI file.** A new node reads a `.mid`,
+  `.midi`, `.kar` or `.rmi` file from ComfyUI's `input` folder -- uploaded with
+  its `Choose MIDI file...` button or dropped on the node -- and writes it as a
+  score YuE2 sings from: the vocal line from one track and the instrumental line
+  from another, chosen by number or left to the node, which lists every track
+  and the one each line takes before anything runs. Wired into
+  `YuE2 Generate Song` with `cot` at `melody`, the tune is sung in whatever style
+  the style line describes; sung from two files and heard back, the songs kept
+  76 to 100 percent of the melody's notes in order. With `mode` at `full`, chord
+  symbols are guessed from what the file's tracks play together. A karaoke
+  file's words become the `lyrics` output under section tags, a paragraph sung
+  twice taken for the chorus. The score and lyrics editors sit on the node as
+  they do on `YuE2 Transcribe`, and nothing is downloaded.
+- **Words laid along a bare tune.** `YuE2 Generate Song` and `YuE2 Render Plan`
+  lay the lyrics along a score that names no section -- which is how
+  `YuE2 Load MIDI` hands one on, unless its `without_sections` switch is off --
+  before singing it: each line on a phrase with about as many notes as it has
+  syllables, riffs passed over, the tune repeated when the words outlast it, a
+  chorus sung twice on the same bars, and the song stopped shortly after the
+  tune ends. Sung over a MIDI tune as it stood, the template's words were lost,
+  0 of 46 heard over the Pirates of the Caribbean theme; laid along the GTA San
+  Andreas intro they were heard 97 percent in order on average over eight seeds,
+  as clearly as over a score the model writes itself.
+  The node says which bars each section is sung on, and warns when a tune has
+  far more notes than the words have syllables.
+- **Save as MIDI.** The score editor saves the score as it stands in the window,
+  edits included, as a MIDI file: the voice, the instrument line and the chords
+  on tracks of their own, with the tempo, meters, keys and sections. Loaded back
+  into `YuE2 Load MIDI`, it gives the same notes in the same bars.
+- **Two templates.** `7 - Sing a MIDI file` sings a MIDI file, and
+  `8 - Cover a song` covers a recording with its own words, recognised.
+
+### Changed
+
+- **Brighter notes on the piano roll, and every white key named.** The notes
+  are drawn brighter, with a dark outline and their names in bold, so they
+  stand out from the grid. The keyboard names every white key -- C4, D4, E4 and
+  on -- where it named only the Cs, which stay in bold.
+
+### Fixed
+
+- **The piano roll was drawn blurred.** It was drawn two pixels wider and taller
+  than the space it sits in and shrunk back by the browser, which smeared every
+  line and letter over the pixels next to it and drew notes near the right and
+  bottom edges up to two pixels from where a click finds them. It is drawn pixel
+  for pixel now.
+- **A click on the chord lane opened no box to type a chord in.** The box opened
+  and closed within the same click: as the mouse button went down, the browser
+  moved the focus to the roll, and the box, left empty, closed. It stays open
+  now.
+
 ## 0.5.1 - 2026-09-16
 
 ### Fixed

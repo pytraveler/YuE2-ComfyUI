@@ -618,6 +618,59 @@ def test_the_transcribe_node_is_named_and_heard_the_same_on_both_sides():
         assert 'const TRACK_UI = "{}";'.format(edits.TRACK_UI) in source
     assert 'const LYRICS_UI = "{}";'.format(edits.LYRICS_UI) in editor
     assert 'const MARKS_UI = "{}";'.format(edits.MARKS_UI) in score
-    assert re.search(r"const NODES = \[[^\]]*\bTRANSCRIBE\]", editor)
+    assert re.search(r"const NODES = \[[^\]]*\bTRANSCRIBE\b[^\]]*\]", editor)
     assert 'const MODE = "mode";' in score
     assert "mode" in transcribe.YuE2Transcribe.INPUT_TYPES()["required"]
+
+
+def test_the_midi_node_is_named_and_heard_the_same_on_both_sides():
+    """The editors and the list find the node, its widgets, its ui key and its routes by name."""
+    from yue2_comfy import edits, load_midi
+    score = (WEB / "yue2_score.js").read_text(encoding="utf-8")
+    editor = (WEB / "yue2_editor.js").read_text(encoding="utf-8")
+    midi = (WEB / "yue2_midi.js").read_text(encoding="utf-8")
+    routes = (ROOT / "yue2_comfy" / "routes.py").read_text(encoding="utf-8")
+    name = next(iter(load_midi.MIDI_CLASSES))
+    for source in (score, editor, midi):
+        assert 'const LOAD_MIDI = "{}";'.format(name) in source
+    assert re.search(r"const NODES = \[[^\]]*\bLOAD_MIDI\b[^\]]*\]", editor)
+    assert 'const MIDI_UI = "{}";'.format(edits.MIDI_UI) in midi
+    required = load_midi.YuE2LoadMidi.INPUT_TYPES()["required"]
+    for constant, widget in (("MIDI", "midi"), ("MODE", "mode"), ("VOCAL", "vocal_track"),
+                             ("INSTRUMENT", "instrument_track")):
+        assert widget in required and 'const {} = "{}";'.format(constant, widget) in midi
+    assert 'const VOCAL_TRACK = "vocal_track";' in score and 'const INSTRUMENT_TRACK = "instrument_track";' in score
+    assert 'const TRACKS_ROUTE = "/yue2/midi/tracks";' in midi and '"/midi/tracks"' in routes
+    assert 'const MIDI_ROUTE = "/yue2/score/midi";' in score and '"/score/midi"' in routes
+    listed = re.search(r"export const MIDI_EXTENSIONS = \[(.*?)\];", ROLL.read_text(encoding="utf-8")).group(1)
+    assert tuple(re.findall(r'"([^"]*)"', listed)) == load_midi.EXTENSIONS
+
+
+@needs_node
+def test_the_midi_list_and_file_names_read_as_the_node_describes_them():
+    from yue2_comfy import load_midi
+    names = ["a.mid", "B.KAR", "c.midi.txt", "d.RMI", "", "song.MIDI"]
+    parts = [{"number": 1, "name": "Track 1", "family": "Brass", "notes": 78, "low": 55, "high": 91, "drums": False,
+              "role": "voice", "why": "highest"},
+             {"number": 2, "name": "", "family": "Bass", "notes": 1, "low": 40, "high": 40, "drums": False,
+              "role": "instrument", "why": "chosen"},
+             {"number": 3, "name": "Drumkit", "family": "Drums", "notes": 48, "low": 35, "high": 38, "drums": True,
+              "role": "", "why": ""}]
+    facts = {"bars": 12, "bpm": 97, "meter": "4/4", "key": "Gm", "seconds": 29.7, "voice_shift": -12, "karaoke": True}
+    got = run_roll("console.log(JSON.stringify([{}.map(r.isMidiFile), {}.map(r.partLine), {}.map(r.partRole), "
+                   "r.midiFacts({}), r.clock(29.7), [r.octaveMove(24), r.octaveMove(0)], "
+                   "[r.midiFileName('YuE2 Load MIDI'), r.midiFileName('a/b:c*'), r.midiFileName(''), "
+                   "r.midiFileName('{}')]]));".format(
+                       json.dumps(names), json.dumps(parts), json.dumps(parts), json.dumps(facts), SONG_TITLE))
+    listed, lines, roles, summary, clock, moves, files = got
+    assert listed == [name.lower().endswith(load_midi.EXTENSIONS) for name in names]
+    assert lines == ["1 Track 1 \u00b7 Brass \u00b7 78 notes \u00b7 G3\u2013G6", "2 Bass \u00b7 1 note \u00b7 E2\u2013E2",
+                     "3 Drumkit \u00b7 Drums \u00b7 48 notes"]
+    assert roles == ["voice (auto: highest line)", "instrument", "drums, not sung"]
+    assert summary == " \u00b7 ".join(["12 bars", "97 BPM", "4/4", "Key Gm", clock, "voice down an octave",
+                                      "karaoke words"])
+    assert moves == ["up 2 octaves", ""]
+    assert files == ["YuE2 Load MIDI.mid", "a_b_c.mid", "YuE2 score.mid", SONG_TITLE + ".mid"]
+
+
+SONG_TITLE = "\u041f\u0435\u0441\u043d\u044f 1"

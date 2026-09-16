@@ -8,6 +8,7 @@ import * as roll from "./yue2_roll.js";
 const RENDER = "YuE2RenderPlan";
 const GENERATE = "YuE2GenerateSong";
 const TRANSCRIBE = "YuE2Transcribe";
+const LOAD_MIDI = "YuE2LoadMidi";
 const PLAN_NODES = ["YuE2Plan", "YuE2SelectPlan"];
 const SELECT = "YuE2SelectPlan";
 const BATCH = "YuE2PlanBatch";
@@ -19,6 +20,8 @@ const OPTIONS = "options";
 const LYRICS = "lyrics";
 const MAX_SECONDS = "max_seconds";
 const MODE = "mode";
+const VOCAL_TRACK = "vocal_track";
+const INSTRUMENT_TRACK = "instrument_track";
 const MUTED_MODES = [2, 4];
 const SCORE_UI = "yue2_score";
 const WORDS_UI = "yue2_words";
@@ -28,6 +31,7 @@ const AUTO_SECONDS_UI = "yue2_auto_seconds";
 const SCORE_EVENT = "yue2-score-written";
 const READ_ROUTE = "/yue2/score/read";
 const WRITE_ROUTE = "/yue2/score/write";
+const MIDI_ROUTE = "/yue2/score/midi";
 const WRITE_DELAY = 250;
 const READ_DELAY = 450;
 const SUMMARY_H = 58;
@@ -55,12 +59,13 @@ const SKIN = {
     bar: "#1A2226",
     changed: "rgba(240, 176, 88, 0.12)",
     locked: "rgba(255, 255, 255, 0.05)",
-    note: "#8FD49E",
-    noteEdge: "#4E8A5E",
-    noteText: "#163020",
-    picked: "#EE8A84",
-    pickedEdge: "#A8504B",
-    pickedText: "#3A1512",
+    note: "#A3F5B5",
+    noteEdge: "#173D22",
+    noteText: "#08200F",
+    picked: "#FF9A91",
+    pickedEdge: "#5E1B16",
+    pickedText: "#2B0805",
+    shine: "rgba(255, 255, 255, 0.55)",
     ghost: "rgba(196, 220, 230, 0.20)",
     ghostEdge: "rgba(196, 220, 230, 0.34)",
     box: "rgba(255, 255, 255, 0.75)",
@@ -81,7 +86,8 @@ const SKIN = {
     keyEdge: "#9EA6AA",
     keyBlack: "#1B1E20",
     keyBlackTop: "#3B4146",
-    keyText: "#5B666C",
+    keyText: "#4A555B",
+    keyTextC: "#1A2226",
     keysEdge: "#11171A",
 };
 
@@ -122,6 +128,54 @@ const TRANSCRIBE_NOTE =
     "SheetSage2 writes down what it hears, and a real recording is heard less exactly than a clean mix: " +
     "play the melody, and fix a wrong note or chord here before the song is sung. The edit belongs to " +
     "this recording and this 'mode': with another recording the node transcribes anew instead.";
+
+const RESET_TOOLTIP_MIDI =
+    "Throw away the edit kept on this node. The next run outputs the file's score again.";
+const MIDI_NOTE =
+    "The score is written from the file's notes: a line of one note at a time on the file's own grid. Play it, " +
+    "fix what the file or the choice of tracks got wrong, or pick other tracks on the node. The edit belongs to " +
+    "this file, this 'mode' and these tracks: with another the node writes the file's score instead.";
+
+const SOURCE_WORDS = {
+    [TRANSCRIBE]: {
+        title: "YuE2 Transcribe",
+        back: "Back to the transcription",
+        backTitle: "Throw away the edits and load the score this node transcribed on its last run.",
+        result: "the transcription",
+        heading: "The transcription",
+        made: "Written from the recording, the same on every run. Edit score\u2026 to fix notes.",
+        rest: "; the rest as transcribed.",
+        wired: "Sent on as it arrives, instead of a transcription.",
+        other: "Made for another recording or mode: this node transcribes anew instead.",
+        pending: "This edit was made for another recording or the other 'mode', so the node transcribes anew "
+            + "instead of sending it on.",
+        last: "the last transcription",
+        noScore: "Run once, and the transcription can be edited here.",
+        empty: "There is no score yet. Run the workflow once: the transcription appears here, and fixing "
+            + "a note after that does not listen to the recording again. Or paste a score into the ABC tab.",
+        note: TRANSCRIBE_NOTE,
+        resetTooltip: RESET_TOOLTIP_TRANSCRIBE,
+    },
+    [LOAD_MIDI]: {
+        title: "YuE2 Load MIDI",
+        back: "Back to the file's score",
+        backTitle: "Throw away the edits and load the score this node wrote from the file on its last run.",
+        result: "the file's score",
+        heading: "The file's score",
+        made: "Written from the MIDI file, the same on every run. Edit score\u2026 to change notes.",
+        rest: "; the rest as in the file.",
+        wired: "Sent on as it arrives, instead of the file's score.",
+        other: "Made for another file, mode or choice of tracks: this node sends the file's score instead.",
+        pending: "This edit was made for another file, the other 'mode' or other tracks, so the node sends "
+            + "the file's score instead.",
+        last: "the file's score from the last run",
+        noScore: "Run once, and the score written from the file can be edited here.",
+        empty: "There is no score yet. Run the workflow once: the score written from the file appears here. "
+            + "Or paste a score into the ABC tab.",
+        note: MIDI_NOTE,
+        resetTooltip: RESET_TOOLTIP_MIDI,
+    },
+};
 
 const LIMIT_TOOLTIP =
     "'max_seconds' in YuE2 Options ends the singing here, however far the score runs on. " +
@@ -265,16 +319,24 @@ function isTranscribe(node) {
     return node?.type === TRANSCRIBE || node?.comfyClass === TRANSCRIBE;
 }
 
+function isLoadMidi(node) {
+    return node?.type === LOAD_MIDI || node?.comfyClass === LOAD_MIDI;
+}
+
+function sourceWords(node) {
+    return isTranscribe(node) ? SOURCE_WORDS[TRANSCRIBE] : isLoadMidi(node) ? SOURCE_WORDS[LOAD_MIDI] : null;
+}
+
 function isOwn(node) {
-    return isGenerate(node) || isTranscribe(node);
+    return isGenerate(node) || Boolean(sourceWords(node));
 }
 
 function backLabel(node) {
-    return isTranscribe(node) ? "Back to the transcription" : "Back to the model's score";
+    return sourceWords(node)?.back || "Back to the model's score";
 }
 
 function wordsWanted(origin) {
-    if (!isTranscribe(origin)) return origin?.__yue2Words || null;
+    if (!sourceWords(origin)) return origin?.__yue2Words || null;
     const chosen = widgetNamed(origin, MODE)?.value;
     return origin.__yue2Marks?.[chosen] || origin.__yue2Words || null;
 }
@@ -309,7 +371,7 @@ function optionsNodeFor(node) {
 }
 
 function limitFor(node) {
-    if (isTranscribe(node)) return null;
+    if (sourceWords(node)) return null;
     const own = isGenerate(node);
     const source = own ? node : planSource(node);
     if (!source) return null;
@@ -489,7 +551,7 @@ class ScoreEditor {
         const source = scoreSource(node);
         this.origin = source?.node ?? null;
         this.own = Boolean(source?.own);
-        this.transcribe = isTranscribe(node);
+        this.source = sourceWords(node);
         this.back = backLabel(node);
         this.planScore = this.origin?.__yue2Score || null;
         this.planWords = this.origin?.__yue2Words || null;
@@ -535,8 +597,8 @@ class ScoreEditor {
         handle.onEscape = () => this.escape();
 
         panel.appendChild(element("h3", "", "Score \u2014 "
-            + (this.node.title || (this.transcribe ? "YuE2 Transcribe" : "YuE2 Render Plan"))));
-        panel.appendChild(element("p", "yue2-s-sub", (this.transcribe ? "The notes this node sends on."
+            + (this.node.title || (this.source ? this.source.title : "YuE2 Render Plan"))));
+        panel.appendChild(element("p", "yue2-s-sub", (this.source ? "The notes this node sends on."
             : "The notes this node sings.") + " Nothing is written to the node until Apply."));
 
         const tabs = element("div", "yue2-s-bar");
@@ -638,15 +700,15 @@ class ScoreEditor {
         this.status = element("div", "yue2-s-status");
         panel.appendChild(this.status);
         panel.appendChild(element("p", "yue2-s-hint",
-            this.transcribe ? TRANSCRIBE_NOTE : HONEST_NOTE + (this.own ? RETRY_HERE : RETRY_ON_PLAN)));
+            this.source ? this.source.note : HONEST_NOTE + (this.own ? RETRY_HERE : RETRY_ON_PLAN)));
 
         const foot = element("div", "yue2-s-foot");
         this.writeButton = element("button", "", "Write the score");
         this.writeButton.title = "Run only the plan node feeding this one: the score is written, nothing is sung.";
         this.writeButton.addEventListener("click", () => this.writeScore());
         this.resetButton = element("button", "", this.back);
-        this.resetButton.title = this.transcribe
-            ? "Throw away the edits and load the score this node transcribed on its last run."
+        this.resetButton.title = this.source
+            ? this.source.backTitle
             : this.own
             ? "Throw away the edits and load the score this node wrote on its last run."
             : "Throw away the edits and load the score the plan node wrote.";
@@ -655,7 +717,12 @@ class ScoreEditor {
         cancel.addEventListener("click", () => this.escape());
         this.applyButton = element("button", "yue2-s-go", "Apply");
         this.applyButton.addEventListener("click", () => this.apply());
-        foot.append(this.writeButton, this.resetButton, element("span", "yue2-s-grow"), cancel, this.applyButton);
+        this.saveButton = element("button", "", "Save as MIDI\u2026");
+        this.saveButton.title = "Download the score as it stands in this window, edits included, as a MIDI file: "
+            + "the voice, the instrument line and the chords, each on a track of its own.";
+        this.saveButton.addEventListener("click", () => this.saveMidi());
+        foot.append(this.writeButton, this.resetButton, this.saveButton, element("span", "yue2-s-grow"), cancel,
+            this.applyButton);
         panel.appendChild(foot);
 
         const chords = document.createElement("datalist");
@@ -671,6 +738,7 @@ class ScoreEditor {
         this.canvas.addEventListener("pointermove", (event) => this.pointerMove(event));
         this.canvas.addEventListener("pointerup", (event) => this.pointerUp(event));
         this.canvas.addEventListener("pointercancel", () => this.cancelDrag());
+        this.canvas.addEventListener("mousedown", (event) => event.preventDefault());
         this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
         this.canvas.addEventListener("wheel", (event) => this.wheel(event), { passive: false });
         panel.addEventListener("keydown", (event) => this.key(event));
@@ -692,9 +760,8 @@ class ScoreEditor {
         this.baseWords = box.score ? box.words : this.planWords;
         const wanted = this.origin ? wordsWanted(this.origin) : null;
         if (box.score && box.words && wanted && box.words !== wanted) {
-            this.pendingNote = this.transcribe
-                ? "This edit was made for another recording or the other 'mode', so the node transcribes anew "
-                    + "instead of sending it on. '" + this.back + "' loads the last transcription."
+            this.pendingNote = this.source
+                ? this.source.pending + " '" + this.back + "' loads " + this.source.last + "."
                 : "This edit was made for other words than " + (this.own ? "the last run had" : "the plan has now")
                     + ", so it is not sung until they come back. '" + this.back + "' loads the new score.";
             this.pendingBad = true;
@@ -836,10 +903,8 @@ class ScoreEditor {
             this.empty.appendChild(element("div", "", "The piano roll cannot draw this score. The ABC tab has its text."));
             return;
         }
-        if (this.transcribe) {
-            this.empty.appendChild(element("div", "",
-                "There is no score yet. Run the workflow once: the transcription appears here, and fixing "
-                + "a note after that does not listen to the recording again. Or paste a score into the ABC tab."));
+        if (this.source) {
+            this.empty.appendChild(element("div", "", this.source.empty));
             return;
         }
         if (this.own) {
@@ -868,6 +933,7 @@ class ScoreEditor {
         this.redoButton.disabled = !this.history.canRedo;
         this.writeButton.hidden = !this.origin || this.own;
         this.resetButton.disabled = !this.planScore && !this.fromBox;
+        this.saveButton.disabled = !(this.current || "").trim();
     }
 
     showTab(id) {
@@ -924,14 +990,16 @@ class ScoreEditor {
 
     resize() {
         if (this.rollBox.hidden) return;
-        const box = this.rollBox.getBoundingClientRect();
-        if (!box.width || !box.height) return;
+        const room = { width: this.rollBox.clientWidth, height: this.rollBox.clientHeight };
+        if (!room.width || !room.height) return;
         const firstTime = !this.width;
         this.ratio = window.devicePixelRatio || 1;
-        this.width = box.width;
-        this.height = box.height;
-        this.canvas.width = Math.round(box.width * this.ratio);
-        this.canvas.height = Math.round(box.height * this.ratio);
+        this.canvas.width = Math.floor(room.width * this.ratio);
+        this.canvas.height = Math.floor(room.height * this.ratio);
+        this.width = this.canvas.width / this.ratio;
+        this.height = this.canvas.height / this.ratio;
+        this.canvas.style.width = this.width + "px";
+        this.canvas.style.height = this.height + "px";
         if (firstTime && this.sheet) this.fitView();
         this.clampView();
         this.draw();
@@ -1174,8 +1242,9 @@ class ScoreEditor {
                 c.fillStyle = SKIN.keyEdge;
                 c.fillRect(0, rowY + ROW_H - 1, KEYS_W, 1);
             }
-            if (tone === 0) {
-                c.fillStyle = SKIN.keyText;
+            if (!roll.isBlack(pitch)) {
+                c.font = (tone === 0 ? "600 " : "") + "10px system-ui, sans-serif";
+                c.fillStyle = tone === 0 ? SKIN.keyTextC : SKIN.keyText;
                 c.fillText(roll.noteName(pitch), KEYS_W - 24, rowY + ROW_H - 3);
             }
         }
@@ -1185,7 +1254,7 @@ class ScoreEditor {
         const px = this.pxPerTick;
         const top = RULER_H + CHORD_H;
         c.save();
-        c.font = "9px system-ui, sans-serif";
+        c.font = "600 9px system-ui, sans-serif";
         c.lineWidth = 1;
         for (const note of model.notes[part]) {
             if (note.start + note.length < first || note.start > lastTick) continue;
@@ -1200,6 +1269,10 @@ class ScoreEditor {
             const picked = this.selection.has(note.id);
             this.box(c, noteX, noteY + 1.5, width, ROW_H - 3, picked ? SKIN.picked : SKIN.note,
                 picked ? SKIN.pickedEdge : SKIN.noteEdge);
+            if (width > 5) {
+                c.fillStyle = SKIN.shine;
+                c.fillRect(noteX + 1.5, noteY + 2, width - 4, 1);
+            }
             const bar = this.sheet.bars[roll.barAt(this.sheet, note.start)];
             const label = roll.noteName(note.pitch, roll.flatsIn(this.sheet, bar.key));
             if (c.measureText(label).width + 6 <= width) {
@@ -1661,7 +1734,7 @@ class ScoreEditor {
             this.model = null;
             this.changed = [];
             this.fillEmpty();
-            this.setStatus(this.transcribe ? "The box is empty: the node outputs the transcription on its next run."
+            this.setStatus(this.source ? "The box is empty: the node outputs " + this.source.result + " on its next run."
                 : this.own ? "The box is empty: the node writes a new score on its next run."
                 : "The box is empty: the node will sing the plan's own score.");
             return true;
@@ -1820,8 +1893,8 @@ class ScoreEditor {
         this.fromBox = false;
         this.baseWords = null;
         this.load("");
-        this.setStatus("Apply removes the edit, and the next run " + (this.transcribe
-            ? "outputs the transcription again." : this.own
+        this.setStatus("Apply removes the edit, and the next run " + (this.source
+            ? "outputs " + this.source.result + " again." : this.own
             ? "writes the model's score again." : "sings the plan's own score."));
     }
 
@@ -1843,6 +1916,31 @@ class ScoreEditor {
         }
         if (this.edited() && !window.confirm("Close the score editor and lose these changes?")) return;
         this.close();
+    }
+
+    async saveMidi() {
+        if (this.chordInput) this.chordInput.finish(true);
+        if (this.readTimer) await this.readTyped();
+        if (this.writePending) await this.write();
+        if (this.isClosed) return;
+        const text = (this.current || "").trim();
+        if (!text) return;
+        const { ok, payload } = await ask(MIDI_ROUTE, { abc: text });
+        if (this.isClosed) return;
+        if (!ok || !payload.ok) {
+            this.setStatus(payload.error || "The score could not be written as a MIDI file.", true);
+            return;
+        }
+        const bytes = Uint8Array.from(atob(payload.data), (letter) => letter.charCodeAt(0));
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(new Blob([bytes], { type: "audio/midi" }));
+        link.download = roll.midiFileName(this.node.title || "YuE2 score");
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+        this.setStatus("Saved as " + link.download + ": the voice, the instrument line and the chords, "
+            + "each on a track of its own.");
     }
 
     async apply() {
@@ -1887,8 +1985,8 @@ function openScoreEditor(node) {
 function resetScoreEdit(node) {
     const box = roll.splitMark(widgetNamed(node, SCORE)?.value ?? "");
     if (!box.score) return;
-    const next = isTranscribe(node)
-        ? "The next run outputs the transcription again."
+    const next = sourceWords(node)
+        ? "The next run outputs " + sourceWords(node).result + " again."
         : isGenerate(node)
         ? "The next run writes the model's score again, and a new seed gives a new tune."
         : "The next run sings the plan's own score.";
@@ -1941,13 +2039,13 @@ function fillScoreSummary(node, holder) {
     const strong = (text) => element("span", "yue2-s-key", text);
     const warn = (text) => element("span", "yue2-s-warn", text);
     const own = isOwn(node);
-    const transcribe = isTranscribe(node);
+    const source = sourceWords(node);
     const wired = sourceOf(node, SCORE);
     const box = roll.splitMark(widgetNamed(node, SCORE)?.value ?? "");
     if (node.__yue2ResetButton) node.__yue2ResetButton.hidden = Boolean(wired) || !box.score;
     if (wired) {
         row(dim("The score comes in through a wire from "), strong(wired.title || "another node"));
-        row(dim(transcribe ? "Sent on as it arrives, instead of a transcription."
+        row(dim(source ? source.wired
             : own ? "Sung as it arrives, whatever the words." : "Edit it where it is written."));
         if (node.__yue2ScoreButton) node.__yue2ScoreButton.disabled = true;
         return;
@@ -1976,17 +2074,17 @@ function fillScoreSummary(node, holder) {
         const bars = node.properties?.yue2_score_bars || [];
         const base = node.properties?.yue2_score_base;
         const rewritten = bars.length ? "Bars " + barList(bars) + " rewritten"
-            : transcribe ? "Sent on as it stands" : "Sung as it stands";
+            : source ? "Sent on as it stands" : "Sung as it stands";
         const otherWords = Boolean(box.words && planWords && box.words !== planWords);
         if (otherWords) {
-            row(warn(transcribe ? "Made for another recording or mode: this node transcribes anew instead."
+            row(warn(source ? source.other
                 : own ? "Made for other words: this node writes a new score instead."
                 : "Made for other words: the plan's own score is sung instead."));
         } else if (planScore && base && base !== hashText(String(planScore).trim())) {
             row(box.words ? dim(rewritten + " on an earlier take; still sung.")
                 : warn("Edited on an earlier score; the plan has changed since."));
-        } else if (transcribe) {
-            row(dim(bars.length ? rewritten + "; the rest as transcribed." : rewritten + " instead of the transcription."));
+        } else if (source) {
+            row(dim(bars.length ? rewritten + source.rest : rewritten + " instead of " + source.result + "."));
         } else if (own) {
             row(dim(rewritten + ". A new seed keeps these notes."));
         } else {
@@ -1996,8 +2094,8 @@ function fillScoreSummary(node, holder) {
         return;
     }
     if (planScore) {
-        row(strong(transcribe ? "The transcription" : "The model's score"), dim(" \u00B7 " + facts(planScore)));
-        row(dim(transcribe ? "Written from the recording, the same on every run. Edit score\u2026 to fix notes."
+        row(strong(source ? source.heading : "The model's score"), dim(" \u00B7 " + facts(planScore)));
+        row(dim(source ? source.made
             : own ? "Written by the model on each run. Edit score\u2026 to change notes."
             : "Sung exactly as written. Edit score\u2026 to change notes."));
         limitRow(planScore, []);
@@ -2005,7 +2103,7 @@ function fillScoreSummary(node, holder) {
     }
     if (own) {
         row(strong("No score yet"));
-        row(dim(transcribe ? "Run once, and the transcription can be edited here."
+        row(dim(source ? source.noScore
             : "Run once, and the score this node writes can be edited here."));
         return;
     }
@@ -2045,7 +2143,7 @@ function settleBesideTheSongButton(node, buttons) {
         const { buttons: made } = buttonRow(node, "yue2_score_edit", [
             { label: EDIT_LABEL, tooltip: EDIT_TOOLTIP, onClick: () => openScoreEditor(node) },
             {
-                label: RESET_LABEL, tooltip: isTranscribe(node) ? RESET_TOOLTIP_TRANSCRIBE : RESET_TOOLTIP_OWN,
+                label: RESET_LABEL, tooltip: sourceWords(node)?.resetTooltip || RESET_TOOLTIP_OWN,
                 onClick: () => resetScoreEdit(node),
             },
         ]);
@@ -2073,13 +2171,14 @@ function installScoreEditor(node) {
     node.__yue2ScoreSummary = summary;
     if (isOwn(node)) {
         const edit = plainButton(EDIT_LABEL, EDIT_TOOLTIP, () => openScoreEditor(node));
-        const reset = plainButton(RESET_LABEL, isTranscribe(node) ? RESET_TOOLTIP_TRANSCRIBE : RESET_TOOLTIP_OWN,
+        const reset = plainButton(RESET_LABEL, sourceWords(node)?.resetTooltip || RESET_TOOLTIP_OWN,
             () => resetScoreEdit(node));
         reset.hidden = true;
         node.__yue2ScoreButton = edit;
         node.__yue2ResetButton = reset;
         panelWidget(node, SCORE_SUMMARY, summary, () => (node.__yue2ScoreRows > 2 ? SUMMARY_H : SONG_SUMMARY_H));
-        repaintOnChange(node, isTranscribe(node) ? MODE : LYRICS);
+        const watched = isLoadMidi(node) ? [MODE, VOCAL_TRACK, INSTRUMENT_TRACK] : [isTranscribe(node) ? MODE : LYRICS];
+        for (const name of watched) repaintOnChange(node, name);
         queueMicrotask(() => {
             try {
                 settleBesideTheSongButton(node, [edit, reset]);
@@ -2146,7 +2245,7 @@ app.registerExtension({
             return;
         }
         const plan = PLAN_NODES.includes(nodeData.name);
-        const own = nodeData.name === GENERATE || nodeData.name === TRANSCRIBE;
+        const own = [GENERATE, TRANSCRIBE, LOAD_MIDI].includes(nodeData.name);
         if (plan || own) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (message) {

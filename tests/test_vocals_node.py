@@ -37,9 +37,16 @@ def stub_separation(monkeypatch, found="weights.ckpt"):
     return calls
 
 
-def test_the_switch_is_the_last_options_widget_and_starts_off():
+def test_the_switch_was_appended_to_the_options_widgets_and_starts_off():
+    """It went on the end when it was added, and stays after everything older.
+
+    What must never happen is a widget appearing before it -- see
+    test_new_widgets_go_last_so_saved_options_keep_their_places -- and one
+    added after it, as 'low_vram' was, is exactly what is allowed.
+    """
     spec = nodes.YuE2Options.INPUT_TYPES()
-    assert list(spec["optional"])[-1] == "vocals_only"
+    widgets = list(spec["optional"])
+    assert widgets.index("vocals_only") > widgets.index("transpose")
     kind, settings = spec["optional"]["vocals_only"]
     assert kind == "BOOLEAN" and settings["default"] is False
     assert constants.DEFAULT_OPTIONS["vocals_only"] is False

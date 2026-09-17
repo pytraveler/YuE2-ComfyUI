@@ -7,6 +7,59 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.7.0 - 2026-09-17
+
+### Added
+
+- **`low_vram`: a song on a card of about 4 GB.** A new last switch in
+  `YuE2 Options`, off by default. With it on, the 28 layers are kept on the card
+  as INT8 rows rather than BF16 -- half their memory -- and each matrix becomes
+  BF16 again only for the multiply that needs it, while the last stage decodes
+  in 256-frame tiles instead of 1024. Measured on an RTX 5090 with `offload` at
+  `on`: a 40-second song peaked at 3.11 GiB instead of 4.43 and a four-minute
+  one at 3.14 instead of 4.50, and both sang with the card capped at 3.5 GiB,
+  where the 40-second song had needed 4.75. The four-minute song took 110
+  seconds instead of 104: the token loop is about twice as slow per step, and
+  the acoustic stage is faster because there is half as much to carry.
+
+  It is the one switch in this node that changes the song. An INT8 round trip
+  is lossy -- measured on all 392 matrices of the released checkpoint, a cosine
+  of 0.99990 or better and about one percent of relative error -- so the same
+  seed writes the same score and a new performance of it. Both takes were read
+  back by the pack's own speech recognition: the four-minute one sang the lyric
+  through, and 98.6 percent of the words heard were words of the lyrics, which
+  is exactly what the BF16 take scored.
+
+### Changed
+
+- **Half the video memory a song needs, and a quarter off its time.** The
+  acoustic stage asked PyTorch for grouped-query attention, which the
+  memory-efficient kernel refuses outright; with flash not compiled into the
+  Windows wheels, every call fell back to the kernel that builds the whole
+  attention matrix. Repeating the key heads and dropping the argument lets the
+  fused kernel take the call: measured on an RTX 5090 with `offload` at `on`,
+  a four-minute song peaked at 5.66 GiB instead of 10.72 and took 98 seconds
+  instead of 122, and a 40-second one 4.67 GiB instead of 4.91, in 21.4 seconds
+  instead of 28.6. It is the same attention -- repeating the key heads is what
+  the refused argument does internally -- and it is what ComfyUI's own code
+  does for its models.
+- **Only the rows of the vocabulary the running phase can use.** YuE2 writes
+  its score out of the text vocabulary and its song out of the codec one, and
+  masks every other row away before it samples, so the rest of the two big
+  tables never had to be on the card. They stay in system RAM now, with one
+  window of them on the card: while the song is written that is 32770 of 184704
+  rows, 0.125 GiB each instead of 0.705. Measured with `offload` at `on`: a
+  40-second song peaked at 4.43 GiB instead of 4.67 and a four-minute one at
+  4.50 instead of 5.66, both a second or two faster, and both the same song to
+  the last byte, with or without CFG. `off` still keeps everything on the card.
+
+- **Songs made before this version do not come back byte for byte.** The score
+  and the sung notes are the same: the same seed writes the same score and the
+  same performance, to the byte. Only the last stage, which turns them into
+  sound, renders a little differently -- about 30 dB below the song's own level,
+  which the author of this pack could not hear in a blind listen. The same seed
+  still gives the same song from this version on.
+
 ## 0.6.1 - 2026-09-16
 
 ### Added

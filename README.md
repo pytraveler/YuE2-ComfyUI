@@ -113,7 +113,7 @@ See [YuE2 Vocals Only](#yue2-vocals-only).
 | Resource | Requirement |
 |---|---|
 | GPU | An NVIDIA GPU with BF16 support. CPU works and is roughly an hour per song |
-| VRAM | **~5 GiB** for a 40-second song and **~11.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card. A card with room to spare keeps the whole model on it and uses more: 7.6 and 15 GiB. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.3 GiB while it recognises the words of a three-minute song. Separating the voice, with `vocals_only` or `YuE2 Vocals Only`, peaks at 2.5 GiB |
+| VRAM | **~4.4 GiB** for a 40-second song and **~4.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card, or **~3.1 GiB** for either with `low_vram` on. A card with room to spare keeps the whole model on it and uses about 10 GiB for either. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.3 GiB while it recognises the words of a three-minute song. Separating the voice, with `vocals_only` or `YuE2 Vocals Only`, peaks at 2.5 GiB |
 | Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words. `vocals_only` and `YuE2 Vocals Only` add 0.85 GB |
 | Packages | `tiktoken`, which ComfyUI does not ship. It is the only thing this pack adds; `requests`, which the downloader uses, is already in every ComfyUI install. `llama-cpp-python` is optional -- `YuE2 Write Song` uses it when it is there and official llama.cpp binaries when it is not |
 
@@ -702,10 +702,10 @@ Everything the main node deliberately does not ask about. An unconnected socket
 is never a special case: the defaults here are the same values the node uses
 when this node is not on the graph at all.
 
-![YuE2 Options wired into YuE2 Generate Song. Options, top to bottom: cot full, max_seconds 0, keep_model_loaded false, cfg_scale 0.00, vae standard, device auto, attention_backend sdpa, download auto, quantization bf16, ode_steps 32, abc_temperature 0.70, abc_top_p 0.90, abc_top_k 30, temperature 1.00, top_p 0.95, top_k 100, repetition_penalty 1.200, offload on. Generate Song after a 58.523 s run: the options, style and lyrics inputs, the seed, the Edit song... button and the summary -- Russian, 60 BPM, male rap vocal and expressive female voice; rap, heavy bass, hip hop beat, rhythmic punchy melody, staccato flow; the sections as [Verse] 4, [Chorus] 4 and on; the lyrics -- above the caption 99 seconds of audio](docs/node_options.png)
+![YuE2 Options wired into YuE2 Generate Song. Options, top to bottom: cot full, max_seconds 0, keep_model_loaded false, cfg_scale 0.00, vae standard, device auto, attention_backend sdpa, download auto, quantization bf16, ode_steps 32, abc_temperature 0.70, abc_top_p 0.90, abc_top_k 30, temperature 1.00, top_p 0.95, top_k 100, repetition_penalty 1.200, offload auto, transpose 0, vocals_only false, low_vram false. Generate Song beside it: the options, style, lyrics and score_abc inputs, the seed with its control after generate, the Edit song... and Edit score... buttons, and the summary -- English, 88 BPM, expressive female voice; warm piano pop, acoustic piano, rounded bass and light drums, unhurried phrasing; the sections as [Verse] 2, [Chorus] 2; the lyrics -- above a panel reading no score yet](docs/node_options.png)
 
-*Every setting at its default except `offload`, set to `on`. 99 seconds of song,
-and the node ran for 58.5 s on an RTX 5090.*
+*Every widget at its default, before the first run. The two switches at the bottom
+are the ones a small card wants: `offload`, and `low_vram` under it.*
 
 - `cot` -- `full` plans melody and harmony, `melody` plans the tune only, `off`
   skips the score and generates directly. `full` is the default and the one the
@@ -731,10 +731,13 @@ and the node ran for 58.5 s on an RTX 5090.*
   of weights for the score and the performance and another for the audio, and
   no stage needs both. `on` keeps only the half the running stage needs, and
   neither during the decode; `off` keeps everything on the card; `auto`, the
-  default, moves a half off only when a stage would not fit beside it. The song
-  is identical in every mode, to the last byte. Measured, `on` took a 40-second
-  song from 7.55 GiB to 4.94 and a four-minute one from 14.96 GiB to 11.54, for
-  a second or two a run.
+  default, moves a half off only when a stage would not fit beside it. The score,
+  the notes and the words are identical in every mode, and so is the audio file
+  as long as the decode has the same room to work in: on a card so full that
+  cuDNN picks a cheaper convolution, the last stage renders a hair differently,
+  measured 92 dB below the song itself. Measured, `on` took a 40-second
+  song from 9.81 GiB to 4.43 and a four-minute one from 9.95 GiB to 4.50, and
+  gave a second or two back rather than costing one.
 - `transpose` -- moves the song to another key, in semitones: `2` is a whole
   tone up, `-3` a minor third down. YuE2 has no key control of its own. A key
   named in the style line is ignored ('A minor', 'in the key of A minor' and
@@ -751,6 +754,17 @@ and the node ran for 58.5 s on an RTX 5090.*
   model wrote in testing was.
 - `vocals_only` -- hands on only the voice of the song, separated from the band
   once the song is made. See [YuE2 Vocals Only](#yue2-vocals-only).
+- `low_vram` -- for a card of about 4 GB. The 28 layers are kept on the card as
+  INT8 rows rather than BF16, half their memory, and each matrix becomes BF16
+  again only for the multiply that needs it; the last stage decodes in 256-frame
+  tiles instead of 1024. Measured with `offload` at `on`, a 40-second song peaked
+  at 3.11 GiB instead of 4.43 and a four-minute one at 3.14 instead of 4.50, and
+  both sang with the card capped at 3.5 GiB where they had needed 4.75. It is the
+  one setting here that changes the song: an INT8 round trip is lossy, so the same
+  seed writes the same score and a new performance of it, and the four-minute song
+  took 110 seconds instead of 104. Both takes were read back by this pack's own
+  speech recognition: the four-minute one sang the lyric through, and 98.6 percent
+  of the words heard were words of the lyrics, the same as the BF16 take scored.
 
 ### Staged nodes
 
@@ -967,8 +981,9 @@ all there is, and this pack says so instead of inventing a verdict.
 `quantization` set to `int8` fetches Comfy-Org's quantized checkpoint: 3.69 GB
 instead of 7.26 GB.
 
-It saves the download and not the VRAM. This pack's layers are ordinary torch
-linears, so the INT8 weights are restored to BF16 as the file loads -- the
+It saves the download and not the VRAM, and it is a different thing from
+`low_vram`, which is what keeps weights quantized on the card. The INT8 weights
+are restored to BF16 as the file loads -- the
 rotation that ConvRot applies is a 256-point Hadamard matrix, which is
 symmetric and orthogonal and therefore its own inverse -- and the card holds
 the same 6.8 GB either way. It is also not quite the same model: the round trip
@@ -978,6 +993,9 @@ song from the two files.
 
 Whatever is already on disk is used before anything is downloaded, so choosing
 `int8` on a machine that has the BF16 file changes nothing.
+
+`low_vram` packs the layers itself, from whichever file was loaded, so it needs
+no second download and does not ask for this setting.
 
 ### Using files you already have
 

@@ -157,11 +157,11 @@ QUANTIZATION_TOOLTIP = (
     "Which build of the checkpoint to download.\n\n"
     "'bf16' is the model as released. 'int8' is Comfy-Org's quantized build: 3.69 GB "
     "to fetch instead of 7.26 GB.\n\n"
-    "It saves the download and not the VRAM. This pack's layers are ordinary torch "
-    "linears, so an INT8 file is restored to BF16 as it loads and the card holds the "
-    "same 6.8 GB either way. It is also not quite the same model -- the round trip "
-    "costs about a percent of each weight -- so the same seed gives a different song "
-    "from the two files.\n\n"
+    "It saves the download and not the VRAM: an INT8 file is restored to BF16 as it "
+    "loads and the card holds the same 6.8 GB either way. What keeps weights packed on "
+    "the card is 'low_vram', which does its own packing from whichever file you have. "
+    "This one is also not quite the same model -- the round trip costs about a percent "
+    "of each weight -- so the same seed gives a different song from the two files.\n\n"
     "Whatever is already on disk is used before anything is downloaded."
 )
 
@@ -171,17 +171,37 @@ ODE_TOOLTIP = (
     "clearly improving it."
 )
 
+
+LOW_VRAM_TOOLTIP = (
+    "For a card of about 4 GB. The 28 layers are kept on the card as INT8 rows rather "
+    "than BF16, which is half their memory, and each matrix becomes BF16 again only "
+    "for the multiply that needs it; the last stage decodes in smaller tiles as well. "
+    "Measured with 'offload' at 'on': a 40-second song peaked at 3.11 GiB instead of "
+    "4.43 and a four-minute one at 3.14 instead of 4.50, and both sang on a card "
+    "capped at 3.5 GiB where they had needed 4.75.\n\n"
+    "Two prices, both real. The four-minute song took 110 seconds instead of 104: the "
+    "token loop is about twice as slow a step, and the acoustic stage is faster "
+    "because there is half as much to carry. And an INT8 round trip is lossy, so this "
+    "is the one setting in this node that writes a different song from the same seed: "
+    "the style, the words and the score hold, the performance is a new take on them. "
+    "Leave it off unless the card needs it."
+)
+
+
 OFFLOAD_TOOLTIP = (
     "Whether the whole model stays on the card, or only the half the running stage "
     "uses.\n\n"
     "YuE2 has one set of weights that writes the score and the performance, and another "
     "that turns them into audio; no stage needs both. 'on' keeps only the half the stage "
-    "needs, and neither during the decode: measured, a 40-second song peaked at 4.9 GiB "
-    "instead of 7.6, and a four-minute one at 11.5 GiB instead of 15, for a second or "
-    "two a run. 'off' keeps everything on the card. 'auto' moves a half off only "
+    "needs, and neither during the decode, and it keeps only the rows of the vocabulary "
+    "the running phase can use: measured, a 40-second song peaked at 4.4 GiB instead of "
+    "9.8, and a four-minute one at 4.5 GiB instead of 10.0, a second or two faster. 'off' keeps everything on the card. 'auto' moves a half off only "
     "when a stage would not fit beside it.\n\n"
-    "The song is the same to the last byte in every mode: the weights are the same "
-    "wherever they are kept. The ones waiting their turn sit in system RAM, up to 6.7 GiB."
+    "The score, the notes and the words are the same in every mode: the weights are the "
+    "same wherever they are kept. The audio file matches to the last byte too, as long as "
+    "the decode has the same room to work in -- on a card so full that cuDNN has to pick a "
+    "cheaper convolution, the last stage renders a hair differently, measured at 92 dB "
+    "below the song. The weights waiting their turn sit in system RAM, up to 6.7 GiB."
 )
 
 TRANSPOSE_TOOLTIP = (
@@ -278,6 +298,8 @@ class YuE2Options:
                                       "tooltip": TRANSPOSE_TOOLTIP}),
                 "vocals_only": ("BOOLEAN", {"default": d["vocals_only"],
                                             "tooltip": VOCALS_ONLY_TOOLTIP}),
+                "low_vram": ("BOOLEAN", {"default": d["low_vram"],
+                                         "tooltip": LOW_VRAM_TOOLTIP}),
             },
         }
 

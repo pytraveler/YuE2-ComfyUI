@@ -171,6 +171,7 @@ DEFAULT_OPTIONS = {
     "offload": "auto",
     "transpose": 0,
     "vocals_only": False,
+    "low_vram": False,
 }
 
 TRANSPOSE_LIMIT = 12

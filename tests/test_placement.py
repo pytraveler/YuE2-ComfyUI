@@ -160,26 +160,74 @@ def test_the_groups_hold_the_released_model_exactly_once():
 
 
 def test_the_estimates_cover_the_peaks_measured_with_the_whole_model_on_the_card():
-    """RTX 5090, 2026-09-13: peak GiB per stage, the 6.76 GiB of weights included.
+    """Peak GiB per stage on an RTX 5090, the 6.76 GiB of weights included.
 
     'auto' weighs an estimate plus MARGIN against the free memory, so that sum
     has to reach every measured peak, or a card that looks big enough runs out.
     Nor may it overshoot by much: an estimate two gigabytes too large swaps
     halves on cards that never needed it. The token counts are the real ones of
-    a 40-second and a 240-second song. Flow matching adds the prefill cache,
-    which already exists when its estimate is made.
+    the songs measured. Flow matching adds the prefill cache, which already
+    exists when its estimate is made.
+
+    The AR rows are from 2026-09-13 and stand. The acoustic rows were measured
+    again on 2026-09-17, after ``runtime.fused_attention`` stopped the acoustic
+    stage building whole attention matrices: a 40-second song (2197 tokens,
+    1000 frames) and a 233-second one (8429 tokens, 5828 frames).
     """
     cases = (
         (p.ar_stage_bytes(94, 4096), 7.55),
         (p.ar_stage_bytes(562, 1000), 7.26),
-        (p.prefill_bytes(1563), 7.46),
-        (p.kv_bytes(1563) + p.solve_bytes(1563, 1000), 7.47),
         (p.ar_stage_bytes(346, 4096), 7.63),
         (p.ar_stage_bytes(2752, 6000), 8.71),
-        (p.prefill_bytes(8753), 14.15),
-        (p.kv_bytes(8753) + p.solve_bytes(8753, 6000), 14.96),
+        (p.prefill_bytes(2197), 7.146),
+        (p.kv_bytes(2197) + p.solve_bytes(2197, 1000), 7.100),
+        (p.prefill_bytes(8429), 8.143),
+        (p.kv_bytes(8429) + p.solve_bytes(8429, 5828), 8.068),
     )
     for estimate, peak in cases:
         need = (peak - 6.76) * GIB
         assert estimate + p.MARGIN >= need, (estimate / GIB, peak)
         assert estimate <= need + 2 * GIB, (estimate / GIB, peak)
+
+
+def test_the_acoustic_estimates_land_close_to_the_work_measured():
+    """The rows above leave two gigabytes of slack; these leave a tenth of one.
+
+    Work here means what the stage allocated on top of what it inherited, read
+    between the moves on 2026-09-17: for the prefill that includes the cache it
+    builds and leaves behind, which is why its estimate carries kv_bytes. This
+    is what the ladder for small cards is built on, so it is held tighter than
+    the peaks above.
+    """
+    cases = (
+        (p.prefill_bytes(2197), 0.350),
+        (p.prefill_bytes(8429), 1.348),
+        (p.solve_bytes(2197, 1000), 0.065),
+        (p.solve_bytes(8429, 5828), 0.347),
+    )
+    for estimate, work in cases:
+        assert estimate >= work * GIB, (estimate / GIB, work)
+        assert estimate <= work * GIB + 0.1 * GIB, (estimate / GIB, work)
+
+
+def test_the_acoustic_stage_replaces_the_offload_upstream_would_do_itself():
+    """Upstream's ``_offload_ar`` reads a device with ``next(module.parameters())``.
+
+    A packed ``mlp`` block -- see quantized.py -- holds buffers and no parameters
+    at all, so that call raises on it. It is never reached, because this context
+    replaces the function for the whole acoustic stage; this test is what keeps
+    that true.
+    """
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    from yue2_comfy.vendor.yue2 import nar
+
+    class Stand:
+        lm = object()
+        device = "cpu"
+
+    engine, offload = nar.CachedNAR, nar._offload_ar
+    with p.acoustic(Stand()):
+        assert nar._offload_ar is not offload
+        assert nar.CachedNAR is not engine
+    assert (nar.CachedNAR, nar._offload_ar) == (engine, offload)

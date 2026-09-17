@@ -105,6 +105,8 @@ jobs:
                         yue2_comfy/placement.py yue2_comfy/transpose.py \
                         yue2_comfy/notation.py yue2_comfy/edits.py \
                         yue2_comfy/memory.py yue2_comfy/phrasing.py \
+                        yue2_comfy/runtime.py yue2_comfy/quantized.py \
+                        yue2_comfy/vocabulary.py \
                         yue2_comfy/asr/__init__.py yue2_comfy/asr/align.py \
                         yue2_comfy/asr/decode.py yue2_comfy/asr/layout.py \
                         yue2_comfy/asr/model.py yue2_comfy/asr/network.py \

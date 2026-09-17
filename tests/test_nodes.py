@@ -86,11 +86,12 @@ def test_new_widgets_go_last_so_saved_options_keep_their_places():
     A widget added anywhere but the end would move every value after it into
     the wrong widget, in every workflow saved before it existed. At the end, an
     older workflow simply has a value or two fewer, and the new widgets take
-    their defaults. 'offload' was added first, 'transpose' after it and
-    'vocals_only' after that.
+    their defaults. 'offload' was added first, 'transpose' after it,
+    'vocals_only' after that, and 'low_vram' last.
     """
     spec = nodes.YuE2Options.INPUT_TYPES()
-    assert list(spec["optional"])[-3:] == ["offload", "transpose", "vocals_only"]
+    assert list(spec["optional"])[-4:] == ["offload", "transpose", "vocals_only",
+                                           "low_vram"]
 
 
 def test_transpose_reaches_an_octave_either_way_and_starts_at_zero():

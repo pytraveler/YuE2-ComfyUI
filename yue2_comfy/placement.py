@@ -8,11 +8,18 @@ with the embeddings is 4.03 GiB, the NAR layers are 2.63 GiB, and the modules
 the acoustic stage needs besides its layers come to 0.10 GiB.
 
 So the half a stage does not use can wait on the CPU. Measured on an RTX 5090
-on 2026-09-13, with the halves swapped around the acoustic stage: a 40-second
-song peaked at 4.94 GiB instead of 7.55 before its decode, a 240-second song
-at 11.53 GiB instead of 14.94, a swap took about a second, and the audio was
-the same to the last byte in both. The weights are the same tensors wherever
-they are kept, so there is nothing for the song to differ by.
+on 2026-09-17, with the halves swapped around the acoustic stage and the
+vocabulary narrowed to the phase: a 40-second song peaked at 4.43 GiB against
+9.81 with everything on the card, a 233-second song at 4.50 against 9.95, a swap
+took about a second, and the audio was the same to the last byte in both. The
+weights are the same tensors wherever they are kept, so there is nothing for the
+song to differ by.
+
+Where the peak of a stage falls moved with 0.7.0. Now that the acoustic stage
+no longer builds attention matrices, the largest moment of a short song is the
+swap itself: the copy runs about 0.13 GiB above the side it is moving, and the
+stage that follows it computes in less. The estimates below are of the
+computing, and MARGIN is what covers the moving.
 
 'off' keeps both halves on the card, which is what the pack always did. 'on'
 keeps only the half the running stage needs, and neither during the decode.
@@ -65,9 +72,26 @@ ELEMENT_BYTES = 2
 ATTENTION_COPIES = 3
 """Attention matrices of heads x queries x keys counted at a peak.
 
-On this pack's torch the stages pay for attention in whole matrices: the peaks
-measured on 2026-09-13 fit about 2.65 of them, for the acoustic prefill of a
-240-second song and for its flow matching alike. Three leaves a little room."""
+The AR half still pays for attention in whole matrices: its prefill asks for
+grouped-query attention the same way, and the peaks measured on 2026-09-13 fit
+about 2.65 of them. Three leaves a little room. The acoustic half stopped
+paying that in 0.7.0 -- see ``fused_bytes``."""
+
+WIDENED_KV_BYTES = 2 * HEADS * HEAD_DIM * ELEMENT_BYTES
+"""One key position of the copy ``runtime.fused_attention`` makes.
+
+It repeats the 8 key heads into 16 so that a kernel which streams takes the
+call, which costs K and V once more at the full head count: 8 KiB a position,
+against the matrix it no longer builds."""
+
+ROW_BYTES = 48 * 1024
+"""What one row the acoustic half computes costs beyond attention.
+
+Hidden states, projections and the MLP alive at a peak. Fitted to the work
+measured on 2026-09-17, with the weights and the caches subtracted: 47.0 and
+47.7 KiB a row for the prefill of a 40-second and a 233-second song, 42.5 and
+42.8 for their flow matching. At 48 the model lands within a percent of the
+prefill and about eight percent above the solve, which is the safe side."""
 
 WORK_BASE = int(0.35 * GIB)
 """cuBLAS workspace, sampling buffers and the like. The resident allocation sat
@@ -79,6 +103,16 @@ MARGIN = int(0.5 * GIB)
 DECODE_BYTES = 3 * GIB
 """The VAE and its tiles at the released 1024-frame core: 2.78 GiB measured for
 a 40-second song, 2.92 GiB for a 240-second one."""
+
+SMALL_DECODE_BYTES = int(1.5 * GIB)
+"""The same decode in the 256-frame tiles ``low_vram`` uses: 1.04 GiB of work
+measured on 2026-09-17 over a four-minute span of latents, against 2.43 at the
+released core, and the decoder itself is 0.25 GiB of that either way."""
+
+
+def decode_bytes(low_vram: bool = False) -> int:
+    """What to keep free for the decode, which depends on the tile it runs in."""
+    return SMALL_DECODE_BYTES if low_vram else DECODE_BYTES
 
 
 def kv_bytes(tokens: int, branches: int = 1) -> int:
@@ -95,6 +129,17 @@ def attention_bytes(queries: int, keys: int) -> int:
     return ATTENTION_COPIES * HEADS * int(queries) * int(keys) * ELEMENT_BYTES
 
 
+def fused_bytes(queries: int, keys: int) -> int:
+    """What one acoustic pass holds now that no kernel builds the matrix.
+
+    The widened K/V it attends to, and the rows it computes. Measured against
+    it on 2026-09-17: the acoustic prefill of a 40-second song took 0.350 GiB
+    and this says 0.352; of a 233-second song 1.348 against 1.350; their flow
+    matching 0.065 and 0.347 against 0.070 and 0.376.
+    """
+    return WIDENED_KV_BYTES * int(keys) + ROW_BYTES * int(queries)
+
+
 def ar_stage_bytes(prefix_tokens: int, budget: int, branches: int = 1) -> int:
     """What the score or the performance allocates beyond the weights.
 
@@ -107,14 +152,19 @@ def ar_stage_bytes(prefix_tokens: int, budget: int, branches: int = 1) -> int:
 
 
 def prefill_bytes(ar_tokens: int) -> int:
-    """The acoustic prefill: the cache it keeps and the attention it passes through."""
-    return kv_bytes(ar_tokens) + attention_bytes(ar_tokens, ar_tokens) + WORK_BASE
+    """The acoustic prefill: the cache it keeps and the attention it passes through.
+
+    WORK_BASE is not in here, and was until 0.7.0: the workspace it stands for
+    is allocated by the stage that runs first and is still held, so counting it
+    again as memory to find would ask a card for what it already gave.
+    """
+    return kv_bytes(ar_tokens) + fused_bytes(ar_tokens, ar_tokens)
 
 
 def solve_bytes(ar_tokens: int, frames: int) -> int:
     """Flow matching over ``frames``, beyond the prefill cache, which exists by then."""
     positions = int(frames) + 2
-    return attention_bytes(positions, int(ar_tokens) + positions) + WORK_BASE
+    return fused_bytes(positions, int(ar_tokens) + positions)
 
 
 def moves(mode: str, required, where: dict, sizes: dict, available, work: int,
@@ -141,6 +191,16 @@ def moves(mode: str, required, where: dict, sizes: dict, available, work: int,
     if available is not None and available < needed:
         return [(half, CPU) for half in occupying] + [(half, CARD) for half in bring]
     return [(half, CARD) for half in bring]
+
+
+def narrows(mode: str) -> bool:
+    """Whether this mode keeps the two vocabulary tables out of the card.
+
+    Every mode but ``off``, which means what it says: the whole model on the
+    card. It costs nothing measurable and takes the same song out -- see
+    ``vocabulary`` -- so there is no reason for a saving mode to decline it.
+    """
+    return (mode if mode in MODES else AUTO) != OFF
 
 
 def free_bytes(device):
@@ -176,13 +236,24 @@ def _tensors(module) -> list:
     return list(module.parameters()) + list(module.buffers())
 
 
+def _self_placed(module) -> bool:
+    """Whether a module decides its own residency, so no half owns it.
+
+    ``vocabulary.Sliced`` is the one that does: while it holds the two tables,
+    they live in system RAM with one window on the card, and a half that moved
+    them would undo exactly that.
+    """
+    return bool(getattr(module, "yue2_self_placed", False))
+
+
 def groups(lm) -> dict:
     """The AR half, the NAR layers and the shared modules of one model.
 
     Raises AttributeError on a model that is not laid out this way, which every
     caller takes as a reason to keep the model whole rather than half moved.
     """
-    ar = [_resolve(lm, name) for name in AR_TOP]
+    ar = [module for module in (_resolve(lm, name) for name in AR_TOP)
+          if not _self_placed(module)]
     nar = []
     for layer in lm.model.layers:
         ar.extend(getattr(layer, name) for name in AR_LAYER)

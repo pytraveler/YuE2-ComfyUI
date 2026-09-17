@@ -27,6 +27,21 @@ log = logging.getLogger(__name__)
 
 FALLBACK_CORE_FRAMES = 512
 
+LOW_VRAM_CORE_FRAMES = 256
+LOW_VRAM_FALLBACK_CORE_FRAMES = 64
+"""The tiles ``low_vram`` decodes in, and what it retries with.
+
+Measured on 2026-09-17 over 5828 frames, a four-minute song's worth: 1.04 GiB of
+work at 256 against 2.43 GiB at the released 1024, and no slower. The latents
+were random, which is fair for both questions -- neither what a tile costs nor
+how it rounds depends on their values. The tiling keeps every core's full
+receptive field, so the waveform is the same one the whole decoder would write;
+what differs is the order the floating point adds up in, measured 107 dB down.
+
+A retry has to ask for less than the try that failed, which is why this mode
+brings its own: 64 frames took 0.28 GiB and 2.18 seconds against 1.27, where
+the ordinary fallback of 512 would ask for more than 256 did."""
+
 
 class Stages:
     """Where each stage sits on a 0..100 bar, and what it is called.
@@ -118,6 +133,7 @@ def write_score(models, style, lyrics, seed, settings, progress=None,
     An empty score is the honest answer for cot='off', which goes straight from
     the lyrics to audio and never writes one.
     """
+    from . import quantized, vocabulary
     from .vendor.yue2.protocol import GenerationConfig, token_prefixes
     from .vendor.yue2.sampling import generate_tokens
 
@@ -131,12 +147,15 @@ def write_score(models, style, lyrics, seed, settings, progress=None,
                          top_p=float(settings["abc_top_p"]),
                          top_k=int(settings["abc_top_k"]))
     with runtime.deterministic_math(), \
-            runtime.pinned_attention(settings["attention_backend"]):
+            runtime.pinned_attention(settings["attention_backend"]), \
+            vocabulary.narrowed(models, placement.narrows(settings["offload"])), \
+            quantized.captured(models):
         prefix = token_prefixes(request, models.tokenizer)
 
         def score(mode):
             placement.arrange(models, placement.AR, placement.ar_stage_bytes(
                 len(prefix), sampling.max_tokens), "the score", mode)
+            vocabulary.tune(models, vocabulary.ABC, prefix)
             return generate_tokens(
                 models.lm, prefix, sampling, request.seed, "abc", cancelled=cancelled,
                 on_token=_counter(progress, band, sampling.max_tokens))
@@ -191,6 +210,7 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
             )
         ids = list(models.tokenizer.encode(abc))
 
+    from . import quantized, vocabulary
     from .vendor.yue2 import nar
     from .vendor.yue2.sampling import generate_tokens
 
@@ -214,7 +234,9 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
 
     timing = {}
     with runtime.deterministic_math(), \
-            runtime.pinned_attention(settings["attention_backend"]):
+            runtime.pinned_attention(settings["attention_backend"]), \
+            vocabulary.narrowed(models, placement.narrows(settings["offload"])), \
+            quantized.captured(models):
         prefix = token_prefixes(request, models.tokenizer, ids)
 
         if len(prefix) + sampling.max_tokens > CONTEXT:
@@ -238,6 +260,7 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
         def perform(mode):
             placement.arrange(models, placement.AR, placement.ar_stage_bytes(
                 width, sampling.max_tokens, branches), "the performance", mode)
+            vocabulary.tune(models, vocabulary.MUSIC, prefix, negative)
             return generate_tokens(
                 models.lm, prefix, sampling, request.seed, "semantic",
                 negative=negative, cfg_scale=request.guidance,
@@ -257,7 +280,7 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
             )
 
         def synthesize(mode):
-            with placement.acoustic(models, mode):
+            with placement.acoustic(models, mode), runtime.fused_attention():
                 return nar.synthesize(
                     models.lm, prefix, codec, request.seed, steps=int(settings["ode_steps"]),
                     context=CONTEXT, attention="sdpa", cancelled=cancelled,
@@ -368,13 +391,16 @@ def _decode(models, latents, progress, cancelled, timing, band=None):
     import torch
 
     vae, device = models.vae, models.device
+    low_vram = bool(getattr(models, "low_vram", False))
     z = latents.T.unsqueeze(0).contiguous()
     frames = int(z.shape[-1])
-    moved = placement.arrange(models, None, placement.DECODE_BYTES, "the decode")
+    moved = placement.arrange(models, None, placement.decode_bytes(low_vram),
+                              "the decode")
     start = time.perf_counter()
-    sizes = [int(vae.config.decode_core_frames)]
-    if FALLBACK_CORE_FRAMES not in sizes:
-        sizes.append(FALLBACK_CORE_FRAMES)
+    sizes = [LOW_VRAM_CORE_FRAMES if low_vram else int(vae.config.decode_core_frames)]
+    smaller = LOW_VRAM_FALLBACK_CORE_FRAMES if low_vram else FALLBACK_CORE_FRAMES
+    if smaller not in sizes:
+        sizes.append(smaller)
 
     vae.to(device)
     try:

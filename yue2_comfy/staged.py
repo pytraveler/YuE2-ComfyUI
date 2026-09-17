@@ -141,7 +141,8 @@ def session(settings, unique_id, progress):
 
     try:
         yield loader.acquire(files, settings["device"], settings["vae"], progress,
-                             settings.get("offload", "auto"))
+                             settings.get("offload", "auto"),
+                             bool(settings.get("low_vram", False)))
     except InterruptedError:
         translate_interrupt()
         raise

@@ -7,6 +7,29 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.7.1 - 2026-09-18
+
+### Fixed
+
+- **A video VAE was taken for YuE2's decoder ([#1]).** The file search accepts
+  a file as the decoder when it has tensors whose names start with `decoder.`
+  and no `lm_head.weight` -- which is true of every video and image VAE ever
+  published, and `models/vae` is one of the folders it sweeps. It only got the
+  chance on an install that has the released backbone without the standard
+  decoder beside it, which is exactly what template 6 leaves behind: it asks
+  for the legacy decoder, Comfy-Org does not publish one, so the released files
+  are fetched, and the next `standard` run finds the backbone, finds no decoder
+  to match, goes looking, and comes back with somebody's video VAE. A decoder
+  is now recognised by three tensor names only the released one has --
+  `decoder.layers.0.weight_g`, its `weight_v` and the first SnakeBeta slope --
+  so a stranger is not a candidate at all.
+- **The refusal named a dtype and not a file.** Loading a decoder that is not
+  FP32 said which tensors were narrow and left out the one thing worth knowing,
+  which file they were in. It names the file now, and says what to do when that
+  file is not YuE2's.
+
+[#1]: https://github.com/pytraveler/YuE2-ComfyUI/issues/1
+
 ## 0.7.0 - 2026-09-17
 
 ### Added

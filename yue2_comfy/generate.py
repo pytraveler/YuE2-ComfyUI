@@ -36,7 +36,11 @@ work at 256 against 2.43 GiB at the released 1024, and no slower. The latents
 were random, which is fair for both questions -- neither what a tile costs nor
 how it rounds depends on their values. The tiling keeps every core's full
 receptive field, so the waveform is the same one the whole decoder would write;
-what differs is the order the floating point adds up in, measured 107 dB down.
+what differs is how the floating point rounds. The decode runs outside
+deterministic_math, with TF32 convolutions, and there tile sizes from 128 frames
+to the whole song land 64-68 dB apart -- measured on 2026-09-19, on a real
+song's latents and on random ones alike. With TF32 off they are 116-120 dB
+apart.
 
 A retry has to ask for less than the try that failed, which is why this mode
 brings its own: 64 frames took 0.28 GiB and 2.18 seconds against 1.27, where
@@ -419,6 +423,7 @@ def _decode(models, latents, progress, cancelled, timing, band=None):
                 torch.cuda.empty_cache()
     finally:
         vae.to("cpu")
+        _forget_computed_weights(vae)
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -429,18 +434,51 @@ def _decode(models, latents, progress, cancelled, timing, band=None):
     return audio.clone().float().clamp_(-1, 1)
 
 
+def _forget_computed_weights(vae) -> None:
+    """Drop the weights weight_norm computed on the card, which ``vae.to`` does not move.
+
+    The decoder's 44 convolutions use the old ``torch.nn.utils.weight_norm``,
+    whose hook computes each weight from its two parameters before every call
+    and keeps it as a plain attribute. ``Module.to`` moves parameters and
+    buffers only, so after the decode those 0.25 GiB stayed on the card for as
+    long as the model was kept loaded -- measured on 2026-09-18, together with
+    another 0.2-0.5 GiB of the allocator's pool they pinned. The hook computes
+    them again on the next call, so dropping them changes no sample.
+    """
+    from torch.nn.utils.weight_norm import WeightNorm
+
+    for module in vae.modules():
+        for hook in module._forward_pre_hooks.values():
+            if isinstance(hook, WeightNorm) and hook.name in module.__dict__:
+                delattr(module, hook.name)
+
+
 def _decode_tiled(vae, z, core_frames, progress, cancelled, band=None):
     """One decode pass, with cancellation checked between tiles.
 
     decode_tiled takes no cancelled parameter, so the progress callback carries
     the check. Raising InterruptedError from it lands in the same place as a
     cancellation from any other stage.
+
+    The same callback gives the allocator's cache back after every tile. The
+    native allocator otherwise holds the blocks of every tile it has seen:
+    8.07 GiB of the card for a decode that allocates 3.16, measured on
+    2026-09-18 over 4500 frames on an RTX 5090, and 5.07 with the cache emptied
+    per tile. On Windows that difference is not an error but a card spilling
+    into system memory. The pool ComfyUI uses by default on CUDA 13 held 4.0-4.5
+    either way; the tiles and the samples are the same, and it costs about a
+    tenth of a second.
     """
+    import torch
+
     stage = band or Stages.DECODE
+    trim = next(vae.parameters()).device.type == "cuda"
 
     def report(done, total):
         if cancelled is not None and cancelled():
             raise InterruptedError("Cancelled during decode")
+        if trim:
+            torch.cuda.empty_cache()
         _band(progress, stage, done, total)
 
     return vae.decode_tiled(z, core_frames=core_frames,

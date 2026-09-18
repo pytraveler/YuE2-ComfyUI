@@ -231,3 +231,198 @@ def test_the_acoustic_stage_replaces_the_offload_upstream_would_do_itself():
         assert nar._offload_ar is not offload
         assert nar.CachedNAR is not engine
     assert (nar.CachedNAR, nar._offload_ar) == (engine, offload)
+
+
+def _tiny(torch):
+    """A model laid out the way ``groups`` reads one, a few kilobytes of it."""
+    hidden = 8
+
+    class Layer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            for name in p.AR_LAYER + p.NAR_LAYER:
+                setattr(self, name, torch.nn.Linear(hidden, hidden, bias=False))
+
+    model = torch.nn.Module()
+    model.model = torch.nn.Module()
+    model.model.layers = torch.nn.ModuleList(Layer() for _ in range(2))
+    model.model.embed_tokens = torch.nn.Embedding(4, hidden)
+    model.model.norm = torch.nn.LayerNorm(hidden)
+    model.lm_head = torch.nn.Linear(hidden, 4, bias=False)
+    for name in ("llm2vae", "vae2llm", "time_embedder", "latent_pos_embed"):
+        setattr(model, name, torch.nn.Linear(hidden, hidden))
+    model.requires_grad_(False)
+    return model
+
+
+def _storages(keeper, half):
+    return [p._held(owner, name, parameter).data_ptr()
+            for owner, name, parameter in p._slots(keeper.groups[half])]
+
+
+def test_a_file_backed_half_comes_back_to_the_tensors_it_left():
+    """Off the card is the old storage put back: nothing copied, nothing allocated.
+
+    The meta device stands in for the card, which is enough to follow every
+    tensor there and back without one.
+    """
+    torch = pytest.importorskip("torch")
+    model = p.load(_tiny(torch), torch.device("meta"), file_backed=True)
+    keeper = p.Placement(model, torch.device("meta"))
+    before = _storages(keeper, p.NAR)
+    _, moved, copied = keeper._move(p.NAR, p.CARD)
+    assert moved == copied == keeper.sizes[p.NAR]
+    assert keeper.where(p.NAR) == p.CARD and keeper.where(p.AR) == p.CPU
+    _, moved, copied = keeper._move(p.NAR, p.CPU)
+    assert (moved, copied) == (keeper.sizes[p.NAR], 0)
+    assert _storages(keeper, p.NAR) == before
+
+
+def test_a_half_that_is_not_file_backed_leaves_no_copy_behind():
+    """A copy kept of weights the loader built itself would be the model held twice."""
+    torch = pytest.importorskip("torch")
+    model = p.load(_tiny(torch), torch.device("meta"))
+    p.Placement(model, torch.device("meta"))._move(p.NAR, p.CARD)
+    assert not any(module.__dict__.get("_yue2_homes") for module in model.modules())
+
+
+def test_a_move_counts_only_what_was_not_already_there():
+    """The log says what moved, so a half already in place moves nothing."""
+    torch = pytest.importorskip("torch")
+    model = p.load(_tiny(torch), torch.device("meta"), file_backed=True)
+    keeper = p.Placement(model, torch.device("meta"))
+    assert keeper._move(p.AR, p.CPU)[1:] == (0, 0)
+    keeper._move(p.AR, p.CARD)
+    assert keeper._move(p.AR, p.CARD)[1:] == (0, 0)
+
+
+def test_the_pinned_route_carries_the_bytes_exactly(monkeypatch):
+    """Tiny buffers, so that one tensor spans several of them and both are reused."""
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA card")
+    monkeypatch.setattr(p, "STAGE_BYTES", 4096)
+    torch.manual_seed(0)
+    tensors = [torch.randn(3001, dtype=torch.bfloat16),
+               torch.randn(64, 48).t(),
+               torch.randint(-127, 127, (10000,), dtype=torch.int8),
+               torch.empty(0),
+               torch.randn(5, 7, 3, dtype=torch.float32)]
+    copies = p._to_card(tensors, torch.device("cuda"))
+    for tensor, copy in zip(tensors, copies):
+        assert copy.device.type == "cuda"
+        assert copy.dtype == tensor.dtype and copy.shape == tensor.shape
+        assert torch.equal(copy.cpu(), tensor)
+
+
+def test_a_half_on_a_real_card_comes_back_without_a_copy():
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA card")
+    card = torch.device("cuda")
+    for backed in (True, False):
+        model = p.load(_tiny(torch), card, file_backed=backed)
+        keeper = p.Placement(model, card)
+        values = [t.clone() for t in model.parameters()]
+        identities = [id(t) for t in model.parameters()]
+        keeper._move(p.AR, p.CARD)
+        assert keeper.where(p.AR) == p.CARD
+        _, moved, copied = keeper._move(p.AR, p.CPU)
+        assert copied == (0 if backed else moved)
+        assert keeper.where(p.AR) == p.CPU
+        assert all(torch.equal(a.cpu(), b.cpu()) for a, b in zip(model.parameters(), values))
+        assert [id(t) for t in model.parameters()] == identities
+
+
+def test_the_decode_is_budgeted_by_what_it_holds_not_what_it_allocates():
+    """Held on 2026-09-18: 4.0-4.5 GiB in the async pool, 5.07 native with a trim per
+    tile, against 3.15 allocated; 1.79-1.82 for the low_vram tiles. The old 3 GiB
+    left a 3070 Ti's NAR half on the card and the card at its ceiling."""
+    assert p.decode_bytes(False) + p.MARGIN >= 5.07 * GIB
+    assert p.decode_bytes(True) + p.MARGIN >= 1.82 * GIB
+    assert p.decode_bytes(True) < p.decode_bytes(False)
+
+
+def test_the_card_that_hit_the_ceiling_now_clears_the_nar_half_for_the_decode():
+    """His numbers: the AR half already off, 4.05 GiB free with the NAR half on."""
+    moved = p.moves(p.AUTO, None, where(p.CPU, p.CARD), SIZES, int(4.05 * GIB),
+                    p.decode_bytes(False))
+    assert moved == [(p.NAR, p.CPU)]
+
+
+def test_the_weights_weight_norm_computes_do_not_outlive_the_decode():
+    """They are recomputed before every call, so dropping them changes no sample."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    from yue2_comfy import generate
+    from yue2_comfy.vendor.yue2.modeling_vae import WNConv1d
+
+    torch.manual_seed(0)
+    block = torch.nn.Sequential(WNConv1d(4, 4, 3, padding=1), WNConv1d(4, 2, 3, padding=1))
+    signal = torch.randn(1, 4, 16)
+    first = block(signal)
+    assert all("weight" in conv.__dict__ for conv in block)
+
+    generate._forget_computed_weights(block)
+
+    assert not any("weight" in conv.__dict__ for conv in block)
+    assert torch.equal(block(signal), first)
+
+
+def test_off_keeps_no_copy_of_the_file_behind():
+    """Under 'off' a home would keep the checkpoint mapped and charged for nothing."""
+    torch = pytest.importorskip("torch")
+    model = p.load(_tiny(torch), torch.device("meta"), file_backed=True)
+    keeper = p.Placement(model, torch.device("meta"))
+    keeper._move(p.NAR, p.CARD, homes=False)
+    assert not any(module.__dict__.get("_yue2_homes") for module in model.modules())
+
+    keeper._move(p.AR, p.CARD)
+    assert any(module.__dict__.get("_yue2_homes") for module in model.modules())
+    keeper._move(p.AR, p.CPU)
+    keeper._move(p.AR, p.CARD, homes=False)
+    assert not any(module.__dict__.get("_yue2_homes") for module in model.modules())
+
+
+def test_the_decode_trims_every_tile_and_forgets_the_computed_weights(monkeypatch):
+    """What _decode has to call, checked on a stand-in decoder that says it is on a card."""
+    torch = pytest.importorskip("torch")
+    from yue2_comfy import generate
+
+    trims, forgotten = [], []
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: trims.append(1))
+    monkeypatch.setattr(generate, "_forget_computed_weights", lambda vae: forgotten.append(vae))
+
+    class Device:
+        type = "cuda"
+
+    class Weight:
+        device = Device()
+
+    class Config:
+        decode_core_frames = 4
+        decode_halo_frames = 1
+
+    class Decoder:
+        config = Config()
+
+        def to(self, device):
+            return self
+
+        def parameters(self):
+            return iter([Weight()])
+
+        def decode_tiled(self, z, core_frames, halo_frames, output_device, on_progress):
+            for done in range(3):
+                on_progress(done + 1, 3)
+            return torch.zeros(1, 2, 8)
+
+    class Models:
+        lm = None
+        vae = Decoder()
+        device = torch.device("cpu")
+        low_vram = False
+
+    generate._decode(Models, torch.zeros(12, 64), None, None, {})
+    assert len(trims) >= 3
+    assert forgotten == [Models.vae]

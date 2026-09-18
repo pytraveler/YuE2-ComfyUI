@@ -25,7 +25,7 @@ import threading
 from typing import NamedTuple
 
 from . import devices, paths, placement
-from .constants import install_command
+from .constants import LM_REPO, MERGES_BYTES, install_command
 from .discovery import Files, locate  # noqa: F401
 
 log = logging.getLogger(__name__)
@@ -83,7 +83,14 @@ def tensor_names(path: str) -> list:
 
 
 def _read_state(path: str, prefix: str = "") -> dict:
-    """Tensors from one file, on the CPU, optionally only those under a prefix."""
+    """Tensors from one file, on the CPU, optionally only those under a prefix.
+
+    Nothing is read here. safetensors maps the file and hands back views of
+    the mapping: seven gigabytes come back in a hundredth of a second, measured
+    on 2026-09-18, and the bytes are read when something first touches them --
+    for the backbone, when a half goes to the card. ``placement`` counts on
+    that, and keeps those views to put back when a half leaves the card.
+    """
     try:
         from safetensors import safe_open
     except ImportError as error:  # pragma: no cover - ComfyUI always ships it
@@ -125,7 +132,7 @@ def _config_dict(weights_path: str) -> dict:
     return loaded
 
 
-def _build_lm(state: dict, settings: dict, device):
+def _build_lm(state: dict, settings: dict, device, file_backed: bool = False):
     """Fill the backbone from a state dict that is already in released layout.
 
     Shared by the ordinary path and the repack path, so that a checkpoint
@@ -141,7 +148,7 @@ def _build_lm(state: dict, settings: dict, device):
         model = YuE2ForCausalLM(config)
     model.load_state_dict(state, strict=True, assign=True)
     model.eval().requires_grad_(False)
-    return placement.load(model, device)
+    return placement.load(model, device, file_backed)
 
 
 def _refuse_narrow(state: dict, source: str) -> None:
@@ -181,7 +188,8 @@ def _build_vae(state: dict, settings: dict, variant: str, source: str):
     return model, config.release_variant, len(decoder)
 
 
-def load_repack(path: str, device, variant: str = "standard", progress=None):
+def load_repack(path: str, device, variant: str = "standard", progress=None,
+                decoder_path: str = ""):
     """The backbone, decoder and vocabulary from Comfy-Org's single file.
 
     One read of the file yields all three. The conversion in repack.py was
@@ -194,10 +202,23 @@ def load_repack(path: str, device, variant: str = "standard", progress=None):
     half the download and none of the VRAM, and it is a different model to
     within the quantization error rather than the same one. Its decoder is
     stored FP16 and is widened, since the decoder runs in FP32 either way.
+
+    ``decoder_path`` is m-a-p's legacy decoder, which neither build carries.
+    With it, the decoder comes from that file through ``load_vae`` and the
+    repack's own is never built. Without it a legacy run is refused, and before
+    anything is read: the repack's decoder is the standard one, it has the same
+    217 tensors of the same shapes, and the strict load would take it under the
+    legacy name without a word -- all 217 differ in value, measured 2026-09-18.
     """
+    if variant == "legacy" and not decoder_path:
+        raise ValueError(
+            "Comfy-Org's repack carries only the standard decoder, and this run asked "
+            "for the legacy one. It is published by m-a-p alone; set 'download' in "
+            "YuE2 Options to 'auto' and the node will fetch it (0.49 GB).")
+
     import torch
 
-    from . import paths, repack
+    from . import repack
 
     quantized = any(key.endswith(repack.QUANT_SUFFIX) for key in tensor_names(path))
     if progress is not None:
@@ -213,22 +234,27 @@ def load_repack(path: str, device, variant: str = "standard", progress=None):
 
     if progress is not None:
         progress.text("Rebuilding the 3B backbone")
-    lm = _build_lm(repack.lm_state(state), _config_dict(path), device)
+    lm = _build_lm(repack.lm_state(state), _config_dict(path), device,
+                   file_backed=not quantized)
     log.info("[yue2_comfy.loader] LM: rebuilt from the repack at %s", path)
 
-    if progress is not None:
-        progress.text("Rebuilding the VAE decoder")
-    decoder = repack.vae_state(state)
-    if any(value.dtype != torch.float32 for value in decoder.values()):
-        decoder = {key: value.to(torch.float32) for key, value in decoder.items()}
-        log.info("[yue2_comfy.loader] VAE: widened to FP32, which is what it runs in")
-    vae, release, count = _build_vae(decoder, {}, variant, path)
-    log.info("[yue2_comfy.loader] VAE (%s): %d tensors from the repack", release, count)
+    if decoder_path:
+        if progress is not None:
+            progress.text("Loading the {} decoder".format(variant))
+        vae = load_vae(decoder_path, variant)
+    else:
+        if progress is not None:
+            progress.text("Rebuilding the VAE decoder")
+        decoder = repack.vae_state(state)
+        if any(value.dtype != torch.float32 for value in decoder.values()):
+            decoder = {key: value.to(torch.float32) for key, value in decoder.items()}
+            log.info("[yue2_comfy.loader] VAE: widened to FP32, which is what it runs in")
+        vae, release, count = _build_vae(decoder, {}, variant, path)
+        log.info("[yue2_comfy.loader] VAE (%s): %d tensors from the repack", release, count)
 
     if progress is not None:
         progress.text("Reading the embedded vocabulary")
-    cache = os.path.join(paths.models_root(), ".vocabulary")
-    tokenizer = load_tokenizer(repack.merges_beside(path, cache))
+    tokenizer = load_tokenizer(repack.merges_for(path))
     return lm, vae, tokenizer
 
 
@@ -254,7 +280,7 @@ def load_lm(weights_path: str, device):
     model.load_state_dict(state, strict=True, assign=True)
     log.info("[yue2_comfy.loader] LM: %d tensors from %s", len(state), weights_path)
     model.eval().requires_grad_(False)
-    return placement.load(model, device)
+    return placement.load(model, device, file_backed=True)
 
 
 def load_vae(weights_path: str, variant: str = "standard"):
@@ -293,6 +319,12 @@ def load_tokenizer(merges_path: str):
     and this constructor is the only place that needs it. The message names this
     interpreter, because in a portable build the embedded Python is not on PATH
     and a bare 'pip install' puts the package somewhere the node will never see.
+
+    A file that does not parse is refused by its path. The search takes a
+    qwen.tiktoken beside the backbone on its name alone, and the parser's own
+    words for a broken one say neither which file it was nor what to do: a
+    two-byte placeholder in models/YuE2/YuE2-3B came back on 2026-09-19 as
+    "not enough values to unpack (expected 2, got 1)" and nothing else.
     """
     from .vendor.yue2.tokenization_yue2 import YuE2TextTokenizer
 
@@ -305,6 +337,38 @@ def load_tokenizer(merges_path: str):
             "YuE2 needs tiktoken to read the lyrics, and it is not installed in "
             "this Python.\n\nInstall it with:\n\n" + install_command("tiktoken>=0.7")
         ) from error
+    except ValueError as error:
+        raise ValueError(_not_a_vocabulary(merges_path, error)) from error
+
+
+def _not_a_vocabulary(path: str, error: Exception) -> str:
+    """Why ``path`` was refused, and the fix that fits where it lies.
+
+    The pack's own copy, written out of Comfy-Org's checkpoint by
+    ``repack.merges_beside``, is written again when it is gone, so deleting it
+    is the whole fix. Anything else came from a download or was put there by
+    hand, and whether the folder around it is YuE2 at all is for the person to
+    say.
+    """
+    try:
+        size = "{:,} bytes".format(os.path.getsize(path))
+    except OSError:
+        size = "of a size that cannot be read"
+    message = (
+        "{} is not YuE2's vocabulary: it is {} (m-a-p's qwen.tiktoken is {:,}), and "
+        "reading it failed with: {}".format(path, size, MERGES_BYTES, error)
+    )
+    folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    if folder in (".vocabulary", "vocabulary") and os.path.basename(path).startswith("qwen-"):
+        return message + ("\n\nIt is this pack's copy of the vocabulary inside Comfy-Org's "
+                          "checkpoint: delete it, and the next run writes it again.")
+    return message + (
+        "\n\nThe search takes a qwen.tiktoken beside the backbone by its name, so a "
+        "damaged or stray copy stops the run here. If the rest of that folder is "
+        "m-a-p's download, put the qwen.tiktoken from " + LM_REPO + " back in its "
+        "place. If it is not, move the folder out of the ComfyUI model folders, or set "
+        + paths.ENV_ROOT + " to the one folder the YuE2 weights are in."
+    )
 
 
 def _stamp(path: str):
@@ -319,9 +383,14 @@ def _cache_key(files: Files, device, variant: str, low_vram: bool = False):
     for every call and writes nothing back into the model, so the backend is a
     property of a run, not of the loaded weights: putting it in the key would
     make toggling it in the options node evict and reload for nothing.
+
+    A repack with a decoder beside it carries the decoder's stamp too, so a
+    decoder replaced or downloaded again next to a resident repack is read
+    again rather than served stale.
     """
     if files.repack:
-        return (_stamp(files.repack), str(device), variant, bool(low_vram))
+        return (_stamp(files.repack), _stamp(files.vae) if files.vae else None,
+                str(device), variant, bool(low_vram))
     return (_stamp(files.lm), _stamp(files.vae), _stamp(files.merges),
             str(device), variant, bool(low_vram))
 
@@ -395,7 +464,8 @@ def acquire(files: Files, device_spec: str = "auto", variant: str = "standard",
         unload()
         _free_comfy_vram(device_spec)
         if files.repack:
-            lm, vae, tokenizer = load_repack(files.repack, device, variant, progress)
+            lm, vae, tokenizer = load_repack(files.repack, device, variant, progress,
+                                             files.vae)
         else:
             if progress is not None:
                 progress.text("Loading the tokenizer")

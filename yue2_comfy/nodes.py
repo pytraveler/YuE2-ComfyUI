@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from . import devices, edits, phrasing, transpose
 from .constants import (
@@ -146,9 +147,13 @@ DOWNLOAD_TOOLTIP = (
     "'auto' fetches Comfy-Org's single checkpoint into ComfyUI/models/checkpoints. "
     "That is the same file ComfyUI's own YuE2 nodes read, so one download serves "
     "both, and the model manager may well have put it there already.\n\n"
-    "'original' fetches the three files m-a-p released, into ComfyUI/models/YuE2. "
-    "It is the only source of the legacy decoder, and 'auto' switches to it by "
-    "itself when 'vae' is 'legacy'.\n\n"
+    "'original' fetches the three files m-a-p released, into ComfyUI/models/YuE2.\n\n"
+    "The legacy decoder is published only by m-a-p. With 'vae' at 'legacy' and the "
+    "model already on this machine -- m-a-p's files, or Comfy-Org's BF16 checkpoint, "
+    "which holds the same weights bit for bit -- that one 0.49 GB file is all that is "
+    "fetched. Comfy-Org's INT8 checkpoint counts only with 'quantization' at 'int8'. "
+    "On a machine with nothing yet, 'auto' takes m-a-p's files for 'legacy', the "
+    "smaller download.\n\n"
     "'off' downloads nothing and says instead which files are missing, the direct "
     "link to each, and the exact folder to put it in."
 )
@@ -334,6 +339,24 @@ EDITED_SCORE_TOOLTIP = (
 GENERATE_INSTEAD = "the model wrote a new score for these words"
 
 
+def stage_times(timing: dict, wall: float) -> str:
+    """Where one song's time went, stage by stage, and what loading added.
+
+    The summary line above it counts from the first stage, so a log used to
+    show neither the load nor which stage was slow: a report of 2026-09-18 left
+    open whether its decode had spilled out of an 8 GB card, which this line
+    answers at a glance. A stage that did not run this time is left out.
+    """
+    parts = []
+    for key, name in (("abc", "score"), ("semantic", "performance"),
+                      ("acoustic", "acoustic"), ("decode", "decode")):
+        seconds = (timing.get(key) or {}).get("seconds")
+        if seconds is not None:
+            parts.append("{} {:.1f} s".format(name, seconds))
+    loading = max(0.0, wall - float(timing.get("total_seconds", 0.0)))
+    return "stages: " + ", ".join(parts) + " | loading and the rest {:.1f} s".format(loading)
+
+
 class YuE2GenerateSong:
     """Style and lyrics in, a finished song out."""
 
@@ -399,6 +422,7 @@ class YuE2GenerateSong:
         voice = bool(settings.get("vocals_only"))
         song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
         separator = separator_weights(settings, unique_id, song_progress) if voice else None
+        began = time.perf_counter()
         with session(settings, unique_id, song_progress) as models:
             waveform, score, written, timing = generate.run(
                 models, style, lyrics, seed, settings,
@@ -417,6 +441,7 @@ class YuE2GenerateSong:
             timing["semantic"]["output_tokens"], timing["semantic"]["output_tps"],
             timing["semantic"]["execution"], timing["semantic"]["attention"], seed,
         )
+        log.info("[yue2_comfy] %s", stage_times(timing, time.perf_counter() - began))
         progress.finish("{:.0f} seconds of {}".format(timing["seconds_of_audio"], "vocals" if voice else "audio"))
         ui = {edits.WORDS_UI: [edits.mark(style, lyrics, settings["cot"])],
               edits.AUTO_SECONDS_UI: [auto_seconds(lyrics)]}

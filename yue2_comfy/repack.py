@@ -346,6 +346,25 @@ def tiktoken_lines(path: str) -> bytes:
                       for rank, token in rows) + b"\n"
 
 
+def merges_for(path: str) -> str:
+    """``merges_beside`` in the pack's cache, or in its user folder when that cannot be written.
+
+    The cache sits beside the models, and since 2026-09-18 YUE2_MODELS_ROOT is
+    where the models are inside ComfyUI too. A root kept read-only -- a shared
+    store, a drive mounted that way -- would otherwise fail every repack load
+    with PermissionError, where before it had worked.
+    """
+    from . import paths
+
+    try:
+        return merges_beside(path, os.path.join(paths.models_root(), ".vocabulary"))
+    except OSError:
+        fallback = os.path.join(paths.user_dir(), "vocabulary")
+        log.info("[yue2_comfy.repack] the models folder cannot be written; "
+                 "writing the vocabulary to %s", fallback)
+        return merges_beside(path, fallback)
+
+
 def merges_beside(path: str, cache_dir: str) -> str:
     """Write the embedded vocabulary out once, and return where it went.
 

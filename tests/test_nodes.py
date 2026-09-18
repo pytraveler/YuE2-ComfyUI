@@ -359,3 +359,15 @@ def test_the_length_tooltip_names_every_choice_and_its_size():
     for name, lines in constants.WRITER_LENGTH_LINES.items():
         assert "'" + name + "'" in tooltip
         assert "{} sung lines".format(lines) in tooltip
+
+
+def test_the_log_says_where_a_song_spent_its_time():
+    """Every stage that ran, and what loading added outside them."""
+    from yue2_comfy.nodes import stage_times
+
+    line = stage_times({"abc": {"seconds": 70.2}, "semantic": {"seconds": 71.0},
+                        "acoustic": {"seconds": 15.04}, "decode": {"seconds": 1.1},
+                        "total_seconds": 160.0}, 166.4)
+    assert line == ("stages: score 70.2 s, performance 71.0 s, acoustic 15.0 s, "
+                    "decode 1.1 s | loading and the rest 6.4 s")
+    assert "score" not in stage_times({"semantic": {"seconds": 1.0}, "total_seconds": 1.0}, 1.0)

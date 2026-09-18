@@ -100,14 +100,32 @@ WORK_BASE = int(0.35 * GIB)
 MARGIN = int(0.5 * GIB)
 """Room for the allocator's rounding, on top of every estimate."""
 
-DECODE_BYTES = 3 * GIB
-"""The VAE and its tiles at the released 1024-frame core: 2.78 GiB measured for
-a 40-second song, 2.92 GiB for a 240-second one."""
+DECODE_BYTES = 5 * GIB
+"""What the decode at the released 1024-frame core takes from the card, as the
+driver counts it rather than as torch allocates it.
 
-SMALL_DECODE_BYTES = int(1.5 * GIB)
-"""The same decode in the 256-frame tiles ``low_vram`` uses: 1.04 GiB of work
-measured on 2026-09-17 over a four-minute span of latents, against 2.43 at the
-released core, and the decoder itself is 0.25 GiB of that either way."""
+It used to be 3 GiB, the allocated peak, and that was the wrong number to judge
+by. Measured on 2026-09-18 on an RTX 5090 over 4500 frames of the legacy
+decoder (the standard one, and every song length, allocate the same): 3.15 GiB
+allocated under ComfyUI's own flags -- 0.25 of weights, 0.25 of the weights
+weight_norm computes from them, 2.18 of activations and 0.48 of cuDNN workspace
+-- but 4.0-4.5 GiB held by the cudaMallocAsync pool ComfyUI runs on CUDA 13
+(4.7 over 8700 frames), and 8.07 by the native allocator, 5.07 once
+``generate._decode_tiled`` empties the cache after every tile. What has to fit
+is what is held.
+
+An RTX 3070 Ti found the difference on 2026-09-18. With 4.05 GiB free and the
+3.5 this used to ask for, 'auto' left the NAR half on the card through the
+decode, and the process reached 7.1-7.8 GiB of the 6.8 the card had left for it
+(the same state reproduced on the 5090); moved off first, it peaked at
+4.2-4.9, and the song was the same to the byte. A half whose weights are still
+in the checkpoint file leaves the card without a copy, so asking for the room
+costs nothing."""
+
+SMALL_DECODE_BYTES = 2 * GIB
+"""The same decode in the 256-frame tiles ``low_vram`` uses: 1.22 GiB allocated
+and 1.79-1.82 held, cache emptied after every tile, under either allocator,
+measured on 2026-09-18 on the same 4500 frames."""
 
 
 def decode_bytes(low_vram: bool = False) -> int:
@@ -261,8 +279,201 @@ def groups(lm) -> dict:
     return {AR: ar, NAR: nar, SHARED: [_resolve(lm, name) for name in SHARED_TOP]}
 
 
+def _slots(modules) -> list:
+    """Every tensor a group holds, once each, as ``(owner, name, is_parameter)``.
+
+    Walked by hand rather than left to ``module.to`` because a move has to know
+    which module owns a tensor under which name: that is where its file-backed
+    copy is kept, and where it is put back. A tensor two modules share is
+    listed once, under the first of them.
+    """
+    found, seen = [], set()
+    for module in modules:
+        for owner in module.modules():
+            for table, parameter in ((owner._parameters, True), (owner._buffers, False)):
+                for name, tensor in table.items():
+                    if tensor is None or id(tensor) in seen:
+                        continue
+                    seen.add(id(tensor))
+                    found.append((owner, name, parameter))
+    return found
+
+
+def _held(owner, name: str, parameter: bool):
+    """The plain tensor behind one slot, never the Parameter wrapped around it.
+
+    A home has to be the storage the parameter held before the move, not the
+    Parameter itself: the move reassigns ``.data`` on that object, and a home
+    that was the object would follow it onto the card.
+    """
+    tensor = owner._parameters[name] if parameter else owner._buffers[name]
+    return tensor.data if parameter else tensor
+
+
+def _hold(owner, name: str, parameter: bool, tensor) -> None:
+    """Put a tensor in one slot. A parameter keeps its identity; only its data changes.
+
+    Unless torch will not swap the data across the two kinds of tensor -- the
+    CPU and the meta device, say -- in which case a new Parameter takes the
+    slot, which is what ``Module.to`` itself does there.
+    """
+    import torch
+
+    if not parameter:
+        owner._buffers[name] = tensor
+        return
+    held = owner._parameters[name]
+    if torch._has_compatible_shallow_copy_type(held, tensor):
+        held.data = tensor
+    else:
+        owner._parameters[name] = torch.nn.Parameter(tensor, requires_grad=held.requires_grad)
+
+
+def _homes(owner) -> dict:
+    """The file-backed copies one module's tensors had before they went to the card."""
+    homes = owner.__dict__.get("_yue2_homes")
+    if homes is None:
+        homes = {}
+        owner._yue2_homes = homes
+    return homes
+
+
+def _home(owner, name: str, tensor):
+    """The copy to put back instead of copying ``tensor`` off the card, or None."""
+    home = owner.__dict__.get("_yue2_homes", {}).get(name)
+    if home is None or home.device.type != "cpu":
+        return None
+    if home.shape != tensor.shape or home.dtype != tensor.dtype:
+        return None
+    return home
+
+
+STAGE_BYTES = 64 * 1024 ** 2
+"""The size of each of the two pinned buffers a half goes through onto the card.
+
+Measured on 2026-09-18 with the NAR half of the released checkpoint, 2.63 GiB,
+on an RTX 5090: ``tensor.to(card)`` moved it at 1.64 GB/s from a copy of the
+file the operating system had not cached and 4.18 GB/s from one it had; these
+buffers moved it at 4.65 and 7.55. Two are what lets the processor fill one
+while the card empties the other. 128 MiB of pinned memory is held for the
+life of the process, which is a sixtieth of the model it moves."""
+
+_STAGING = {}
+
+
+def _staging(device):
+    """The two pinned buffers and the copy stream for one card, made on first use."""
+    import torch
+
+    held = _STAGING.get(device)
+    if held is None:
+        held = ([torch.empty(STAGE_BYTES, dtype=torch.uint8, pin_memory=True)
+                 for _ in range(2)], torch.cuda.Stream(device))
+        _STAGING[device] = held
+    return held
+
+
+def _to_card(tensors, device) -> list:
+    """Copies of CPU tensors on ``device``, through the two pinned buffers.
+
+    ``tensor.to(card)`` from ordinary memory goes through the driver's own
+    staging, one small piece at a time, and when the tensor is a view of a
+    mapped checkpoint -- which is what the loader leaves behind, see
+    ``loader._read_state`` -- each of those pieces is also a page fault on the
+    file. Copying a buffer's worth at a time on the processor turns the faults
+    into one long sequential read, and the card copies out of pinned memory in
+    the background while the next buffer fills.
+
+    The bytes are the bytes: a test checks the copies against the originals.
+    A tensor that is not contiguous, and every tensor when the device is not
+    CUDA, goes the ordinary way.
+    """
+    import torch
+
+    if getattr(device, "type", None) != "cuda":
+        return [tensor.to(device) for tensor in tensors]
+    buffers, stream = _staging(device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    pending = [None, None]
+    slot = 0
+    copies = []
+    for tensor in tensors:
+        if not tensor.is_contiguous():
+            copies.append(tensor.to(device))
+            continue
+        copy = torch.empty(tensor.shape, dtype=tensor.dtype, device=device)
+        source = tensor.reshape(-1).view(torch.uint8)
+        target = copy.view(-1).view(torch.uint8)
+        for start in range(0, source.numel(), STAGE_BYTES):
+            count = min(STAGE_BYTES, source.numel() - start)
+            if pending[slot] is not None:
+                pending[slot].synchronize()
+            buffers[slot][:count].copy_(source[start:start + count])
+            with torch.cuda.stream(stream):
+                target[start:start + count].copy_(buffers[slot][:count], non_blocking=True)
+                pending[slot] = torch.cuda.Event()
+                pending[slot].record(stream)
+            slot ^= 1
+        copies.append(copy)
+    stream.synchronize()
+    return copies
+
+
+def _onto(slots, copies, keep: bool) -> None:
+    """Put the card copies in their slots, leaving each file-backed view as a home or not."""
+    for (owner, name, parameter, tensor), copy in zip(slots, copies):
+        if keep and tensor.device.type == "cpu":
+            _homes(owner)[name] = tensor
+        else:
+            owner.__dict__.get("_yue2_homes", {}).pop(name, None)
+        _hold(owner, name, parameter, copy)
+
+
+def _off(slots) -> int:
+    """Take tensors off the card, and say how many bytes had to be copied to do it.
+
+    A function of its own so that no name in it outlives the loop: a card
+    tensor still referenced when ``empty_cache`` runs keeps its block.
+    """
+    import torch
+
+    cpu = torch.device("cpu")
+    copied = 0
+    for owner, name, parameter, tensor in slots:
+        home = _home(owner, name, tensor)
+        if home is None:
+            home = tensor.to(cpu)
+            copied += tensor.numel() * tensor.element_size()
+        _hold(owner, name, parameter, home)
+    return copied
+
+
 class Placement:
-    """The groups of one loaded model, where they are, and how to move them."""
+    """The groups of one loaded model, where they are, and how to move them.
+
+    ``keeps_homes`` is whether the model's weights are still views of the
+    checkpoint file, which the loader says when it builds the model. When they
+    are, a tensor going to the card leaves its file-backed copy behind on the
+    module that owns it, and going back to the CPU is putting that copy back:
+    nothing crosses the bus and nothing is allocated. The pages belong to the
+    file, so the operating system can drop them whenever it needs the memory
+    and read them again on the next trip to the card.
+
+    That is the move the reporter's RTX 3070 Ti paid 4.7 of a 60-second run for
+    on 2026-09-18: both halves copied to the CPU before the decode, and freed a
+    second later when the run unloaded the model. When the weights are not
+    file-backed -- the INT8 repack restored to BF16, the layers ``low_vram``
+    packs -- a copy left behind would be memory the model holds twice, so they
+    are copied off the card as before.
+
+    Nor under 'off'. A home keeps the whole mapping of the checkpoint alive,
+    and on Windows a copy-on-write mapping is charged to the process in full:
+    with every tensor on the card, 16.98 GiB of commit against 10.06 without
+    homes, measured on 2026-09-18. 'auto' and 'on' hold that mapping anyway,
+    through the vocabulary tables they keep in RAM; 'off' narrows nothing and
+    used to let it go, so there a move onto the card forgets the home, and the
+    rare move off copies, as it always did.
+    """
 
     def __init__(self, lm, device):
         self.device = device
@@ -270,6 +481,7 @@ class Placement:
         self.sizes = {half: sum(t.numel() * t.element_size()
                                 for module in self.groups[half] for t in _tensors(module))
                       for half in HALVES}
+        self.keeps_homes = bool(getattr(lm, "_yue2_file_backed", False))
 
     def _place(self, device) -> str:
         if device.type == "cpu":
@@ -284,16 +496,45 @@ class Placement:
                   for module in self.groups[half] for tensor in _tensors(module)}
         return places.pop() if len(places) == 1 else MIXED
 
-    def _move(self, half: str, place: str) -> float:
+    def _pending(self, half: str, place: str) -> list:
+        """The slots of a half not yet where ``place`` is, with the tensor each holds.
+
+        Its own function so that no loop variable in ``_move`` still holds a
+        card tensor when the cache is emptied: one did, and kept a 24 MiB block.
+        """
+        pending = []
+        for owner, name, parameter in _slots(self.groups[half]):
+            tensor = _held(owner, name, parameter)
+            if (self._place(tensor.device) == CARD) != (place == CARD):
+                pending.append((owner, name, parameter, tensor))
+        return pending
+
+    def _move(self, half: str, place: str, homes: bool = True) -> tuple:
+        """Move one half, and say how long it took, how much moved and how much was copied.
+
+        Only tensors not already where they are going count, so the size in the
+        log is what the move handled rather than the size of the half: while
+        the vocabulary is narrowed the two tables never leave the CPU, and the
+        AR half that goes to the card is 2.63 GiB of its 4.03. ``homes`` False
+        is 'off': see the class.
+        """
         import torch
 
-        target = self.device if place == CARD else torch.device("cpu")
         start = time.perf_counter()
-        for module in self.groups[half]:
-            module.to(target)
-        if place == CPU and self.device.type == "cuda":
-            torch.cuda.empty_cache()
-        return time.perf_counter() - start
+        slots = self._pending(half, place)
+        moved = sum(entry[3].numel() * entry[3].element_size() for entry in slots)
+        copied = 0
+        if place == CARD:
+            copies = _to_card([entry[3] for entry in slots], self.device)
+            _onto(slots, copies, self.keeps_homes and homes)
+            del copies
+            copied = moved
+        else:
+            copied = _off(slots)
+            del slots
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+        return time.perf_counter() - start, moved, copied
 
     def arrange(self, mode: str, required, work: int, stage: str) -> list:
         """Move what this stage needs moved, and say so in the log."""
@@ -303,15 +544,23 @@ class Placement:
         available = free_bytes(self.device)
         done = []
         for half, place in moves(mode, required, where, self.sizes, available, work):
-            seconds = self._move(half, place)
+            seconds, moved, copied = self._move(half, place, homes=mode != OFF)
             done.append("{}->{}".format(half, place))
             reason = ""
             if available is not None:
                 reason = ", with {:.1f} GiB free for about {:.1f} GiB of work".format(
                     available / GIB, work / GIB)
-            log.info("[yue2_comfy.placement] %s: the %s half %s (%.2f GiB) in %.1f s%s",
-                     stage, half.upper(), "onto the card" if place == CARD else "to the CPU",
-                     self.sizes[half] / GIB, seconds, reason)
+            if place == CARD:
+                log.info("[yue2_comfy.placement] %s: the %s half onto the card (%.2f GiB) "
+                         "in %.1f s%s", stage, half.upper(), moved / GIB, seconds, reason)
+            elif copied:
+                log.info("[yue2_comfy.placement] %s: the %s half to the CPU (%.2f GiB, %.2f "
+                         "copied) in %.1f s%s", stage, half.upper(), moved / GIB,
+                         copied / GIB, seconds, reason)
+            else:
+                log.info("[yue2_comfy.placement] %s: the %s half off the card (%.2f GiB, "
+                         "nothing copied: its weights are still in the checkpoint file) "
+                         "in %.1f s%s", stage, half.upper(), moved / GIB, seconds, reason)
         return done
 
 
@@ -324,13 +573,18 @@ def placement_for(lm, device) -> Placement:
     return held
 
 
-def load(model, device):
+def load(model, device, file_backed: bool = False):
     """A freshly built model, ready for its first stage: the shared modules on the card.
 
     Both halves stay where the checkpoint was read, on the CPU, and move when a
     stage asks for them. Loading onto the card whole would put all 6.8 GiB
     there at once, which is the one peak no stage could take back.
+
+    ``file_backed`` is the loader saying that the halves are still views of the
+    checkpoint file, which is what lets a move off the card put them back there
+    instead of copying them -- see ``Placement``.
     """
+    model._yue2_file_backed = bool(file_backed)
     try:
         shared = groups(model)[SHARED]
     except AttributeError:

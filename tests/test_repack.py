@@ -321,3 +321,128 @@ def test_a_missing_checkpoint_is_reported_with_the_link_to_the_build_asked_for(
     message = str(error.value)
     assert "yue2_3b_int8_convrot.safetensors" in message
     assert "yue2_3b_bf16.safetensors" not in message
+
+
+def _legacy_decoder(root):
+    """m-a-p's legacy decoder in its published folder, as the downloader writes it."""
+    from test_discovery import VAE_NAMES, VAE_SHAPES
+    from test_loader import write_safetensors
+
+    folder = root / "YuE2-Vae-legacy"
+    folder.mkdir()
+    (folder / "config.json").write_text(json.dumps({"release_variant": "legacy"}),
+                                        encoding="utf-8")
+    return write_safetensors(folder / "model.safetensors", VAE_NAMES, VAE_SHAPES)
+
+
+def test_a_legacy_run_takes_the_backbone_from_the_repack(tmp_path, monkeypatch):
+    """The reporter of 2026-09-18 had the repack and fetched 6.7 GB beside it."""
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    target = write_marker_file(checkpoints / "yue2_3b_bf16.safetensors")
+    decoder = _legacy_decoder(tmp_path)
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    assert discovery.locate("legacy") == discovery.Files(repack=target, vae=decoder)
+    assert discovery.locate("standard") == discovery.Files(repack=target)
+
+
+def test_without_its_decoder_a_legacy_run_says_only_the_decoder_is_missing(tmp_path, monkeypatch):
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    target = write_marker_file(checkpoints / "yue2_3b_bf16.safetensors")
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    with pytest.raises(discovery.Missing) as refusal:
+        discovery.locate("legacy")
+
+    assert refusal.value.backbone
+    assert refusal.value.repack == target
+    message = str(refusal.value)
+    assert "YuE2-Vae-legacy" in message
+    assert "YuE2-3B/resolve" not in message
+
+
+def test_the_int8_repack_is_no_backbone_for_a_bf16_legacy_run(tmp_path, monkeypatch):
+    """The legacy decoder is the paper's baseline, and INT8 is a different model."""
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    int8 = write_marker_file(checkpoints / "yue2_3b_int8_convrot.safetensors", quantized=True)
+    decoder = _legacy_decoder(tmp_path)
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    with pytest.raises(discovery.Missing) as refusal:
+        discovery.locate("legacy", "bf16")
+    assert not refusal.value.backbone
+
+    assert discovery.locate("legacy", "int8") == discovery.Files(repack=int8, vae=decoder)
+
+
+def test_the_released_files_still_win_for_a_legacy_run(tmp_path, monkeypatch):
+    """Nobody who has all three released files is moved onto the repack."""
+    from test_discovery import publish
+
+    lm_dir, vae_dir = publish(tmp_path, vae_dirname="YuE2-Vae-legacy")
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    write_marker_file(checkpoints / "yue2_3b_bf16.safetensors")
+    write_marker_file(checkpoints / "yue2_3b_int8_convrot.safetensors", quantized=True)
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    for quantization in ("bf16", "int8"):
+        found = discovery.locate("legacy", quantization)
+        assert found.repack == ""
+        assert found.lm == str(lm_dir / "model.safetensors")
+        assert found.vae == str(vae_dir / "model.safetensors")
+
+
+def test_the_refusal_still_counts_as_file_not_found_and_copies():
+    import copy
+
+    refusal = discovery.Missing("gone", {"lm": "x", "merges": "y", "vae": ""})
+    assert isinstance(refusal, FileNotFoundError)
+    assert copy.copy(refusal).backbone
+    assert not discovery.Missing("gone").backbone
+
+
+def test_a_renamed_bf16_repack_beats_an_int8_one_under_its_published_name(tmp_path, monkeypatch):
+    """A BF16 legacy run looks for BF16 by what is inside, not only by name."""
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    write_marker_file(checkpoints / "yue2_3b_int8_convrot.safetensors", quantized=True)
+    mine = write_marker_file(checkpoints / "yue2_mine.safetensors")
+    decoder = _legacy_decoder(tmp_path)
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    assert discovery.locate("legacy", "bf16") == discovery.Files(repack=mine, vae=decoder)
+
+
+def test_an_int8_checkpoint_set_aside_is_named_in_the_refusal(tmp_path, monkeypatch):
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    int8 = write_marker_file(checkpoints / "yue2_3b_int8_convrot.safetensors", quantized=True)
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    with pytest.raises(discovery.Missing) as refusal:
+        discovery.locate("legacy", "bf16")
+    assert int8 in str(refusal.value)
+    assert "'int8'" in str(refusal.value)
+
+
+def test_the_vocabulary_goes_to_the_user_folder_when_the_models_folder_is_read_only(tmp_path, monkeypatch):
+    path = write_repack(tmp_path / "repack.safetensors", {"!": 0})
+    models = tmp_path / "models"
+    user = tmp_path / "user"
+    monkeypatch.setattr(paths, "models_root", lambda: str(models))
+    monkeypatch.setattr(paths, "user_dir", lambda: str(user))
+    original = repack.merges_beside
+
+    def refusing(source, cache_dir):
+        if cache_dir.startswith(str(models)):
+            raise PermissionError(13, "read-only", cache_dir)
+        return original(source, cache_dir)
+
+    monkeypatch.setattr(repack, "merges_beside", refusing)
+    written = repack.merges_for(path)
+    assert written.startswith(str(user))
+    assert os.path.isfile(written)

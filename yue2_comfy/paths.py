@@ -71,14 +71,35 @@ def _folder_paths():
     return folder_paths
 
 
+def _override_root() -> str:
+    """YUE2_MODELS_ROOT when ``search_roots`` would search it, otherwise "".
+
+    The folders the pack writes to have to be the folder it then looks in, and
+    until 2026-09-18 they were not: inside ComfyUI the override narrowed the
+    search to itself while the downloads still went to ComfyUI/models, so a
+    fetch succeeded and the next look found nothing, on every run. It surfaced
+    when a test harness with the override set wrote stand-in weights into a
+    production ComfyUI's models folder.
+    """
+    override = os.environ.get(ENV_ROOT)
+    if not override or is_network_path(override) or not os.path.isdir(override):
+        return ""
+    return override
+
+
 def models_root() -> str:
     """ComfyUI/models/YuE2, registered and created on first use.
 
     This is the one directory the pack writes to, so it is also the only one it
     creates. Registering it with folder_paths is what lets a user redirect it
     later from extra_model_paths.yaml and have us follow without being told.
+    YUE2_MODELS_ROOT, when it names a directory, wins over both: it is where
+    the search looks, so it is where the downloads go.
     """
     folder_paths = _folder_paths()
+    override = _override_root()
+    if override:
+        return override
     if folder_paths is None:
         root = os.environ.get(ENV_ROOT) or os.path.join(os.path.expanduser("~"), MODELS_SUBDIR)
         os.makedirs(root, exist_ok=True)
@@ -134,8 +155,15 @@ def checkpoints_root() -> str:
     redirected checkpoints in extra_model_paths.yaml did it to keep large files
     off this drive. Without ComfyUI -- in the tests, or a bare interpreter --
     there is no checkpoints folder to speak of, so the pack's own root is used.
+    With YUE2_MODELS_ROOT set it is the checkpoints folder inside that root,
+    which is where the search and the refusal message look for the repack.
     """
     folder_paths = _folder_paths()
+    override = _override_root()
+    if override:
+        root = os.path.join(override, CHECKPOINTS_SUBDIR)
+        os.makedirs(root, exist_ok=True)
+        return root
     if folder_paths is None:
         return models_root()
     try:
@@ -162,9 +190,15 @@ def audio_encoders_root() -> str:
     The same reasoning as for the checkpoint: it is where their repository puts
     it and where ComfyUI's own audio encoder loader looks, so one copy serves
     both. An existing registered path wins, and without ComfyUI the pack's own
-    root stands in.
+    root stands in. With YUE2_MODELS_ROOT set it is the audio_encoders folder
+    inside that root, where the search and the refusal message look.
     """
     folder_paths = _folder_paths()
+    override = _override_root()
+    if override:
+        root = os.path.join(override, AUDIO_ENCODERS_SUBDIR)
+        os.makedirs(root, exist_ok=True)
+        return root
     if folder_paths is None:
         return os.path.join(models_root(), AUDIO_ENCODERS_SUBDIR)
     try:

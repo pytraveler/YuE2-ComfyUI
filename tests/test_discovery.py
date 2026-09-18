@@ -14,12 +14,14 @@ import pytest
 
 from yue2_comfy import discovery, paths
 from yue2_comfy.constants import (
-    LM_DIRNAME, MERGES_NAME, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, WEIGHTS_NAME,
+    LM_DIRNAME, MERGES_NAME, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, VAE_SIGNATURE,
+    WEIGHTS_NAME,
 )
 
 from test_loader import write_safetensors
 
-VAE_NAMES = list(VAE_MARKERS) + ["decoder.layers.0.bias"]
+VAE_NAMES = list(VAE_MARKERS) + [VAE_SIGNATURE[0], "decoder.layers.0.bias"]
+VAE_SHAPES = dict([VAE_SIGNATURE])
 """A decoder shaped like the released one, which is what discovery looks for."""
 
 VIDEO_VAE_NAMES = ["decoder.conv_in.conv.weight", "decoder.conv_in.conv.bias",
@@ -45,7 +47,7 @@ def publish(root, lm_names=("lm_head.weight", "vae2llm.weight"),
     lm_dir.mkdir(parents=True, exist_ok=True)
     vae_dir.mkdir(parents=True, exist_ok=True)
     write_safetensors(lm_dir / WEIGHTS_NAME, list(lm_names))
-    write_safetensors(vae_dir / WEIGHTS_NAME, list(vae_names))
+    write_safetensors(vae_dir / WEIGHTS_NAME, list(vae_names), VAE_SHAPES)
     (lm_dir / MERGES_NAME).write_bytes(b"placeholder")
     return lm_dir, vae_dir
 
@@ -89,7 +91,7 @@ def test_a_hugging_face_snapshot_is_a_home_too(tmp_path, monkeypatch):
     lm.mkdir(parents=True)
     vae.mkdir(parents=True)
     write_safetensors(lm / WEIGHTS_NAME, ["lm_head.weight", "vae2llm.weight"])
-    write_safetensors(vae / WEIGHTS_NAME, VAE_NAMES)
+    write_safetensors(vae / WEIGHTS_NAME, VAE_NAMES, VAE_SHAPES)
     (lm / MERGES_NAME).write_bytes(b"placeholder")
 
     monkeypatch.delenv(paths.ENV_ROOT, raising=False)
@@ -109,7 +111,7 @@ def test_a_renamed_file_is_found_by_what_is_inside_it(tmp_path, monkeypatch):
     loose.mkdir()
     write_safetensors(loose / "yue2-music-model.safetensors",
                       ["lm_head.weight", "vae2llm.weight"])
-    write_safetensors(loose / "some-audio-vae.safetensors", VAE_NAMES)
+    write_safetensors(loose / "some-audio-vae.safetensors", VAE_NAMES, VAE_SHAPES)
     (loose / "vocab.tiktoken").write_bytes(b"placeholder")
     monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
 
@@ -157,7 +159,7 @@ def test_an_unrelated_checkpoint_is_not_mistaken_for_the_model(tmp_path, monkeyp
 
 def test_identify_reads_the_discriminator_not_the_shape(tmp_path):
     lm = write_safetensors(tmp_path / "a.safetensors", ["lm_head.weight", "vae2llm.weight"])
-    vae = write_safetensors(tmp_path / "b.safetensors", VAE_NAMES)
+    vae = write_safetensors(tmp_path / "b.safetensors", VAE_NAMES, VAE_SHAPES)
     other = write_safetensors(tmp_path / "c.safetensors", ["lm_head.weight"])
     junk = tmp_path / "d.safetensors"
     junk.write_bytes(b"nonsense")
@@ -253,3 +255,118 @@ def test_models_root_is_created_and_registered(tmp_path, monkeypatch):
     root = paths.models_root()
 
     assert os.path.isdir(root)
+
+
+ACE_DIT_NAMES = ["decoder.condition_embedder.bias", "decoder.condition_embedder.weight",
+                 "decoder.layers.0.cross_attn.k_norm.weight",
+                 "decoder.layers.0.cross_attn.k_proj.weight", "decoder.proj_in.1.weight"]
+"""ACE-Step 1.5's diffusion model, which names itself "decoder": issue #1's file."""
+
+ACE_VAE_NAMES = list(VAE_MARKERS) + ["decoder.layers.0.bias", "decoder.layers.6.alpha",
+                                     "decoder.layers.7.weight_g", "decoder.layers.7.weight_v"]
+"""ACE-Step 1.5's own VAE: the same Oobleck names as YuE2's, five blocks instead of six."""
+
+
+def test_ace_step_weights_are_not_taken_for_the_vae(tmp_path, monkeypatch):
+    """What a machine with ACE-Step installed has beside a backbone and no standard decoder.
+
+    The diffusion model in models/diffusion_models and the VAE in models/vae
+    both come before the checkpoints in the sweep, and neither may be taken for
+    the decoder: a standard run has to fall through to the repack.
+    """
+    lm = tmp_path / LM_DIRNAME
+    lm.mkdir()
+    write_safetensors(lm / WEIGHTS_NAME, ["lm_head.weight", "vae2llm.weight"])
+    (lm / MERGES_NAME).write_bytes(b"placeholder")
+    for folder in ("diffusion_models", "vae", "checkpoints"):
+        (tmp_path / folder).mkdir()
+    dit = write_safetensors(tmp_path / "diffusion_models" / "acestep_v1.5_turbo.safetensors",
+                            ACE_DIT_NAMES)
+    ace_vae = write_safetensors(tmp_path / "vae" / "ace_1.5_vae.safetensors", ACE_VAE_NAMES,
+                                {"decoder.layers.7.weight_v": [2, 128, 7]})
+    cousin = write_safetensors(tmp_path / "vae" / "six_blocks_wide.safetensors", VAE_NAMES,
+                               {VAE_SIGNATURE[0]: [2, 128, 7]})
+    repack = tmp_path / "checkpoints" / "yue2_3b_bf16.safetensors"
+    repack.write_bytes(b"placeholder")
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    assert discovery.identify(dit) == ""
+    assert discovery.identify(ace_vae) == ""
+    assert discovery.identify(cousin) == ""
+    assert discovery.locate("standard") == discovery.Files(repack=str(repack))
+
+
+def test_the_override_is_where_the_downloads_go_inside_comfyui_too(tmp_path, monkeypatch):
+    """The search looks only in the override, so the downloads have to land there.
+
+    Inside ComfyUI they did not: models_root answered ComfyUI/models/YuE2
+    whatever the override said, a fetch succeeded, and the next look found
+    nothing. A stand-in folder_paths makes this ComfyUI without importing it.
+    """
+    comfy_models = tmp_path / "comfy" / "models"
+    comfy_models.mkdir(parents=True)
+
+    class FolderPaths:
+        models_dir = str(comfy_models)
+
+        @staticmethod
+        def get_folder_paths(name):
+            return [str(comfy_models / name)]
+
+        @staticmethod
+        def add_model_folder_path(name, path):
+            pass
+
+    override = tmp_path / "mine"
+    override.mkdir()
+    monkeypatch.setattr(paths, "_folder_paths", lambda: FolderPaths)
+    monkeypatch.setenv(paths.ENV_ROOT, str(override))
+
+    assert paths.models_root() == str(override)
+    assert paths.checkpoints_root() == str(override / "checkpoints")
+    assert paths.search_roots() == [str(override)]
+
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path / "typo"))
+    assert paths.models_root() == str(comfy_models / "YuE2")
+
+
+def test_a_network_override_is_never_touched_by_the_folders_the_pack_writes_to(tmp_path, monkeypatch):
+    """Looking at a UNC path is a login attempt; the write roots must not look either."""
+    comfy_models = tmp_path / "comfy" / "models"
+    comfy_models.mkdir(parents=True)
+
+    class FolderPaths:
+        models_dir = str(comfy_models)
+
+        @staticmethod
+        def get_folder_paths(name):
+            return [str(comfy_models / name)]
+
+        @staticmethod
+        def add_model_folder_path(name, path):
+            pass
+
+    touched = []
+    real_isdir = os.path.isdir
+    monkeypatch.setattr(os.path, "isdir", lambda path: touched.append(path) or real_isdir(path))
+    monkeypatch.setattr(paths, "_folder_paths", lambda: FolderPaths)
+    monkeypatch.setenv(paths.ENV_ROOT, r"\\attacker\share\models")
+
+    assert paths.models_root() == str(comfy_models / "YuE2")
+    assert not [path for path in touched if "attacker" in str(path)]
+
+
+def test_the_override_also_holds_the_audio_encoders(tmp_path, monkeypatch):
+    """SheetSage2 is searched for only in the override, so it has to be written there."""
+    class FolderPaths:
+        models_dir = str(tmp_path / "comfy")
+
+        @staticmethod
+        def get_folder_paths(name):
+            return [str(tmp_path / "comfy" / name)]
+
+    override = tmp_path / "mine"
+    override.mkdir()
+    monkeypatch.setattr(paths, "_folder_paths", lambda: FolderPaths)
+    monkeypatch.setenv(paths.ENV_ROOT, str(override))
+    assert paths.audio_encoders_root() == str(override / "audio_encoders")

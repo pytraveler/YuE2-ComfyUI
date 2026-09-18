@@ -160,3 +160,84 @@ def test_the_source_decides_which_repository_is_fetched(monkeypatch):
     calls.clear()
     download.ensure({"download": "original", "vae": "legacy"})
     assert calls == [("original", "legacy")]
+
+
+def _missing_once(found=None, repack=""):
+    """A locate that fails once with ``found`` and ``repack`` on disk, then succeeds."""
+    attempts = {"n": 0}
+
+    def locate(variant, quantization):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise discovery.Missing("not yet", found, repack)
+        return discovery.Files(repack="fetched")
+
+    return locate
+
+
+def _recording(monkeypatch):
+    calls = []
+    monkeypatch.setattr(download, "fetch_repack",
+                        lambda quantization, progress=None: calls.append(("repack", quantization)))
+    monkeypatch.setattr(download, "fetch_original",
+                        lambda variant, progress=None: calls.append(("original", variant)))
+    monkeypatch.setattr(download, "fetch_decoder",
+                        lambda variant, progress=None: calls.append(("decoder", variant)))
+    return calls
+
+
+def test_a_legacy_run_with_a_backbone_fetches_only_its_decoder(monkeypatch):
+    """With the repack here, or m-a-p's backbone, whatever 'download' says."""
+    calls = _recording(monkeypatch)
+    for found, repack, source in (({}, "repack", "auto"),
+                                  ({"lm": "lm", "merges": "m"}, "", "original"),
+                                  ({}, "repack", "comfy-org")):
+        monkeypatch.setattr(discovery, "locate", _missing_once(found, repack))
+        download.ensure({"vae": "legacy", "download": source})
+    assert calls == [("decoder", "legacy")] * 3
+
+
+def test_an_empty_machine_fetches_the_legacy_decoder_beside_the_repack_when_told_to(monkeypatch):
+    """'comfy-org' with legacy used to fetch the repack and refuse; now it fetches both."""
+    calls = _recording(monkeypatch)
+    monkeypatch.setattr(discovery, "locate", _missing_once())
+    download.ensure({"vae": "legacy", "download": "comfy-org"})
+    assert calls == [("repack", "bf16"), ("decoder", "legacy")]
+
+    calls.clear()
+    monkeypatch.setattr(discovery, "locate", _missing_once())
+    download.ensure({"vae": "legacy"})
+    assert calls == [("original", "legacy")]
+
+
+def test_a_standard_run_is_not_given_a_decoder_on_its_own(monkeypatch):
+    """With m-a-p's backbone here and 'comfy-org' asked for, the repack is still fetched."""
+    calls = _recording(monkeypatch)
+    monkeypatch.setattr(discovery, "locate", _missing_once({"lm": "lm", "merges": "m"}))
+    download.ensure({"vae": "standard", "download": "comfy-org"})
+    assert calls == [("repack", "bf16")]
+
+
+def test_off_refuses_even_when_one_decoder_would_complete_the_run(monkeypatch):
+    """'off' means nothing is fetched, however small the missing file is."""
+    calls = _recording(monkeypatch)
+    monkeypatch.setattr(discovery, "locate", _missing_once({}, "repack"))
+    with pytest.raises(FileNotFoundError) as refusal:
+        download.ensure({"vae": "legacy", "download": "off"})
+    assert calls == []
+    assert "fetch it itself" in str(refusal.value)
+
+
+def test_a_standard_run_with_the_released_backbone_fetches_only_its_decoder(monkeypatch):
+    """The mirror of the legacy case: 0.49 GB, not the 7.26 GB checkpoint again."""
+    calls = _recording(monkeypatch)
+    monkeypatch.setattr(discovery, "locate", _missing_once({"lm": "lm", "merges": "m"}))
+    download.ensure({"vae": "standard"})
+    assert calls == [("decoder", "standard")]
+
+
+def test_a_decoder_found_elsewhere_is_not_fetched_again(monkeypatch):
+    calls = _recording(monkeypatch)
+    monkeypatch.setattr(discovery, "locate", _missing_once({"vae": "models/vae/legacy.safetensors"}))
+    download.ensure({"vae": "legacy", "download": "comfy-org"})
+    assert calls == [("repack", "bf16")]

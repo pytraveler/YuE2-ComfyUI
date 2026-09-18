@@ -7,6 +7,66 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.7.2 - 2026-09-19
+
+### Changed
+
+- **Moving a half of the model is faster.** The weights stay in the checkpoint
+  file after they are loaded, so moving a half onto the card was really a read
+  from disk through page faults, and moving it off was a copy into RAM. Onto the
+  card now goes through two pinned buffers -- from 1.6 GB/s to 4.7 for a file
+  not yet in the system's cache, from 4.2 to 7.6 for one that is -- and off the
+  card is free: the weights are still in the file. On the reporting RTX 3070 Ti
+  the moves had taken 12 s of a 60 s run.
+- **The log says where a song's time went.** A second line after the summary
+  gives the seconds of the score, the performance, the acoustic stage and the
+  decode, and what loading added.
+
+### Fixed
+
+- **The decode ran an 8 GB card into its ceiling.** In `offload` `auto` the
+  decode kept the NAR half (2.63 GB) on the card whenever 3.5 GB was free, which
+  is what the decode allocates. What it holds is more: 4.0-4.5 GB in the pool
+  ComfyUI uses on CUDA 13, 8 GB under the native allocator. An RTX 3070 Ti
+  reached 7.1-7.8 GB of the 6.8 it had, and on Windows that is a card spilling
+  into system memory, not an error. The decode now asks for the room it holds,
+  so a card like that moves the NAR half off first -- with no copy, see above --
+  and peaks at 4.5-5.4 GB. It also gives the allocator's cache back after every
+  tile (8 GB down to 5 under the native allocator) and no longer leaves 0.25 GB
+  of the decoder's weights on the card after it finishes. Songs are the same to
+  the byte.
+- **The legacy decoder downloaded the whole model again beside Comfy-Org's
+  checkpoint.** With `vae` at `legacy`, a machine that had
+  `yue2_3b_bf16.safetensors` fetched m-a-p's 6.76 GB backbone to get a 0.49 GB
+  decoder, and with `download` at `comfy-org` it fetched nothing and refused.
+  The checkpoint's backbone and vocabulary are m-a-p's, byte for byte, so a
+  legacy run now takes them from the checkpoint and fetches the decoder alone;
+  a song from either sounds the same to the byte. The INT8 checkpoint stands in
+  only with `quantization` at `int8`. The same goes the other way: a machine with
+  m-a-p's backbone that lacks only the standard decoder fetches that decoder,
+  not the checkpoint.
+- **ACE-Step 1.5's VAE could still be taken for YuE2's decoder, and 0.7.1 got
+  issue [#1] wrong.** The file in #1 was not a video VAE but ACE-Step 1.5's
+  diffusion model, which calls itself `decoder`; 0.7.1's tensor names stopped
+  it. ACE-Step's own VAE in `models/vae` has those names too, with the same
+  shapes, so a `standard` run with only m-a-p's backbone on the machine could
+  still pick it up. A decoder is now also recognised by its output convolution,
+  which only YuE2's six-block decoder has.
+- **With `YUE2_MODELS_ROOT` set inside ComfyUI, downloads went elsewhere.** The
+  search looked only in the override while the files were written to
+  `ComfyUI/models`, so a download succeeded and the next run found nothing.
+  Downloads now go into the override. If you had set it, the speech model and
+  the vocal separator will be fetched once more, into the override; the old
+  copies in `ComfyUI/models/YuE2` can be deleted.
+- **A broken `qwen.tiktoken` said "not enough values to unpack" and nothing
+  else.** The search takes a vocabulary beside the backbone by its name, so a
+  damaged or stray one stopped the run in the parser's own words. It is now
+  refused by its path and size, with what to do: put m-a-p's file back, move
+  the folder out, or, for the pack's own copy of the checkpoint's vocabulary,
+  delete it.
+
+[#1]: https://github.com/pytraveler/YuE2-ComfyUI/issues/1
+
 ## 0.7.1 - 2026-09-18
 
 ### Fixed

@@ -14,13 +14,17 @@ import pytest
 from yue2_comfy import loader
 
 
-def write_safetensors(path, names):
-    """A minimal valid safetensors file: header only, one float32 scalar each."""
+def write_safetensors(path, names, shapes=None):
+    """A minimal valid safetensors file of float32 zeros, one scalar each unless ``shapes`` names one."""
     header = {}
     offset = 0
     for name in names:
-        header[name] = {"dtype": "F32", "shape": [1], "data_offsets": [offset, offset + 4]}
-        offset += 4
+        shape = list((shapes or {}).get(name, [1]))
+        size = 4
+        for extent in shape:
+            size *= extent
+        header[name] = {"dtype": "F32", "shape": shape, "data_offsets": [offset, offset + size]}
+        offset += size
     header["__metadata__"] = {"format": "pt"}
     body = json.dumps(header).encode("utf-8")
     with open(path, "wb") as handle:
@@ -187,3 +191,145 @@ def test_a_narrow_decoder_is_refused_by_name(tmp_path):
     assert "video_vae_fp16.safetensors" in message
     assert "decoder.layers.0.weight_g" in message
     assert "decoder.layers.0.bias" not in message
+
+
+def test_a_repack_is_never_built_into_a_legacy_decoder(tmp_path):
+    """Same 217 tensors, same shapes, all different values: the strict load cannot tell."""
+    with pytest.raises(ValueError) as refusal:
+        loader.load_repack(str(tmp_path / "absent.safetensors"), "cpu", "legacy")
+    assert "legacy" in str(refusal.value)
+
+
+def test_a_decoder_beside_a_repack_is_part_of_what_is_loaded(tmp_path):
+    from yue2_comfy import discovery
+
+    repack = write_safetensors(tmp_path / "r.safetensors", ["a"])
+    decoder = write_safetensors(tmp_path / "d.safetensors", ["b"])
+    alone = loader._cache_key(discovery.Files(repack=repack), "cpu", "standard")
+    beside = loader._cache_key(discovery.Files(repack=repack, vae=decoder), "cpu", "legacy")
+    assert alone != beside
+    assert beside[1] == loader._stamp(decoder)
+
+
+def test_a_rewritten_decoder_beside_a_repack_is_loaded_again(tmp_path):
+    """The stamp is what changes when the decoder is replaced; the key has to follow it."""
+    import os
+
+    from yue2_comfy import discovery
+
+    repack = write_safetensors(tmp_path / "r.safetensors", ["a"])
+    decoder = tmp_path / "d.safetensors"
+    write_safetensors(decoder, ["b"])
+    files = discovery.Files(repack=repack, vae=str(decoder))
+    before = loader._cache_key(files, "cpu", "legacy")
+    write_safetensors(decoder, ["b", "c"])
+    os.utime(decoder, ns=(1, 1))
+    assert loader._cache_key(files, "cpu", "legacy") != before
+
+
+def test_the_repack_takes_its_decoder_from_the_file_beside_it(tmp_path, monkeypatch):
+    """With a decoder path, load_vae builds it and the repack's own decoder is never built."""
+    pytest.importorskip("torch")
+    from yue2_comfy import repack
+
+    calls = []
+    monkeypatch.setattr(loader, "tensor_names", lambda path: [])
+    monkeypatch.setattr(loader, "_read_state", lambda path, prefix="": {})
+    monkeypatch.setattr(repack, "lm_state", lambda state: {})
+    monkeypatch.setattr(loader, "_build_lm", lambda state, settings, device, file_backed=False:
+                        calls.append(("lm", file_backed)) or "lm")
+    monkeypatch.setattr(loader, "load_vae", lambda path, variant: calls.append(("vae", path, variant))
+                        or "vae")
+    monkeypatch.setattr(loader, "_build_vae", lambda *args: calls.append(("repack vae",)))
+    monkeypatch.setattr(repack, "merges_for", lambda path: "merges")
+    monkeypatch.setattr(loader, "load_tokenizer", lambda path: "tokenizer")
+
+    result = loader.load_repack(str(tmp_path / "r.safetensors"), "cpu", "legacy",
+                                decoder_path="legacy.safetensors")
+
+    assert result == ("lm", "vae", "tokenizer")
+    assert calls == [("lm", True), ("vae", "legacy.safetensors", "legacy")]
+
+
+def test_acquire_hands_the_decoder_beside_a_repack_to_the_loader(tmp_path, monkeypatch):
+    from yue2_comfy import discovery
+
+    seen = []
+    monkeypatch.setattr(loader, "load_repack", lambda path, device, variant, progress, decoder:
+                        seen.append((path, variant, decoder)) or ("lm", "vae", "tokenizer"))
+    monkeypatch.setattr(loader, "_free_comfy_vram", lambda spec: None)
+    monkeypatch.setattr(loader.devices, "resolve", lambda spec: "cpu")
+    repack = write_safetensors(tmp_path / "r.safetensors", ["a"])
+    decoder = write_safetensors(tmp_path / "d.safetensors", ["b"])
+    try:
+        loader.acquire(discovery.Files(repack=repack, vae=decoder), "cpu", "legacy")
+    finally:
+        loader.unload()
+    assert seen == [(repack, "legacy", decoder)]
+
+
+def test_the_released_backbone_is_marked_as_still_in_its_file(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    from yue2_comfy import placement
+
+    marked = []
+    monkeypatch.setattr(loader, "_read_state", lambda path, prefix="": {})
+    monkeypatch.setattr(placement, "load", lambda model, device, file_backed=False:
+                        marked.append(file_backed) or model)
+
+    class Model:
+        def load_state_dict(self, state, strict=True, assign=False):
+            pass
+
+        def eval(self):
+            return self
+
+        def requires_grad_(self, flag):
+            return self
+
+    from yue2_comfy.vendor.yue2 import modeling_yue2
+    monkeypatch.setattr(modeling_yue2, "YuE2ForCausalLM", lambda config: Model())
+    loader.load_lm(str(tmp_path / "m.safetensors"), "cpu")
+    assert marked == [True]
+
+
+def _without_tiktoken(monkeypatch):
+    """The parse fails before tiktoken is used, so an empty module stands in for it."""
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "tiktoken", types.ModuleType("tiktoken"))
+
+
+def test_a_placeholder_vocabulary_is_refused_by_its_path(tmp_path, monkeypatch):
+    """The two-byte file from 2026-09-19 has to say where it is and what to do."""
+    _without_tiktoken(monkeypatch)
+    folder = tmp_path / "YuE2-3B"
+    folder.mkdir()
+    placeholder = folder / "qwen.tiktoken"
+    placeholder.write_bytes(b"{}")
+
+    with pytest.raises(ValueError) as refusal:
+        loader.load_tokenizer(str(placeholder))
+    message = str(refusal.value)
+    assert str(placeholder) in message
+    assert "2 bytes" in message and "2,561,218" in message
+    assert "not enough values to unpack" in message
+    assert "m-a-p/YuE2-3B" in message and loader.paths.ENV_ROOT in message
+    assert "writes it again" not in message
+
+
+def test_a_broken_copy_in_the_packs_own_cache_is_simply_deleted(tmp_path, monkeypatch):
+    _without_tiktoken(monkeypatch)
+    cache = tmp_path / ".vocabulary"
+    cache.mkdir()
+    short = cache / "qwen-7799983228-1.tiktoken"
+    short.write_bytes(b"IQ== 0\nIg== 1\n")
+
+    with pytest.raises(ValueError) as refusal:
+        loader.load_tokenizer(str(short))
+    message = str(refusal.value)
+    assert str(short) in message
+    assert "151643" in message
+    assert "delete it, and the next run writes it again" in message

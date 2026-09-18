@@ -129,6 +129,7 @@ def compress(lm, card=None) -> int:
                 packed += 1
     if packed:
         lm._yue2_placement = None
+        lm._yue2_file_backed = False
         log.info("[yue2_comfy.quantized] %d matrices packed as INT8, %.2f GiB less to "
                  "keep on the card", packed, saved / float(1024 ** 3))
     return packed

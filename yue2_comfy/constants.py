@@ -71,13 +71,30 @@ LM_BYTES = 7261441640
 VAE_BYTES = 530512720
 VAE_MARKERS = ("decoder.layers.0.weight_g", "decoder.layers.0.weight_v",
                "decoder.layers.1.layers.0.alpha")
-"""Tensor names only the Oobleck decoder m-a-p released has, in both variants.
+"""Tensor names of the stable-audio Oobleck decoder family, which m-a-p's is one of.
 
 A bare "decoder." prefix is not enough to recognise it: every video and image
-VAE on the machine has one too, and one of those picked up from models/vae is a
-wrong decoder that loads nowhere near YuE2. These three are the weight-norm pair
-of the first convolution and the first SnakeBeta slope -- the released file has
-all three, a diffusers-shaped VAE with its decoder.conv_in.conv.weight has none.
+VAE on the machine has one too, and so does ACE-Step 1.5's diffusion model. These
+three are the weight-norm pair of the first convolution and the first SnakeBeta
+slope; a diffusers-shaped VAE with its decoder.conv_in.conv.weight has none of
+them. They do not single out YuE2's decoder, though: ACE-Step 1.5's own VAE has
+all three with the same shapes, and VAE_SIGNATURE below is what tells the two
+apart.
+"""
+VAE_SIGNATURE = ("decoder.layers.8.weight_v", [2, 64, 7])
+"""The tensor, and its shape, that the names above cannot tell apart from a cousin.
+
+VAE_MARKERS are the names of any Oobleck decoder in the stable-audio layout, and
+ACE-Step 1.5's VAE (ace_1.5_vae.safetensors, which ComfyUI's own ACE-Step
+templates put in models/vae) has all three, with the same shapes. Its decoder
+has five upsampling blocks and stops at decoder.layers.7; m-a-p's has six, and
+its output convolution -- 64 channels into stereo, kernel 7 -- is layers.8.
+Measured on 2026-09-18 on the released YuE2-Vae, YuE2-Vae-legacy and
+ace_1.5_vae headers.
+
+Issue #1 was the other ACE-Step file: its diffusion model names itself
+"decoder", which the prefix rule before 0.7.1 took for a VAE. VAE_MARKERS
+stopped that one, and this stops the VAE beside it.
 """
 MERGES_BYTES = 2561218
 REPACK_BF16_BYTES = 7799983228

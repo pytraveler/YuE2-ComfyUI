@@ -87,12 +87,11 @@ def cuts(pieces, text: str, start: int, end: int) -> tuple:
 
 def _vocabulary() -> str:
     """The qwen.tiktoken this machine has, written out of a repack if need be."""
-    from . import discovery, paths, repack
+    from . import discovery, repack
 
     files = discovery.locate("standard", "bf16")
     if files.repack:
-        cache = os.path.join(paths.models_root(), ".vocabulary")
-        return repack.merges_beside(files.repack, cache)
+        return repack.merges_for(files.repack)
     return files.merges
 
 

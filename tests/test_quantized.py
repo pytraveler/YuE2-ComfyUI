@@ -241,3 +241,11 @@ def test_the_decode_retries_in_smaller_tiles_not_larger_ones():
 
     assert generate.LOW_VRAM_FALLBACK_CORE_FRAMES < generate.LOW_VRAM_CORE_FRAMES
     assert generate.FALLBACK_CORE_FRAMES < 1024
+
+
+def test_packed_layers_are_no_longer_the_checkpoint_file():
+    """The rows are built in memory, so a copy of them left behind would be held twice."""
+    model = Model()
+    model._yue2_file_backed = True
+    quantized.compress(model)
+    assert model._yue2_file_backed is False

@@ -1,9 +1,12 @@
 """Finding the weights, wherever this machine already keeps them.
 
-They come in two shapes: the three files m-a-p released, and the single file
+They come from two places: the three files m-a-p released, and the single file
 Comfy-Org repacked for the native ComfyUI nodes, which itself comes in a BF16
-and an INT8 build. All of them are looked for, and all of them were measured to
-give the same model.
+and an INT8 build. The released files and the BF16 file were measured to be the
+same model, byte for byte; the INT8 one is that model to within its
+quantization. The legacy decoder is published only by m-a-p, so a run that asks
+for it may take the backbone from the repack and the decoder from m-a-p's file
+-- see ``Files``.
 
 Two passes, in this order, because they cost very different amounts.
 
@@ -18,11 +21,12 @@ hundred kilobytes of JSON, never the seven gigabytes behind it. This is the
 pass that finds a file somebody renamed or dropped into models/diffusion_models,
 which is the single most common way a working install looks broken.
 
-What it asks of a file is its own tensor names, not the shape of them. A
-decoder is recognised by the names in VAE_MARKERS and nothing looser: the
-sweep reaches models/vae, where a machine that generates video keeps decoders
-of its own, and "has a tensor called decoder.something" is true of every one
-of them.
+What it asks of a file is its own tensor names, and for the decoder the shape
+of one of them. A decoder is recognised by the names in VAE_MARKERS and the
+output convolution in VAE_SIGNATURE, and nothing looser: the sweep reaches
+models/diffusion_models and models/vae, where ACE-Step 1.5 keeps a diffusion
+model that calls itself "decoder" and a VAE of the same Oobleck family as
+YuE2's, and a machine that generates video keeps decoders of its own.
 
 Neither pass is the real check. load_state_dict(strict=True) in loader.py is,
 and a file that fools both passes fails there with a loud tensor mismatch
@@ -42,8 +46,8 @@ from .constants import (
     LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
     REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
     SHEETSAGE_BYTES, SHEETSAGE_MARKERS, SHEETSAGE_NAME, SHEETSAGE_PATH,
-    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, VOCALS_BYTES, VOCALS_KNOWN_BYTES,
-    VOCALS_MARKERS, VOCALS_NAME, VOCALS_REPO, VOCALS_REVISION, WEIGHTS_NAME,
+    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, VAE_SIGNATURE, VOCALS_BYTES,
+    VOCALS_KNOWN_BYTES, VOCALS_MARKERS, VOCALS_NAME, VOCALS_REPO, VOCALS_REVISION, WEIGHTS_NAME,
 )
 
 log = logging.getLogger(__name__)
@@ -63,17 +67,46 @@ _identified: dict = {}
 
 
 class Files(NamedTuple):
-    """Where the weights are, in one of the two shapes they come in.
+    """Where the weights are, in one of the three shapes they come in.
 
-    Either three released files, or the one repacked file Comfy-Org publishes
-    for the native ComfyUI nodes. When repack is set the other three are empty:
-    that file carries the backbone, the decoder and the vocabulary together.
+    Three released files; or the one repacked file Comfy-Org publishes for the
+    native ComfyUI nodes, which carries the backbone, the standard decoder and
+    the vocabulary together, with the other three fields empty; or that file
+    with ``vae`` set as well, for the legacy decoder, which only m-a-p publish.
+    Then the backbone and the vocabulary come from the repack, the decoder from
+    ``vae``, and the repack's own decoder is never built.
+
+    The third shape exists because the second was being thrown away: a machine
+    with the repack that asked for the legacy decoder downloaded m-a-p's 6.7 GB
+    backbone to get a 0.5 GB decoder, reported on 2026-09-18. The two
+    backbones are the same model -- all 628 tensors of the BF16 repack, rebuilt
+    by repack.lm_state, were measured equal to the released file's that day,
+    byte for byte, and its vocabulary to qwen.tiktoken, so a seed sings the
+    same song from either.
     """
 
     lm: str = ""
     vae: str = ""
     merges: str = ""
     repack: str = ""
+
+
+class Missing(FileNotFoundError):
+    """Weights not found, and what was: enough for the downloader to fetch only the rest.
+
+    Still a FileNotFoundError, so every caller that catches one is unchanged.
+    ``backbone`` is whether the backbone and its vocabulary are here in either
+    shape, which is what decides that a legacy run needs only its decoder.
+    """
+
+    def __init__(self, message: str = "", found=None, repack: str = ""):
+        super().__init__(message)
+        self.found = dict(found or {})
+        self.repack = repack
+
+    @property
+    def backbone(self) -> bool:
+        return bool(self.repack) or bool(self.found.get("lm") and self.found.get("merges"))
 
 
 def _stamp(path: str):
@@ -142,7 +175,9 @@ def _identify_by_header(path: str) -> str:
         return "vocals"
     if all(marker in names for marker in LM_MARKERS):
         return "lm"
-    if all(marker in names for marker in VAE_MARKERS):
+    signature, shape = VAE_SIGNATURE
+    if (all(marker in names for marker in VAE_MARKERS)
+            and (header.get(signature) or {}).get("shape") == shape):
         return "vae"
     return ""
 
@@ -252,7 +287,7 @@ def _looks_like_merges(path: str, entry: str) -> bool:
         return False
 
 
-def find_repack(roots: list, quantization: str = "bf16") -> str:
+def find_repack(roots: list, quantization: str = "bf16", exact: bool = False) -> str:
     """Comfy-Org's single file, by name first and by what is inside it second.
 
     The published names are checked before any file is opened, because in a
@@ -263,9 +298,13 @@ def find_repack(roots: list, quantization: str = "bf16") -> str:
     The requested build is preferred and the other one is still accepted. A
     machine that has the BF16 file should not be told to download the INT8 one
     to satisfy a switch, and the node says in the log which build it used.
+    ``exact`` takes the requested build or nothing, by name or by what is in
+    it, which is what a legacy run needs of a BF16 backbone: a renamed BF16
+    file must not lose to an INT8 one under its published name.
     """
     preferred = REPACK_FOR.get(quantization, REPACK_BF16_NAME)
-    order = [preferred] + [name for name in REPACK_KINDS if name != preferred]
+    order = [preferred] + ([] if exact else
+                           [name for name in REPACK_KINDS if name != preferred])
     for name in order:
         for root in roots:
             for home in _homes(root):
@@ -287,7 +326,7 @@ def find_repack(roots: list, quantization: str = "bf16") -> str:
                 kind = identify(candidate)
                 if kind == wanted:
                     return candidate
-                if kind in ("repack", "repack_int8") and not fallback:
+                if kind in ("repack", "repack_int8") and not fallback and not exact:
                     fallback = candidate
     return fallback
 
@@ -305,8 +344,12 @@ def locate(variant: str = "standard", quantization: str = "bf16") -> Files:
     ordinary quantization round trip.
 
     The variant chooses between the two VAE releases and nothing else. Neither
-    repack carries the legacy decoder, so asking for it falls through to the
-    released files rather than quietly handing back the wrong decoder.
+    repack carries the legacy decoder, so a legacy run takes it from m-a-p's
+    file and nowhere else: with all three released files here those win as
+    before, and otherwise a repack supplies the backbone beside it. That repack
+    has to be the BF16 build unless INT8 was asked for, because the INT8 one is
+    a different model to within its quantization, and the legacy decoder is the
+    one people use to reproduce the paper's numbers.
     """
     roots = paths.search_roots()
     if quantization == "int8" and variant != "legacy":
@@ -322,13 +365,22 @@ def locate(variant: str = "standard", quantization: str = "bf16") -> Files:
         log.info("[yue2_comfy.discovery] weights found: %s", os.path.dirname(found["lm"]))
         return Files(lm=found["lm"], vae=found["vae"], merges=found["merges"])
 
-    if variant != "legacy":
-        repacked = find_repack(roots, quantization)
-        if repacked:
-            log.info("[yue2_comfy.discovery] using the repacked checkpoint at %s", repacked)
-            return Files(repack=repacked)
+    repacked = find_repack(roots, quantization)
+    if repacked and variant != "legacy":
+        log.info("[yue2_comfy.discovery] using the repacked checkpoint at %s", repacked)
+        return Files(repack=repacked)
+    aside = ""
+    if repacked and quantization != "int8":
+        exact = find_repack(roots, quantization, exact=True)
+        aside = "" if exact else repacked
+        repacked = exact
+    if repacked and found["vae"]:
+        log.info("[yue2_comfy.discovery] using the repacked checkpoint at %s with the "
+                 "legacy decoder at %s", repacked, found["vae"])
+        return Files(repack=repacked, vae=found["vae"])
 
-    raise FileNotFoundError(_missing_message(roots, found, variant, quantization))
+    raise Missing(_missing_message(roots, found, variant, quantization, repacked, aside),
+                  found, repacked)
 
 
 def _expected_root() -> str:
@@ -356,19 +408,39 @@ def _link(repo: str, repo_path: str, revision: str = "main") -> str:
     return "https://huggingface.co/" + repo + "/resolve/" + revision + "/" + repo_path
 
 
-def _missing_message(roots: list, found: dict, variant: str, quantization: str) -> str:
+def _missing_message(roots: list, found: dict, variant: str, quantization: str,
+                     repacked: str = "", aside: str = "") -> str:
     """What is missing, where it goes, and the exact links to fetch it.
 
     Written for somebody who has turned downloading off, or is behind a proxy
     that will not let the node reach the Hub. Every path in it is the real path
     on this machine, and every link is one a browser or a download manager can
-    take as it stands.
+    take as it stands. When a legacy run has its backbone already, in either
+    shape, only the decoder is asked for. ``aside`` is an INT8 checkpoint a
+    BF16 legacy run would not take, which the message names, with the setting
+    that would take it.
     """
     from .constants import (
         LM_REPO, REPACK_BF16_PATH, REPACK_INT8_PATH, VAE_LEGACY_REPO, VAE_REPO,
     )
 
+    root = _expected_root()
+    backbone = bool(repacked) or bool(found.get("lm") and found.get("merges"))
+    if variant == "legacy" and backbone:
+        lines = ["The legacy decoder is not on this machine yet. The backbone is here"
+                 + (", in " + repacked if repacked else "")
+                 + "; the decoder is published only by m-a-p:", "",
+                 "  " + _link(VAE_LEGACY_REPO, WEIGHTS_NAME),
+                 "  -> " + os.path.join(root, VAE_LEGACY_DIRNAME, WEIGHTS_NAME), ""]
+        return "\n".join(lines + _where(roots))
+
     lines = ["YuE2 weights are not on this machine yet.", ""]
+    if aside:
+        lines += ["Comfy-Org's INT8 checkpoint is here, at " + aside + ", but a legacy "
+                  "run with 'quantization' at 'bf16' does not take it: it is the "
+                  "same model only to within its quantization. Set 'quantization' "
+                  "to 'int8' in YuE2 Options to use it, with the legacy decoder "
+                  "beside it.", ""]
     if variant != "legacy":
         name = REPACK_INT8_NAME if quantization == "int8" else REPACK_BF16_NAME
         repo_path = REPACK_INT8_PATH if quantization == "int8" else REPACK_BF16_PATH
@@ -384,9 +456,9 @@ def _missing_message(roots: list, found: dict, variant: str, quantization: str) 
             "",
         ]
     else:
-        lines += ["The legacy decoder comes only as the released files:", ""]
+        lines += ["The legacy decoder is published only by m-a-p, beside the backbone "
+                  "it released:", ""]
 
-    root = _expected_root()
     vae_dirname = VAE_LEGACY_DIRNAME if variant == "legacy" else VAE_DIRNAME
     vae_repo = VAE_LEGACY_REPO if variant == "legacy" else VAE_REPO
     wanted = [
@@ -398,19 +470,22 @@ def _missing_message(roots: list, found: dict, variant: str, quantization: str) 
         if found.get(key):
             continue
         lines += ["  " + _link(repo, repo_path), "  -> " + destination, ""]
+    return "\n".join(lines + _where(roots))
 
+
+def _where(roots: list) -> list:
+    """The closing lines of a missing-weights message: where the search looked."""
     if roots:
         where = "1 place" if len(roots) == 1 else str(len(roots)) + " places"
-        lines += ["Looked in " + where + ", including:", ""]
+        lines = ["Looked in " + where + ", including:", ""]
         lines += ["  " + path for path in roots[:6]]
     else:
-        lines += ["There was nowhere to look: no ComfyUI model folders were found."]
-    lines += [
+        lines = ["There was nowhere to look: no ComfyUI model folders were found."]
+    return lines + [
         "",
         "Set " + paths.ENV_ROOT + " to point at a folder you keep them in, if it is "
         "none of the above.",
     ]
-    return "\n".join(lines)
 
 
 def find_sheetsage(roots=None) -> str:

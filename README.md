@@ -898,15 +898,24 @@ nothing is downloaded twice.
 | `download` | What it fetches | Where it puts it |
 | --- | --- | --- |
 | `auto` (default) | Comfy-Org's single checkpoint, 7.26 GB | `ComfyUI/models/checkpoints/` |
-| `comfy-org` | the same, whatever else is set | `ComfyUI/models/checkpoints/` |
+| `comfy-org` | the same, plus the legacy decoder when `vae` is `legacy` | `ComfyUI/models/checkpoints/`, the decoder into `ComfyUI/models/YuE2/` |
 | `original` | the three files m-a-p released | `ComfyUI/models/YuE2/` |
 | `off` | nothing, and says which files are missing, the link to each and the folder it goes in | -- |
 
 `auto` prefers the repackaged checkpoint for one reason: it is the same file
 ComfyUI's own YuE2 nodes read. One download serves both, and if the ComfyUI
-model manager has already installed it there is nothing to download at all. It
-falls back to the released files when `vae` is `legacy`, which is a decoder
-Comfy-Org does not publish.
+model manager has already installed it there is nothing to download at all.
+
+The legacy decoder is the one file Comfy-Org does not publish, so with `vae` at
+`legacy` it comes from m-a-p, 0.49 GB, beside whichever backbone the machine
+already has: Comfy-Org's BF16 checkpoint and m-a-p's backbone are the same
+weights, so a machine with the checkpoint fetches the decoder and nothing else.
+The INT8 checkpoint is the same model only to within its quantization, so it
+stands in for the backbone only with `quantization` at `int8`. On a machine with
+nothing yet, `auto` takes m-a-p's files for `legacy`, which is 0.5 GB less than
+the checkpoint plus the decoder. The same holds the other way round: a machine
+that has m-a-p's backbone and only lacks the standard decoder fetches that
+decoder, not the checkpoint.
 
 | File | Size | Repository |
 | --- | --- | --- |
@@ -914,6 +923,7 @@ Comfy-Org does not publish.
 | `checkpoints/yue2_3b_int8_convrot.safetensors` | 3.69 GB | [Comfy-Org/YuE2](https://huggingface.co/Comfy-Org/YuE2) |
 | `YuE2-3B/model.safetensors` | 6.76 GB | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) |
 | `YuE2-Vae/model.safetensors` | 0.49 GB | [m-a-p/YuE2-Vae](https://huggingface.co/m-a-p/YuE2-Vae) |
+| `YuE2-Vae-legacy/model.safetensors` | 0.49 GB | [m-a-p/YuE2-Vae-legacy](https://huggingface.co/m-a-p/YuE2-Vae-legacy) |
 | `YuE2-3B/qwen.tiktoken` | 2.4 MB | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) |
 
 `YuE2 Write Song` has a model of its own, fetched the same way and only when
@@ -1018,7 +1028,11 @@ mismatches.
 Whichever layout is found, it is the same model. The conversion from the
 repackaged file was checked against the released checkpoints tensor by tensor:
 628 of 628 in the language model and 435 of 435 in the VAE, bit for bit, and a
-song generated from each has the same waveform hash.
+song generated from each has the same waveform hash. The same holds for the
+checkpoint's backbone beside m-a-p's legacy decoder: rechecked on 2026-09-18,
+the backbone and the vocabulary are the released ones to the byte, and a legacy
+song from that pair had the score and the waveform hash of the one from the
+three released files.
 
 If nothing is found, the refusal names every missing file at once -- the direct
 link and the exact folder for each -- because being told about one missing file
@@ -1028,7 +1042,7 @@ per run turns one fix into three.
 
 | Variable | Effect |
 |---|---|
-| `YUE2_MODELS_ROOT` | Search this directory and nothing else. An override that still lets the search wander is not an override, so setting this makes the answer to "where did it load that from" exactly one directory |
+| `YUE2_MODELS_ROOT` | Search this directory and nothing else, and download into it too: the checkpoint into its `checkpoints` folder, SheetSage2 into `audio_encoders`, everything else beside them. An override that still lets the search wander is not an override, so setting this makes the answer to "where did it load that from" exactly one directory. ComfyUI's own YuE2 nodes do not look there, so a checkpoint fetched into it serves this pack only |
 | `YUE2_OLLAMA_MODELS` | Where an Ollama store lives, for the ones this process will not reach on its own -- a WSL or container store |
 | `YUE2_LLAMA_BIN` | The llama.cpp binary to use, ahead of every other place it is looked for |
 | `HF_HUB_CACHE`, `HF_HOME` | Honoured when looking through the Hugging Face cache |

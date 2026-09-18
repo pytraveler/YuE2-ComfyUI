@@ -646,17 +646,30 @@ def fetch_original(variant: str, progress=None) -> None:
     figures, two wheels -- and none of it is any use to a node, so only the
     files the loader actually reads are asked for.
     """
-    root = paths.models_root()
-    lm_dir = os.path.join(root, LM_DIRNAME)
+    fetch_backbone(progress)
+    fetch_decoder(variant, progress)
+
+
+def fetch_backbone(progress=None) -> None:
+    """m-a-p's backbone and vocabulary, the larger half of the released files."""
+    lm_dir = os.path.join(paths.models_root(), LM_DIRNAME)
     fetch(LM_REPO, {name: os.path.join(lm_dir, name) for name in LM_ALLOW},
           "Downloading YuE2-3B (6.76 GB)", progress)
     verify_folder(lm_dir, progress)
 
+
+def fetch_decoder(variant: str, progress=None) -> None:
+    """One of m-a-p's two decoders, on its own.
+
+    On its own is what a legacy run needs on a machine that has the backbone
+    already, in either shape: see ``ensure``.
+    """
     legacy = variant == "legacy"
-    vae_dir = os.path.join(root, VAE_LEGACY_DIRNAME if legacy else VAE_DIRNAME)
+    vae_dir = os.path.join(paths.models_root(), VAE_LEGACY_DIRNAME if legacy else VAE_DIRNAME)
     fetch(VAE_LEGACY_REPO if legacy else VAE_REPO,
           {name: os.path.join(vae_dir, name) for name in VAE_ALLOW},
-          "Downloading the VAE decoder (0.49 GB)", progress)
+          "Downloading the {} decoder (0.49 GB)".format("legacy" if legacy else "VAE"),
+          progress)
     verify_folder(vae_dir, progress)
 
 
@@ -709,7 +722,11 @@ def source_for(settings: dict) -> str:
     Auto means the repack: one file instead of three, it is what the ComfyUI
     model manager installs, and it is what the native YuE2 nodes read, so the
     one download serves both. The exception is a setting the repack cannot
-    satisfy -- the legacy decoder, which Comfy-Org does not publish.
+    satisfy -- the legacy decoder, which Comfy-Org does not publish. On a
+    machine with nothing on it, m-a-p's backbone and that decoder are the
+    smaller download (6.76 + 0.49 GB against 7.26 + 0.49); on a machine that
+    has a backbone already, ``ensure`` fetches the decoder alone whatever this
+    says.
     """
     choice = settings.get("download", "auto")
     if choice != "auto":
@@ -727,6 +744,15 @@ def ensure(settings: dict, progress=None):
     request. When they are not here, what the user sees is a progress bar
     rather than a wall of instructions -- and when downloading is off, the wall
     of instructions is exactly what they asked for, with the links in it.
+
+    A legacy run on a machine that has the backbone, as m-a-p's files or as
+    Comfy-Org's BF16 repack, fetches the legacy decoder and nothing else.
+    Before 2026-09-18 it fetched m-a-p's 6.76 GB backbone beside a repack that
+    already held the same one, and with 'download' at 'comfy-org' it fetched
+    nothing and refused, since the repack cannot carry that decoder. A standard
+    run with m-a-p's backbone here and only its decoder missing fetches that
+    decoder too, unless 'download' asks for Comfy-Org's file by name. A decoder
+    the search already found somewhere else is not fetched a second time.
     """
     from . import discovery
 
@@ -736,15 +762,22 @@ def ensure(settings: dict, progress=None):
         return discovery.locate(variant, quantization)
     except FileNotFoundError as absent:
         source = source_for(settings)
+        backbone = bool(getattr(absent, "backbone", False))
+        decoder = bool((getattr(absent, "found", None) or {}).get("vae"))
         if source == "off":
             raise FileNotFoundError(
                 str(absent) + "\n\nOr set 'download' in YuE2 Options to 'auto', "
-                "and the node will fetch them itself.") from absent
+                "and the node will fetch {} itself.".format(
+                    "it" if backbone else "them")) from absent
 
-    if source == "original":
+    if backbone and (variant == "legacy" or settings.get("download", "auto") != "comfy-org"):
+        fetch_decoder(variant, progress)
+    elif source == "original":
         fetch_original(variant, progress)
     else:
         fetch_repack(quantization, progress)
+        if variant == "legacy" and not decoder:
+            fetch_decoder(variant, progress)
     if progress is not None:
         progress.text("Download finished")
     return discovery.locate(variant, quantization)

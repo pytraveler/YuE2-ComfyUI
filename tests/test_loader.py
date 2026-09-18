@@ -166,3 +166,24 @@ def test_the_vendor_package_stays_lazy():
     assert "yue2_comfy.vendor.yue2.modeling_vae" not in sys.modules
     with pytest.raises(AttributeError):
         yue2.YuE2Pipeline
+
+
+def test_a_narrow_decoder_is_refused_by_name(tmp_path):
+    """Issue #1: the refusal used to give a dtype and no file.
+
+    What was actually wrong there was the file, not its dtype -- the search had
+    picked up another model's VAE -- and the message sent the reporter looking
+    at YuE2's decoder instead. The path is the first thing it has to say.
+    """
+    torch = pytest.importorskip("torch")
+
+    state = {"decoder.layers.0.weight_g": torch.zeros(1, dtype=torch.float16),
+             "decoder.layers.0.bias": torch.zeros(1)}
+
+    with pytest.raises(ValueError) as error:
+        loader._refuse_narrow(state, str(tmp_path / "video_vae_fp16.safetensors"))
+
+    message = str(error.value)
+    assert "video_vae_fp16.safetensors" in message
+    assert "decoder.layers.0.weight_g" in message
+    assert "decoder.layers.0.bias" not in message

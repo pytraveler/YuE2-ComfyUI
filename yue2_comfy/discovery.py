@@ -18,6 +18,12 @@ hundred kilobytes of JSON, never the seven gigabytes behind it. This is the
 pass that finds a file somebody renamed or dropped into models/diffusion_models,
 which is the single most common way a working install looks broken.
 
+What it asks of a file is its own tensor names, not the shape of them. A
+decoder is recognised by the names in VAE_MARKERS and nothing looser: the
+sweep reaches models/vae, where a machine that generates video keeps decoders
+of its own, and "has a tensor called decoder.something" is true of every one
+of them.
+
 Neither pass is the real check. load_state_dict(strict=True) in loader.py is,
 and a file that fools both passes fails there with a loud tensor mismatch
 rather than a quiet wrong answer.
@@ -36,7 +42,7 @@ from .constants import (
     LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
     REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
     SHEETSAGE_BYTES, SHEETSAGE_MARKERS, SHEETSAGE_NAME, SHEETSAGE_PATH,
-    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VOCALS_BYTES, VOCALS_KNOWN_BYTES,
+    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, VOCALS_BYTES, VOCALS_KNOWN_BYTES,
     VOCALS_MARKERS, VOCALS_NAME, VOCALS_REPO, VOCALS_REVISION, WEIGHTS_NAME,
 )
 
@@ -52,7 +58,6 @@ FOLDER_KINDS = {
 }
 
 LM_MARKERS = ("lm_head.weight", "vae2llm.weight")
-VAE_PREFIX = "decoder."
 
 _identified: dict = {}
 
@@ -137,7 +142,7 @@ def _identify_by_header(path: str) -> str:
         return "vocals"
     if all(marker in names for marker in LM_MARKERS):
         return "lm"
-    if LM_MARKERS[0] not in names and any(name.startswith(VAE_PREFIX) for name in names):
+    if all(marker in names for marker in VAE_MARKERS):
         return "vae"
     return ""
 

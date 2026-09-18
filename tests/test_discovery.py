@@ -14,10 +14,19 @@ import pytest
 
 from yue2_comfy import discovery, paths
 from yue2_comfy.constants import (
-    LM_DIRNAME, MERGES_NAME, VAE_DIRNAME, VAE_LEGACY_DIRNAME, WEIGHTS_NAME,
+    LM_DIRNAME, MERGES_NAME, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, WEIGHTS_NAME,
 )
 
 from test_loader import write_safetensors
+
+VAE_NAMES = list(VAE_MARKERS) + ["decoder.layers.0.bias"]
+"""A decoder shaped like the released one, which is what discovery looks for."""
+
+VIDEO_VAE_NAMES = ["decoder.conv_in.conv.weight", "decoder.conv_in.conv.bias",
+                   "decoder.up_blocks.0.resnets.0.conv1.conv.weight",
+                   "encoder.conv_in.conv.weight"]
+"""A diffusers-shaped video VAE, the kind that sits in models/vae on a machine
+that generates video. It has decoder tensors, and none of YuE2's."""
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +38,7 @@ def forget_identifications():
 
 
 def publish(root, lm_names=("lm_head.weight", "vae2llm.weight"),
-            vae_names=("decoder.block.0.weight",), vae_dirname=VAE_DIRNAME):
+            vae_names=tuple(VAE_NAMES), vae_dirname=VAE_DIRNAME):
     """Lay out the three files the way the Hub serves them."""
     lm_dir = root / LM_DIRNAME
     vae_dir = root / vae_dirname
@@ -80,7 +89,7 @@ def test_a_hugging_face_snapshot_is_a_home_too(tmp_path, monkeypatch):
     lm.mkdir(parents=True)
     vae.mkdir(parents=True)
     write_safetensors(lm / WEIGHTS_NAME, ["lm_head.weight", "vae2llm.weight"])
-    write_safetensors(vae / WEIGHTS_NAME, ["decoder.block.0.weight"])
+    write_safetensors(vae / WEIGHTS_NAME, VAE_NAMES)
     (lm / MERGES_NAME).write_bytes(b"placeholder")
 
     monkeypatch.delenv(paths.ENV_ROOT, raising=False)
@@ -100,7 +109,7 @@ def test_a_renamed_file_is_found_by_what_is_inside_it(tmp_path, monkeypatch):
     loose.mkdir()
     write_safetensors(loose / "yue2-music-model.safetensors",
                       ["lm_head.weight", "vae2llm.weight"])
-    write_safetensors(loose / "some-audio-vae.safetensors", ["decoder.block.0.weight"])
+    write_safetensors(loose / "some-audio-vae.safetensors", VAE_NAMES)
     (loose / "vocab.tiktoken").write_bytes(b"placeholder")
     monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
 
@@ -109,6 +118,30 @@ def test_a_renamed_file_is_found_by_what_is_inside_it(tmp_path, monkeypatch):
     assert found.lm.endswith("yue2-music-model.safetensors")
     assert found.vae.endswith("some-audio-vae.safetensors")
     assert found.merges.endswith("vocab.tiktoken")
+
+
+def test_another_models_decoder_is_not_taken_for_the_vae(tmp_path, monkeypatch):
+    """Issue #1: a video VAE in models/vae was picked up as the YuE2 decoder.
+
+    The machine has the released backbone but no standard decoder beside it,
+    which is what a run leaves behind after fetching the legacy one. The sweep
+    then goes looking, and every video VAE ever published has tensors whose
+    names start with "decoder.". Finding none of YuE2's own names in this one,
+    the search has to come up empty rather than hand the loader a file that
+    decodes something else.
+    """
+    published = tmp_path / LM_DIRNAME
+    published.mkdir()
+    write_safetensors(published / WEIGHTS_NAME, ["lm_head.weight", "vae2llm.weight"])
+    (published / MERGES_NAME).write_bytes(b"placeholder")
+    loose = tmp_path / "vae"
+    loose.mkdir()
+    stranger = write_safetensors(loose / "video_vae_fp16.safetensors", VIDEO_VAE_NAMES)
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+
+    assert discovery.identify(stranger) == ""
+    with pytest.raises(FileNotFoundError):
+        discovery.locate("standard")
 
 
 def test_an_unrelated_checkpoint_is_not_mistaken_for_the_model(tmp_path, monkeypatch):
@@ -124,7 +157,7 @@ def test_an_unrelated_checkpoint_is_not_mistaken_for_the_model(tmp_path, monkeyp
 
 def test_identify_reads_the_discriminator_not_the_shape(tmp_path):
     lm = write_safetensors(tmp_path / "a.safetensors", ["lm_head.weight", "vae2llm.weight"])
-    vae = write_safetensors(tmp_path / "b.safetensors", ["decoder.block.0.weight"])
+    vae = write_safetensors(tmp_path / "b.safetensors", VAE_NAMES)
     other = write_safetensors(tmp_path / "c.safetensors", ["lm_head.weight"])
     junk = tmp_path / "d.safetensors"
     junk.write_bytes(b"nonsense")

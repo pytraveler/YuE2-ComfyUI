@@ -24,7 +24,7 @@ import struct
 import threading
 from typing import NamedTuple
 
-from . import devices, placement
+from . import devices, paths, placement
 from .constants import install_command
 from .discovery import Files, locate  # noqa: F401
 
@@ -144,10 +144,30 @@ def _build_lm(state: dict, settings: dict, device):
     return placement.load(model, device)
 
 
-def _build_vae(state: dict, settings: dict, variant: str):
-    """Fill the decoder from a state dict already in released layout."""
+def _refuse_narrow(state: dict, source: str) -> None:
+    """Stop a decoder that is not FP32, and say which file it came from.
+
+    The dtype alone is not an answer to anybody: the same message used to
+    arrive without a path, and the file behind it turned out to be another
+    model's VAE that the search had picked up. Naming it makes the next such
+    report one line long.
+    """
     import torch
 
+    off = sorted(key for key, value in state.items() if value.dtype != torch.float32)
+    if not off:
+        return
+    raise ValueError(
+        "The VAE decoder has to stay FP32; these tensors in " + source + " are not: "
+        + ", ".join(off[:4]) + (" ..." if len(off) > 4 else "")
+        + "\n\nIf that file is not m-a-p's YuE2 decoder, it was picked up by mistake: "
+        "move it out of the ComfyUI model folders, or set " + paths.ENV_ROOT
+        + " to the one folder the YuE2 weights are in."
+    )
+
+
+def _build_vae(state: dict, settings: dict, variant: str, source: str):
+    """Fill the decoder from a state dict already in released layout."""
     from .vendor.yue2.modeling_vae import YuE2VAE, YuE2VAEConfig
 
     settings = dict(settings)
@@ -155,12 +175,7 @@ def _build_vae(state: dict, settings: dict, variant: str):
     config = YuE2VAEConfig(**settings)
     model = YuE2VAE(config, decoder_only=True)
     decoder = {key: value for key, value in state.items() if key.startswith("decoder.")}
-    off = sorted(key for key, value in decoder.items() if value.dtype != torch.float32)
-    if off:
-        raise ValueError(
-            "The VAE decoder has to stay FP32; these tensors are not: "
-            + ", ".join(off[:4]) + (" ..." if len(off) > 4 else "")
-        )
+    _refuse_narrow(decoder, source)
     model.load_state_dict(decoder, strict=True)
     model.eval().requires_grad_(False)
     return model, config.release_variant, len(decoder)
@@ -207,7 +222,7 @@ def load_repack(path: str, device, variant: str = "standard", progress=None):
     if any(value.dtype != torch.float32 for value in decoder.values()):
         decoder = {key: value.to(torch.float32) for key, value in decoder.items()}
         log.info("[yue2_comfy.loader] VAE: widened to FP32, which is what it runs in")
-    vae, release, count = _build_vae(decoder, {}, variant)
+    vae, release, count = _build_vae(decoder, {}, variant, path)
     log.info("[yue2_comfy.loader] VAE (%s): %d tensors from the repack", release, count)
 
     if progress is not None:
@@ -254,8 +269,6 @@ def load_vae(weights_path: str, variant: str = "standard"):
     stage, which is half a gigabyte and about a tenth of a second each way --
     cheaper than holding it on the card while the LM is generating.
     """
-    import torch
-
     from .vendor.yue2.modeling_vae import YuE2VAE, YuE2VAEConfig
 
     settings = _config_dict(weights_path)
@@ -263,12 +276,7 @@ def load_vae(weights_path: str, variant: str = "standard"):
     config = YuE2VAEConfig(**settings)
     model = YuE2VAE(config, decoder_only=True)
     state = _read_state(weights_path, prefix="decoder.")
-    off = sorted(key for key, value in state.items() if value.dtype != torch.float32)
-    if off:
-        raise ValueError(
-            "The VAE decoder has to stay FP32; these tensors are not: "
-            + ", ".join(off[:4]) + (" ..." if len(off) > 4 else "")
-        )
+    _refuse_narrow(state, weights_path)
     model.load_state_dict(state, strict=True)
     log.info(
         "[yue2_comfy.loader] VAE (%s): %d tensors from %s",

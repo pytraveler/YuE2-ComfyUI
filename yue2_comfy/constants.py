@@ -69,6 +69,16 @@ WRITER_BYTES = 2740937888
 
 LM_BYTES = 7261441640
 VAE_BYTES = 530512720
+VAE_MARKERS = ("decoder.layers.0.weight_g", "decoder.layers.0.weight_v",
+               "decoder.layers.1.layers.0.alpha")
+"""Tensor names only the Oobleck decoder m-a-p released has, in both variants.
+
+A bare "decoder." prefix is not enough to recognise it: every video and image
+VAE on the machine has one too, and one of those picked up from models/vae is a
+wrong decoder that loads nowhere near YuE2. These three are the weight-norm pair
+of the first convolution and the first SnakeBeta slope -- the released file has
+all three, a diffusers-shaped VAE with its decoder.conv_in.conv.weight has none.
+"""
 MERGES_BYTES = 2561218
 REPACK_BF16_BYTES = 7799983228
 REPACK_INT8_BYTES = 3960938800

@@ -12,7 +12,7 @@ import logging
 import os
 import time
 
-from . import devices, edits, phrasing, transpose
+from . import devices, edits, phrasing, songs, transpose
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
@@ -424,7 +424,7 @@ class YuE2GenerateSong:
         separator = separator_weights(settings, unique_id, song_progress) if voice else None
         began = time.perf_counter()
         with session(settings, unique_id, song_progress) as models:
-            waveform, score, written, timing = generate.run(
+            waveform, score, written, timing, performance = generate.run(
                 models, style, lyrics, seed, settings,
                 progress=song_progress, cancelled=interrupted, edited=edited,
                 tune_seconds=tune_seconds,
@@ -433,6 +433,8 @@ class YuE2GenerateSong:
         if voice:
             waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
                                 Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
+        audio = {"waveform": waveform, "sample_rate": SAMPLE_RATE}
+        songs.keep(audio, "YuE2 Generate Song", style, lyrics, seed, settings, score, performance)
 
         log.info(
             "[yue2_comfy] %.1f s of audio in %.1f s | %d semantic tokens at %.1f tok/s "
@@ -447,8 +449,7 @@ class YuE2GenerateSong:
               edits.AUTO_SECONDS_UI: [auto_seconds(lyrics)]}
         if edited is None:
             ui[edits.SCORE_UI] = [written]
-        return {"ui": ui,
-                "result": ({"waveform": waveform, "sample_rate": SAMPLE_RATE}, score)}
+        return {"ui": ui, "result": (audio, score)}
 
 
 class YuE2WriteSong:

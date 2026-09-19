@@ -4,7 +4,7 @@ import contextlib
 
 import pytest
 
-from yue2_comfy import constants, edits, nodes, phrasing
+from yue2_comfy import constants, edits, nodes, phrasing, songs
 
 
 def node_classes():
@@ -168,6 +168,7 @@ def test_generate_returns_a_comfyui_audio_dict(monkeypatch):
         "X:1",
         "X:1",
         fake_timing(1.0),
+        None,
     ))
 
     out = nodes.YuE2GenerateSong().generate(
@@ -206,7 +207,7 @@ EDITED = "X:1\nK:C\n\"Am\"EFGA|"
 MELODY_ONLY = "X:1\nV: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\nK:C\nV: Vocal\nEFGA|"
 
 
-def stub_run(monkeypatch):
+def stub_run(monkeypatch, performance=None):
     """The song node with its pipeline replaced; returns what reached the pipeline and the notices."""
     calls = []
     said = []
@@ -221,7 +222,7 @@ def stub_run(monkeypatch):
         if tune_seconds is not None:
             calls[-1]["tune_seconds"] = tune_seconds
         sung = edited or WRITTEN
-        return "waveform", sung, "" if edited else WRITTEN, fake_timing(3.0)
+        return "waveform", sung, "" if edited else WRITTEN, fake_timing(3.0), performance
 
     from yue2_comfy import generate
 
@@ -236,6 +237,21 @@ def sing_with(score_abc, lyrics="words", options=None):
     return nodes.YuE2GenerateSong().generate(style="a style", lyrics=lyrics, seed=4,
                                              options=options, score_abc=score_abc,
                                              unique_id="3")
+
+
+def test_the_song_node_remembers_the_song_it_sang(monkeypatch):
+    """The song memory gets the score that was sung, which after a move is not the one written."""
+    kept = []
+    monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
+    stub_run(monkeypatch, performance="sung from")
+    out = sing_with("", options=dict(constants.DEFAULT_OPTIONS, cot="full"))
+    audio, score = out["result"]
+    assert len(kept) == 1
+    given, origin, style, lyrics, seed, settings, sung, performance = kept[0]
+    assert given is audio
+    assert (origin, style, lyrics, seed, sung, performance) == (
+        "YuE2 Generate Song", "a style", "words", 4, score, "sung from")
+    assert settings["cot"] == "full"
 
 
 def test_an_empty_box_writes_a_score_as_the_node_always_has(monkeypatch):

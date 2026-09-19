@@ -117,7 +117,7 @@ def stub_song(monkeypatch):
 
     monkeypatch.setattr(nodes, "session", session)
     monkeypatch.setattr(generate, "run", lambda models, style, lyrics, seed, settings, **kwargs: (
-        Waveform("song"), "X:1", "X:1", fake_timing(1.0)))
+        Waveform("song"), "X:1", "X:1", fake_timing(1.0), None))
 
 
 @pytest.mark.parametrize("switch", [False, True])
@@ -148,7 +148,7 @@ def stub_staged(monkeypatch):
         yield FakeModels()
 
     monkeypatch.setattr(staged, "session", session)
-    monkeypatch.setattr(generate, "sing", lambda *args, **kwargs: (Latents(), {"semantic": {}}))
+    monkeypatch.setattr(generate, "sing", lambda *args, **kwargs: (Latents(), {"semantic": {}}, None))
     monkeypatch.setattr(generate, "decode", lambda *args, **kwargs: (Waveform("song"), {"seconds_of_audio": 1.0}))
     return Latents
 

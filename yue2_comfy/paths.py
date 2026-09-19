@@ -30,7 +30,18 @@ GGUF_FOLDERS = (WRITER_SUBDIR, "llm", "text_encoders", "clip", "transformers",
 GGUF_DEPTH = 2
 
 ENV_ROOT = "YUE2_MODELS_ROOT"
-USER_SUBDIR = __name__.split(".")[0]
+
+USER_SUBDIR = "yue2_comfy"
+"""The pack's folder in ComfyUI's user directory, named outright.
+
+Until 2026-09-19 it was ``__name__.split(".")[0]``, which is "yue2_comfy" only
+outside ComfyUI. ComfyUI imports a custom node under its full path, with the
+dots replaced, so inside it that first part was the pack's own absolute
+folder, and os.path.join, handed an absolute path, dropped the user directory
+in front of it. The llama.cpp runtime, llama_bin.txt and the vocabulary
+fallback all went into the pack's folder, which an update through ComfyUI
+Manager replaces wholesale. It came to light when the song memory wrote its
+first song into the working tree."""
 
 _EXTENDED_LOCAL = re.compile(r"^\\\\[?.]\\[A-Za-z]:")
 

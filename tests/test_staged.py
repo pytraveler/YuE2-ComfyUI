@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from yue2_comfy import constants, edits, generate, phrasing, staged, transpose
+from yue2_comfy import constants, edits, generate, phrasing, songs, staged, transpose
 
 SCORE = "X:1\nK:C\nCDEF|\n"
 IDS = [88, 58, 49]
@@ -71,7 +71,7 @@ def stub_score(monkeypatch, score=SCORE, ids=IDS):
     return calls
 
 
-def stub_singing(monkeypatch, seconds=42.0):
+def stub_singing(monkeypatch, seconds=42.0, performance=None):
     """Replace stages two to four and hand back every call they were asked to make."""
     calls = []
 
@@ -80,7 +80,7 @@ def stub_singing(monkeypatch, seconds=42.0):
         calls.append({"ids": None if abc_ids is None else list(abc_ids), "abc": abc,
                       "seed": seed, "settings": dict(settings), "stages": stages,
                       "tune_seconds": tune_seconds})
-        return FakeLatents(), {"semantic": {}, "acoustic": {}}
+        return FakeLatents(), {"semantic": {}, "acoustic": {}}, performance
 
     def decode(models, latents, progress=None, cancelled=None, stages=None):
         calls.append({"decode": latents, "stages": stages})
@@ -266,6 +266,55 @@ def test_the_render_node_returns_audio_and_latents_on_the_cpu(monkeypatch):
     assert latents["seed"] == 5
 
 
+def test_the_render_node_remembers_the_song_it_sang(monkeypatch):
+    """The song goes to the song memory, and what it was sung from rides on the latents.
+
+    That second part is what lets 'YuE2 Decode Latents' remember the same song
+    decoded again, through the other decoder.
+    """
+    kept = []
+    monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
+    stub_singing(monkeypatch, performance="sung from")
+    plan = {"style": "s", "lyrics": "l", "seed": 5, "score": SCORE, "ids": IDS,
+            "settings": dict(constants.DEFAULT_OPTIONS)}
+    audio, latents = staged.YuE2RenderPlan().render(plan)
+    assert len(kept) == 1
+    given, origin, style, lyrics, seed, settings, score, performance = kept[0]
+    assert given is audio
+    assert (origin, style, lyrics, seed, score, performance) == (
+        "YuE2 Render Plan", "s", "l", 5, SCORE, "sung from")
+    assert settings["cot"] == constants.DEFAULT_OPTIONS["cot"]
+    assert (latents["style"], latents["lyrics"], latents["score"], latents["performance"]) == (
+        "s", "l", SCORE, "sung from")
+
+
+def test_the_decode_node_remembers_the_song_under_its_own_decoder(monkeypatch):
+    kept = []
+    monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
+    stub_singing(monkeypatch)
+    carried = {"latents": FakeLatents(), "settings": dict(constants.DEFAULT_OPTIONS),
+               "seed": 5, "style": "s", "lyrics": "l", "score": SCORE,
+               "performance": "sung from"}
+    audio, = staged.YuE2DecodeLatents().decode(
+        carried, options=dict(constants.DEFAULT_OPTIONS, vae="legacy"))
+    given, origin, style, lyrics, seed, settings, score, performance = kept[0]
+    assert given is audio
+    assert (origin, style, lyrics, seed, score, performance) == (
+        "YuE2 Decode Latents", "s", "l", 5, SCORE, "sung from")
+    assert settings["vae"] == "legacy"
+
+
+def test_latents_from_before_the_song_memory_are_decoded_and_not_remembered(monkeypatch):
+    """A link cached by an older version carries no performance, and keep is told None."""
+    kept = []
+    monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
+    stub_singing(monkeypatch)
+    audio, = staged.YuE2DecodeLatents().decode(
+        {"latents": FakeLatents(), "settings": dict(constants.DEFAULT_OPTIONS)})
+    assert audio["sample_rate"] == constants.SAMPLE_RATE
+    assert kept[0][-1] is None
+
+
 def test_the_decode_node_moves_the_latents_to_wherever_the_model_is(monkeypatch):
     """They arrive on the CPU, because that is where a link keeps them."""
     calls = stub_singing(monkeypatch)
@@ -384,7 +433,7 @@ def test_the_single_node_still_walks_the_same_three_stages(monkeypatch):
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
              progress=None, cancelled=None, stages=None, tune_seconds=None):
         seen.append(("sing", list(abc_ids or [])))
-        return "latents", {"semantic": {}, "acoustic": {}}
+        return "latents", {"semantic": {}, "acoustic": {}}, "performance"
 
     def decode(models, latents, progress=None, cancelled=None, stages=None):
         seen.append(("decode", latents))
@@ -394,10 +443,11 @@ def test_the_single_node_still_walks_the_same_three_stages(monkeypatch):
     monkeypatch.setattr(generate, "sing", sing)
     monkeypatch.setattr(generate, "decode", decode)
 
-    waveform, score, written, timing = generate.run(
+    waveform, score, written, timing, performance = generate.run(
         FakeModels(), "s", "l", 3, dict(constants.DEFAULT_OPTIONS))
     assert seen == ["write_score", ("sing", IDS), ("decode", "latents")]
     assert (waveform, score, written) == ("waveform", SCORE, SCORE)
+    assert performance == "performance", "what stage two sang from reaches the node"
     assert timing["abc"]["seconds"] == 1.0
     assert timing["seconds_of_audio"] == 12.0
     assert "total_seconds" in timing
@@ -415,7 +465,7 @@ def test_the_single_node_sings_an_edit_without_writing_a_score(monkeypatch):
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
              progress=None, cancelled=None, stages=None, tune_seconds=None):
         seen.append(("sing", abc_ids, abc, stages))
-        return "latents", {"semantic": {}, "acoustic": {}}
+        return "latents", {"semantic": {}, "acoustic": {}}, None
 
     def decode(models, latents, progress=None, cancelled=None, stages=None):
         seen.append(("decode", stages))
@@ -426,7 +476,7 @@ def test_the_single_node_sings_an_edit_without_writing_a_score(monkeypatch):
     monkeypatch.setattr(generate, "decode", decode)
 
     edit = MOVABLE.replace('"C"C8E8G8c8|', '"C"E8G8c8e8|')
-    _waveform, sung, written, timing = generate.run(
+    _waveform, sung, written, timing, _performance = generate.run(
         FakeModels(), "s", "l", 3, dict(constants.DEFAULT_OPTIONS), edited=edit)
     bands = generate.alone(generate.Stages.SEMANTIC, generate.Stages.ACOUSTIC,
                            generate.Stages.DECODE)
@@ -527,7 +577,7 @@ def test_the_single_node_sings_the_moved_score_and_hands_it_back(monkeypatch):
     def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
              progress=None, cancelled=None, stages=None, tune_seconds=None):
         seen.update(ids=abc_ids, abc=abc)
-        return "latents", {"semantic": {}, "acoustic": {}}
+        return "latents", {"semantic": {}, "acoustic": {}}, None
 
     def decode(models, latents, progress=None, cancelled=None, stages=None):
         return "waveform", {"seconds_of_audio": 12.0}
@@ -537,7 +587,8 @@ def test_the_single_node_sings_the_moved_score_and_hands_it_back(monkeypatch):
     monkeypatch.setattr(generate, "decode", decode)
 
     settings = dict(constants.DEFAULT_OPTIONS, transpose=-5)
-    _waveform, score, written, _timing = generate.run(FakeModels(), "s", "l", 3, settings)
+    _waveform, score, written, _timing, _performance = generate.run(
+        FakeModels(), "s", "l", 3, settings)
     moved = transpose.move(MOVABLE, -5).text
     assert seen == {"ids": None, "abc": moved}
     assert score == moved

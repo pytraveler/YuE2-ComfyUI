@@ -47,6 +47,26 @@ brings its own: 64 frames took 0.28 GiB and 2.18 seconds against 1.27, where
 the ordinary fallback of 512 would ask for more than 256 did."""
 
 
+@dataclasses.dataclass(frozen=True)
+class Performance:
+    """What a song was sung from and what it became: enough to sing a part of it again.
+
+    'prefix' is the prompt the performance was conditioned on, the score
+    included, token for token, and 'negative' the prompt of the unconditional
+    branch when guidance ran one, None when it did not. 'codec' is the
+    performance itself, one codec token per frame of audio, and 'latents' the
+    acoustic stage's answer to it, solved from noise drawn with 'seed'. None of
+    this survives in a sound file, which is why songs.py keeps it beside the
+    sound.
+    """
+
+    prefix: tuple
+    negative: tuple | None
+    codec: tuple
+    seed: int
+    latents: object
+
+
 class Stages:
     """Where each stage sits on a 0..100 bar, and what it is called.
 
@@ -187,6 +207,10 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
          progress=None, cancelled=None, stages=None, tune_seconds=None):
     """Stages two and three: a score becomes acoustic latents.
 
+    Returns ``(latents, timing, performance)``. The performance holds the same
+    latents together with everything they were made from, which the latents
+    alone cannot say; see ``Performance``.
+
     ``abc_ids`` wins when it is given, and ``abc`` is encoded when it is not,
     which is how an edited score re-enters the pipeline. Choosing between them
     is the caller's job, because only the caller knows whether the text in its
@@ -294,7 +318,11 @@ def sing(models, style, lyrics, seed, settings, abc_ids=None, abc="",
         latents = placement.guarded(models, "the audio", synthesize)
         timing["acoustic"] = {"seconds": time.perf_counter() - start,
                               "frames": int(latents.shape[0])}
-    return latents, timing
+    performance = Performance(
+        prefix=tuple(int(token) for token in prefix),
+        negative=None if negative is None else tuple(int(token) for token in negative),
+        codec=tuple(codec), seed=request.seed, latents=latents)
+    return latents, timing, performance
 
 
 def decode(models, latents, progress=None, cancelled=None, stages=None):
@@ -323,11 +351,12 @@ def moved(score, semitones, cot):
 
 def run(models, style, lyrics, seed, settings, progress=None, cancelled=None,
         edited=None, tune_seconds=None):
-    """One song. Returns (waveform, sung, written, timing).
+    """One song. Returns (waveform, sung, written, timing, performance).
 
     The waveform is exactly what ComfyUI's AUDIO type wants: float32 [1, 2, S]
     on the CPU. decode_tiled already allocates that shape, so nothing here
-    reshapes or copies the song again.
+    reshapes or copies the song again. The performance is what ``sing`` hands
+    back beside its latents, passed on so the node can remember the song.
 
     The three calls below are the same three the staged nodes make one at a
     time. Keeping this node on the same path is the point: whatever the staged
@@ -357,16 +386,16 @@ def run(models, style, lyrics, seed, settings, progress=None, cancelled=None,
     semitones = int(settings.get("transpose") or 0)
     if semitones:
         abc_text, abc_ids = moved(abc_text, semitones, settings["cot"]), None
-    latents, spent = sing(models, style, lyrics, seed, settings, abc_ids,
-                          abc=abc_text, progress=progress, cancelled=cancelled,
-                          stages=None if bands is None else bands[:2],
-                          tune_seconds=tune_seconds)
+    latents, spent, performance = sing(
+        models, style, lyrics, seed, settings, abc_ids, abc=abc_text, progress=progress,
+        cancelled=cancelled, stages=None if bands is None else bands[:2],
+        tune_seconds=tune_seconds)
     timing.update(spent)
     waveform, spent = decode(models, latents, progress, cancelled,
                              stages=None if bands is None else bands[2:])
     timing.update(spent)
     timing["total_seconds"] = time.perf_counter() - started
-    return waveform, abc_text, written, timing
+    return waveform, abc_text, written, timing, performance
 
 
 def _counter(progress, stage, total, seconds: bool = False):

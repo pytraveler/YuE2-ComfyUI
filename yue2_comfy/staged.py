@@ -20,7 +20,7 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from . import devices, edits, phrasing
+from . import devices, edits, phrasing, songs
 from .constants import (
     ADVANCED_CATEGORY, DEFAULT_LYRICS, DEFAULT_OPTIONS, DEFAULT_STYLE,
     LATENTS_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE, PLANS_TYPE,
@@ -163,6 +163,18 @@ def _made(style, lyrics, seed, settings, score, ids, timing) -> dict:
     return {"style": style, "lyrics": lyrics, "seed": normalize_seed(seed),
             "settings": dict(settings), "score": score, "ids": [int(i) for i in ids],
             "timing": dict(timing)}
+
+
+def _latents(plan, settings, score, latents, timing, performance) -> dict:
+    """What 'YuE2 Render Plan' hands 'YuE2 Decode Latents'.
+
+    Besides the latents and what the decode needs, it carries what the song was
+    sung from, so a song decoded again, through the other decoder, is
+    remembered for editing like the one the render node made.
+    """
+    return {"latents": latents.cpu(), "settings": dict(settings), "seed": plan["seed"],
+            "timing": dict(timing), "style": plan["style"], "lyrics": plan["lyrics"],
+            "score": score, "performance": performance}
 
 
 def _chosen(plan, edited):
@@ -440,7 +452,7 @@ class YuE2RenderPlan:
 
         separator = separator_weights(settings, unique_id, song_progress) if voice else None
         with session(settings, unique_id, song_progress) as models:
-            latents, timing = generate.sing(
+            latents, timing, performance = generate.sing(
                 models, plan["style"], plan["lyrics"], plan["seed"], settings,
                 abc_ids=ids, abc=score, progress=song_progress, cancelled=interrupted,
                 stages=stages[:2], tune_seconds=tune_seconds)
@@ -451,15 +463,16 @@ class YuE2RenderPlan:
         if voice:
             waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
                                 Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
+        audio = {"waveform": waveform, "sample_rate": SAMPLE_RATE}
+        songs.keep(audio, "YuE2 Render Plan", plan["style"], plan["lyrics"], plan["seed"],
+                   settings, score, performance)
 
         log.info("[yue2_comfy] %.1f s of audio from a %s score | seed %s",
                  timing["seconds_of_audio"],
                  "moved" if semitones else "given" if ids is None else "written",
                  plan["seed"])
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
-        return ({"waveform": waveform, "sample_rate": SAMPLE_RATE},
-                {"latents": latents.cpu(), "settings": dict(settings),
-                 "seed": plan["seed"], "timing": dict(timing)})
+        return (audio, _latents(plan, settings, score, latents, timing, performance))
 
 
 class YuE2DecodeLatents:
@@ -515,11 +528,14 @@ class YuE2DecodeLatents:
         if voice:
             waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
                                 Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
+        audio = {"waveform": waveform, "sample_rate": SAMPLE_RATE}
+        songs.keep(audio, "YuE2 Decode Latents", latents.get("style"), latents.get("lyrics"),
+                   latents.get("seed"), settings, latents.get("score"), latents.get("performance"))
 
         log.info("[yue2_comfy] decoded %.1f s of audio with the %s decoder",
                  timing["seconds_of_audio"], settings["vae"])
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
-        return ({"waveform": waveform, "sample_rate": SAMPLE_RATE},)
+        return (audio,)
 
 
 STAGED_CLASSES = {

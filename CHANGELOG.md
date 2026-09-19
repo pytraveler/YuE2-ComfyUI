@@ -7,6 +7,61 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.8.0 - 2026-09-20
+
+### Added
+
+- **LoRA adapters, on a node of their own.** `YuE2 LoRA` holds them as rows:
+  one row is one file with a strength for each half of YuE2 -- AR, which
+  writes the score and sings the performance, and NAR, which turns it into
+  sound. ComfyUI's own `LoraLoader` calls the same two numbers `strength_clip`
+  and `strength_model` for this model. The rows reach `YuE2 Generate Song`,
+  `YuE2 Plan`, `YuE2 Plan Batch` and `YuE2 Render Plan` through a new `lora`
+  input, last on each node so no saved workflow shifts, and one `YuE2 LoRA`
+  node chains into another. The list offers only files that are for YuE2, from
+  the LoRA folders ComfyUI already knows, and under each row says what the
+  file changes, its rank, its trigger word -- shown, never written into the
+  style for you -- the `cot` it was trained for, and the acoustic adapter it
+  was trained beside. Files in m-a-p's layout are read as well as files in
+  ComfyUI's, which matters: handed an m-a-p file ComfyUI's own loader patches
+  nothing and only says so in the console, and of the eight YuE2 adapters this
+  was measured against, three were in a layout it could apply.
+- Adapters are folded into the weights as a half arrives on the card, 0.12 to
+  0.47 seconds a half on an RTX 5090 with the file read, so a song with them
+  runs at the speed of one without. With `low_vram` the rows are packed to
+  INT8 and cannot be folded into, so the adapters ride beside them as factors
+  instead, at 6 to 11 percent of the token speed. The fold is exact: on a file
+  in ComfyUI's layout it equals core's `calculate_weight` to the bit, one seed
+  gives one song in every `offload` mode, and the weights go back to the
+  checkpoint bit for bit when the adapters come off. A plan carries the set it
+  was made with, `YuE2 Render Plan` can replace it, and the song memory writes
+  each adapter's name, file and strengths down beside the song.
+- **Template 10, *A song with LoRA***: the same song node with the adapter
+  node in front of it, its list empty and ready for a file of your own.
+
+### Fixed
+
+- **YuE2 Transcribe refused a score when the model numbered a bar's beats
+  out of order** (issue [#3]). SheetSage2 sometimes repeats or skips a beat
+  number inside a bar -- `[1, 2, 2]` in the report, 177 bars into a song -- and
+  the node stopped with "counts its beats ..., not in order", blaming a missing
+  beat or key. A bar is now as long as the beats between its downbeats, as
+  ComfyUI's own SheetSage2 writes it: such a bar comes out as 5/4 or 3/4, and
+  the score is the same to the byte as ComfyUI's.
+- **A long, busy recording lost seconds at every seam, and that refused the
+  score too.** A recording over 300 seconds is heard in parts, each answering
+  for 200 seconds of it. A part that spends the decoder's 5120 tokens stops
+  before the end of what it answers for -- 1.7 to 4 seconds early on the drum
+  and bass track this was measured on -- and the next part dropped everything
+  before the planned boundary, so those seconds fell out of the song: beats
+  went missing, the grid around them stretched, and a short note in the gap
+  refused the score with "shorter than a subbeat of the grid". The next part
+  now takes over where the one before it really stopped, and a part that stops
+  short says so in the log. Recordings whose parts reach their end, which is
+  all five tracks measured here but one, are transcribed the same to the byte.
+
+[#3]: https://github.com/pytraveler/YuE2-ComfyUI/issues/3
+
 ## 0.7.2 - 2026-09-19
 
 ### Changed

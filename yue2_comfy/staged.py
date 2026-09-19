@@ -23,7 +23,8 @@ import logging
 from . import devices, edits, phrasing, songs
 from .constants import (
     ADVANCED_CATEGORY, DEFAULT_LYRICS, DEFAULT_OPTIONS, DEFAULT_STYLE,
-    LATENTS_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE, PLANS_TYPE,
+    LATENTS_TYPE, LORA_INPUT_TOOLTIP, LORA_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE,
+    PLANS_TYPE,
     SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, auto_seconds, normalize_seed,
 )
 from .edits import AUTO_SECONDS_UI, SCORE_UI, WORDS_UI
@@ -89,6 +90,12 @@ RENDER_OPTIONS_TOOLTIP = (
     "instructions written for another."
 )
 
+RENDER_LORA_TOOLTIP = (
+    "Adapters for the singing, in place of the ones the score was written with.\n\n"
+    "Leave it unconnected and the plan's own adapters are used: the ones its 'YuE2 Plan' "
+    "node had, which sings the song 'YuE2 Generate Song' would have made."
+)
+
 DECODE_OPTIONS_TOOLTIP = (
     "Settings for the decode. Only 'vae', 'device' and 'keep_model_loaded' change "
     "anything at this stage -- everything else was settled while the song was sung."
@@ -119,6 +126,22 @@ def words(style, lyrics, unique_id):
     return style, lyrics
 
 
+def adapters(settings, unique_id) -> None:
+    """Refuse a run whose adapter files are gone, and warn about any the run does not suit.
+
+    Checked before anything loads, like every other refusal here: a plan
+    written yesterday may name a LoRA file that has since been moved.
+    """
+    from .lora import node as lora_node
+
+    problem = lora_node.missing(settings.get("loras"))
+    if problem:
+        refuse(unique_id, problem)
+    found = lora_node.notices(settings.get("loras"), settings["cot"])
+    if found:
+        announce(unique_id, found)
+
+
 @contextlib.contextmanager
 def session(settings, unique_id, progress):
     """The weights on disk and the model on the card, unloaded on the way out.
@@ -139,10 +162,13 @@ def session(settings, unique_id, progress):
     except (FileNotFoundError, download.DownloadError) as error:
         refuse(unique_id, str(error))
 
+    from .lora import choices
+
     try:
         yield loader.acquire(files, settings["device"], settings["vae"], progress,
                              settings.get("offload", "auto"),
-                             bool(settings.get("low_vram", False)))
+                             bool(settings.get("low_vram", False)),
+                             choices.from_settings(settings.get("loras")))
     except InterruptedError:
         translate_interrupt()
         raise
@@ -260,7 +286,8 @@ class YuE2Plan:
                                  "control_after_generate": True,
                                  "tooltip": SEED_TOOLTIP}),
             },
-            "optional": {"options": (OPTIONS_TYPE,)},
+            "optional": {"options": (OPTIONS_TYPE,),
+                         "lora": (LORA_TYPE, {"tooltip": LORA_INPUT_TOOLTIP})},
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
@@ -270,14 +297,16 @@ class YuE2Plan:
     CATEGORY = ADVANCED_CATEGORY
     OUTPUT_NODE = True
 
-    def plan(self, style, lyrics, seed, options=None, unique_id=None):
+    def plan(self, style, lyrics, seed, options=None, lora=None, unique_id=None):
         from . import generate
 
         progress = NodeProgress(unique_id)
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
+        settings["loras"] = list(lora or [])
         if settings["cot"] == "off":
             refuse(unique_id, COT_OFF_REFUSAL)
+        adapters(settings, unique_id)
 
         with session(settings, unique_id, progress) as models:
             score, ids, timing = generate.write_score(
@@ -315,14 +344,16 @@ class YuE2PlanBatch:
     FUNCTION = "batch"
     CATEGORY = ADVANCED_CATEGORY
 
-    def batch(self, style, lyrics, seed, count, options=None, unique_id=None):
+    def batch(self, style, lyrics, seed, count, options=None, lora=None, unique_id=None):
         from . import generate
 
         progress = NodeProgress(unique_id)
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
+        settings["loras"] = list(lora or [])
         if settings["cot"] == "off":
             refuse(unique_id, COT_OFF_REFUSAL)
+        adapters(settings, unique_id)
 
         count = max(2, min(int(count), MAX_TAKES))
         plans = []
@@ -407,6 +438,7 @@ class YuE2RenderPlan:
                 "score_abc": ("STRING", {"multiline": True, "default": "",
                                          "tooltip": SCORE_TOOLTIP}),
                 "options": (OPTIONS_TYPE, {"tooltip": RENDER_OPTIONS_TOOLTIP}),
+                "lora": (LORA_TYPE, {"tooltip": RENDER_LORA_TOOLTIP}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -416,7 +448,7 @@ class YuE2RenderPlan:
     FUNCTION = "render"
     CATEGORY = ADVANCED_CATEGORY
 
-    def render(self, plan, score_abc="", options=None, unique_id=None):
+    def render(self, plan, score_abc="", options=None, lora=None, unique_id=None):
         from . import generate
 
         if not plan:
@@ -424,6 +456,9 @@ class YuE2RenderPlan:
                               "join its 'plan' output to this input.")
         progress = NodeProgress(unique_id)
         settings = _settings(plan, options, unique_id)
+        if lora is not None:
+            settings["loras"] = list(lora)
+        adapters(settings, unique_id)
         problem = edits.mismatch(edits.read(score_abc), plan.get("style"),
                                  plan.get("lyrics"), settings["cot"], RENDER_INSTEAD)
         if problem:

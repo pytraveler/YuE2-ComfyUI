@@ -96,7 +96,8 @@ See [YuE2 Vocals Only](#yue2-vocals-only).
 - [Nodes](#nodes) - [YuE2 Generate Song](#yue2-generate-song) -
   [YuE2 Write Song](#yue2-write-song) - [YuE2 Transcribe](#yue2-transcribe) -
   [YuE2 Load MIDI](#yue2-load-midi) - [YuE2 Vocals Only](#yue2-vocals-only) -
-  [YuE2 Options](#yue2-options) - [Staged nodes](#staged-nodes)
+  [YuE2 LoRA](#yue2-lora) - [YuE2 Options](#yue2-options) -
+  [Staged nodes](#staged-nodes)
 - [Song length](#song-length)
 - [Writing lyrics](#writing-lyrics) -
   [Stress, and what capital letters really do](#stress-and-what-capital-letters-really-do)
@@ -136,7 +137,7 @@ live until the server restarts.
 
 ## Example workflows
 
-Nine workflows ship with the pack and appear in ComfyUI's template browser
+Ten workflows ship with the pack and appear in ComfyUI's template browser
 (*Workflow -> Browse Templates*) under this node pack's name once it is
 installed. Each is a card of its own and each runs on its own: nothing is
 bypassed on open, and there is no second branch to mute before pressing Run.
@@ -152,9 +153,10 @@ bypassed on open, and there is no second branch to mute before pressing Run.
 | 7 | **Sing a MIDI file** -- a tune you have as MIDI, sung in the style you describe | the YuE2 weights |
 | 8 | **Cover a song** -- a recording's tune and words, sung again in another style | the YuE2 weights, SheetSage2 (1.29 GB), and for the words Qwen3-ASR (3.8 GB) and a 2.7 GB writer |
 | 9 | **An a cappella song** -- a song with nothing but the voice | the YuE2 weights and the 0.85 GB voice separator |
+| 10 | **A song with LoRA** -- the same song node with adapters in front of it | the YuE2 weights and a LoRA of your own |
 
-Templates 1 to 3 and 7 to 9 use the `YuE2` menu. Templates 4 to 6 open a run up
-into its stages, which is what `YuE2/Advanced` is for.
+Templates 1 to 3 and 7 to 10 use the `YuE2` menu. Templates 4 to 6 open a run
+up into its stages, which is what `YuE2/Advanced` is for.
 
 Every one carries a **Read me first** note: what it does, what it downloads,
 what to set before pressing Run, and where to go next. Every seed is left on
@@ -696,6 +698,94 @@ downloaded on first use, 0.85 GB under MIT; see
 
 Template 9, *An a cappella song*, is the switch set up with such a style.
 
+### YuE2 LoRA
+
+LoRA adapters for YuE2, one row each. The node hands them to the nodes that
+sing -- `YuE2 Generate Song`, `YuE2 Plan`, `YuE2 Plan Batch` and
+`YuE2 Render Plan` -- through their `lora` input, and another `YuE2 LoRA` node
+plugged into this one adds its rows in front of these, so a set can be kept
+together and reused.
+
+![The YuE2 LoRA node. A header row with a tick for all and the columns AR and NAR; then four rows, each with a grip, a tick, the file name and the two strengths. yue2-jpop-t4-lora/yue2_jpop_t4, AR a dash, NAR 1.00, and under it NAR rank 16, 196 matrices, trigger jpstyle26. An industrial-rock adapter-ar-179/lora at AR 0.50, NAR a dash, AR rank 8, 196 matrices. Its adapter-nar-179/lora at NAR 1.00, NAR rank 32, 198 matrices. A fourth row switched off and dimmed, deathmetalv1_step-000600 at AR 0.77, AR rank 64, 196 matrices, made with nar_lora_joint_v4 on NAR. At the foot a plus Add LoRA button and the words 3 of 4 on](docs/node_lora.png)
+
+*Four adapters, one of them switched off. A dash stands where a file changes
+nothing, and the line under each row says what it does change.*
+
+    [YuE2 LoRA]
+      loras  (the rows themselves, saved with the workflow)
+      lora   (optional: the rows of another YuE2 LoRA node)
+      -> lora
+
+**AR and NAR are the two halves of YuE2.** AR writes the score and sings the
+performance -- melody, structure, arrangement. NAR turns that performance into
+sound -- timbre, mix, production. ComfyUI's own `LoraLoader` calls these two
+strengths `strength_clip` and `strength_model` for YuE2; they are the same two
+numbers. Most adapters are trained for one half, and the row shows a dash for
+the other. A strength runs from -10 to 10, the arrows step it by 0.05 and by
+0.01 with Shift held, and the number itself can be dragged sideways or clicked
+and typed. Switching a row off leaves it in the workflow without singing it.
+
+**Where the files come from.** Every `loras` folder ComfyUI knows about,
+`extra_model_paths.yaml` included, and `models/loras` beside the checkout. The
+pack never downloads adapters: these are the folders ComfyUI's own LoRA loader
+lists, so a file that shows there shows here. The list reads each file's header
+once and keeps what it found, so a folder of image LoRAs costs a tenth of a
+second the first time and nothing after that.
+
+![The list of adapters, opened from the node. At the top a search box reading Search by name or trigger word. Below it the files grouped under their folders: Mothersuperior with ar_lora_inst_v3abc and ar_lora_inst_v3abc_comfyui at AR rank 64 and nar_lora_joint_v4 at NAR rank 32; an examples folder whose example_not_yue2 is greyed out with a red line, 1 of its parts do not land on YuE2: hum_proj.0 (not a part of YuE2); YuE2_Deathmetalv1_lora with deathmetalv1_step-000600; and four adapter folders of the industrial rock set, each holding one file named lora, at AR rank 8 or NAR rank 32](docs/lora_list.png)
+
+*Only files that are for YuE2 are offered, grouped by folder and searchable by
+name or trigger word. One that cannot be used is greyed with the reason.*
+
+**Two layouts are read.** Files in ComfyUI's own layout -- what ai-toolkit
+writes, and what `_comfyui` in a file name usually means -- and files in
+m-a-p's layout, where the projections are separate and the NAR modules carry
+their own names. ComfyUI's `LoraLoader` applies only the first kind: handed one
+of the others it loads it, patches nothing and says so in the console, which is
+easy to miss. Of the eight YuE2 adapters this pack was measured against, three
+were in ComfyUI's layout.
+
+**What a row tells you.** The halves the file changes and their rank, how many
+matrices it touches, and whatever the file says about itself: its trigger word,
+the `cot` it was trained for -- a run with another one says so in a warning --
+and the acoustic adapter it was trained beside, which is the NAR file to add as
+a second row. A trigger word is shown and never added for you; click it to copy
+it and put it in the style where its author says. A file that is gone, or that
+cannot be folded, turns its line red and stops the run before anything loads,
+naming the file.
+
+**What it costs.** The adapters are folded into the weights when a half arrives
+on the card, once per stage: 0.12 to 0.47 seconds a half on an RTX 5090,
+including reading the file, and about 0.15 GiB while it happens. After that the
+song runs at the speed of one without adapters, because there is nothing left
+to add per token. With `low_vram` the rows are packed to INT8 and cannot be
+folded into, so the adapters ride beside them as factors instead, which costs 6
+to 11 percent of the token speed.
+
+**What it does not change.** The same seed with the same adapters gives the
+same song in every `offload` mode, byte for byte, and a song without them is
+the song this pack sang before adapters existed: the weights go back to the
+checkpoint bit for bit when a set is removed or a run ends. On a file in
+ComfyUI's layout the fold matches ComfyUI core's own `calculate_weight` to the
+bit, so the same file gives the same weights whichever loader applies it.
+
+**The words survive them.** Nine pairs of songs -- three adapter sets, three
+seeds each, the same style, lyrics and seed within a pair -- were heard back by
+a speech model. The J-pop NAR adapter left every word where it was, as it must:
+it changes nothing in the half that sings, so the performance is the one the
+base model gave and only its sound differs. The industrial pair came out level
+(68 percent of the words in order without, 71 with), and the death-metal set
+better with its adapters than without (48 against 63), where the base model's
+growl was the harder thing to hear.
+
+The adapters travel with the run: a plan carries the set it was made with, a
+`lora` input on `YuE2 Render Plan` replaces that set the way `options` does,
+and the song memory writes down each adapter's name, file and strengths beside
+the song.
+
+Template 10, *A song with LoRA*, is the node in place with an empty list, ready
+for a file of your own.
+
 ### YuE2 Options
 
 Everything the main node deliberately does not ask about. An unconnected socket
@@ -893,7 +983,9 @@ capitalisation included, for the reasons above.
 
 The node fetches them on first use, so on a fresh install there is nothing to
 do but run it. Files that are already on the machine are used as they lie, and
-nothing is downloaded twice.
+nothing is downloaded twice. LoRA adapters are the exception: the pack never
+fetches one, and reads them from the folders listed under
+[YuE2 LoRA](#yue2-lora).
 
 | `download` | What it fetches | Where it puts it |
 | --- | --- | --- |

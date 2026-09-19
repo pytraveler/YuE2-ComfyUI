@@ -231,10 +231,26 @@ def _floats(latents) -> bytes:
     return latents.astype("<f4").tobytes()
 
 
+def _scalar(value) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
 def _plain(settings) -> dict:
-    """The settings that can be written down: text, numbers, switches."""
-    return {str(name): value for name, value in dict(settings or {}).items()
-            if value is None or isinstance(value, (str, int, float, bool))}
+    """The settings that can be written down: text, numbers, switches, and lists of plain rows.
+
+    The rows are the adapters a song was sung with (``lora.node``), each a
+    name, a file, its SHA-256 and two strengths, so that an edit of the song
+    later folds the same ones.
+    """
+    kept = {}
+    for name, value in dict(settings or {}).items():
+        if _scalar(value):
+            kept[str(name)] = value
+        elif isinstance(value, (list, tuple)) and all(
+                isinstance(row, dict) and all(_scalar(item) for item in row.values())
+                for row in value):
+            kept[str(name)] = [{str(key): item for key, item in row.items()} for row in value]
+    return kept
 
 
 def _entries(song: Song) -> list:

@@ -64,7 +64,10 @@ def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelle
     ``progress(stage, window, windows, tokens)`` hears about each window's
     encoding and every 64 decoded tokens. ``warnings`` are the lenient
     decodings; ``cut_short`` numbers the windows, from 1, whose decoding
-    filled ``network.MAX_TOKENS`` before their end.
+    filled ``network.MAX_TOKENS`` before their end. ``handed_over`` holds the
+    seconds such a window never reached, which the next one takes over (see
+    ``events.resume_point``): the index of that next window, and the span it
+    gained as ``from`` and ``to``.
     """
     audio = mono_24k(waveform, rate)
     if audio.numel() < 1025 or not torch.isfinite(audio).all():
@@ -76,6 +79,7 @@ def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelle
     windows = []
     warnings = []
     cut_short = []
+    handed_over = []
     for index, window in enumerate(plan):
         if cancelled is not None and cancelled():
             raise InterruptedError("transcription cancelled")
@@ -98,6 +102,12 @@ def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelle
         decoded, warning = vocab.decode_window(tokens)
         if warning:
             warnings.append(warning)
-        stitched.extend(events.stitch(decoded, events.time_map(decoded), window, duration, index, base or 0))
+        kept = events.stitch(decoded, events.time_map(decoded), window, duration, index, base or 0)
+        stitched.extend(kept)
+        resume = events.resume_point(window, kept) if index + 1 < len(plan) else 0.0
+        if resume:
+            handed_over.append({"window": index + 1, "from": resume, "to": float(window["accept_end"])})
+            plan[index + 1]["accept_start"] = resume
+            plan[index + 1]["prefix_end"] = resume
     return {"events": events.sort_song(stitched), "seconds": duration, "windows": windows, "warnings": warnings,
-            "cut_short": cut_short}
+            "cut_short": cut_short, "handed_over": handed_over}

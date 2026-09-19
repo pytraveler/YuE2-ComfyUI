@@ -234,7 +234,12 @@ def _first_most_common(values: list) -> int:
 
 
 def infer_bars(beats: list, subbeats: int = SUBBEATS) -> list:
-    """Bars from the downbeats, with the meter each one actually has, each beat split into ``subbeats``."""
+    """Bars from the downbeats, with the meter each one actually has, each beat split into ``subbeats``.
+
+    A bar is as long as the beats between its downbeats, whatever numbers the
+    model gave them: on long recordings it can repeat or skip a beat number
+    (``[1, 2, 2]``), and ComfyUI's own SheetSage2 writes such a bar the same way.
+    """
     downbeats = [i for i, beat in enumerate(beats) if beat.number == 1]
     if not downbeats:
         raise NotationError("no beat is numbered 1, so no bar has a downbeat")
@@ -250,11 +255,6 @@ def infer_bars(beats: list, subbeats: int = SUBBEATS) -> list:
     for index, (start, end, pickup, partial) in enumerate(spans):
         members = beats[start:end]
         count = len(members)
-        numbers = [beat.number for beat in members]
-        if numbers != list(range(numbers[0], numbers[0] + count)):
-            raise NotationError("bar {} counts its beats {!r}, not in order".format(index, numbers))
-        if not pickup and numbers[0] != 1:
-            raise NotationError("bar {} is a whole bar that does not begin on beat 1".format(index))
         denominators = [beat.denominator for beat in members]
         numerators = [beat.numerator for beat in members]
         denominator = _first_most_common(denominators)

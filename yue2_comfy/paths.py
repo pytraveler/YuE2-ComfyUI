@@ -464,6 +464,39 @@ def sheetsage_roots() -> list:
     return roots
 
 
+LORA_FOLDER = "loras"
+
+
+def lora_roots() -> list:
+    """Where LoRA files are: ComfyUI's LoRA folders, then ``models/loras`` beside the checkout.
+
+    The folders ComfyUI's own LoraLoader lists, extra_model_paths.yaml
+    included, so a file that shows there shows here. With YUE2_MODELS_ROOT set
+    it is the ``loras`` folder inside that root alone, as for every other kind
+    of file the pack looks for.
+    """
+    override = _override_root()
+    if override:
+        roots: list = []
+        _add(roots, os.path.join(override, LORA_FOLDER))
+        return roots
+    roots = []
+    folder_paths = _folder_paths()
+    if folder_paths is not None:
+        try:
+            registered = list(folder_paths.get_folder_paths(LORA_FOLDER))
+        except KeyError:
+            registered = []
+        for path in registered:
+            _add(roots, path)
+        try:
+            _add(roots, os.path.join(folder_paths.models_dir, LORA_FOLDER))
+        except Exception:
+            log.debug("[yue2_comfy.paths] no models_dir", exc_info=True)
+    _add(roots, os.path.join(checkout_sibling_root(), LORA_FOLDER))
+    return roots
+
+
 def asr_roots() -> list:
     """Everywhere Qwen3-ASR's folder may be: the usual roots, then collections beside the checkout.
 

@@ -35,3 +35,21 @@ def songs_held_in_memory(monkeypatch):
     from yue2_comfy import songs
 
     monkeypatch.setattr(songs, "_store", songs.Store(None))
+
+
+@pytest.fixture(autouse=True)
+def lora_folders_of_the_test_alone(monkeypatch, tmp_path):
+    """Every test starts with no LoRA folders and keeps its LoRA verdicts in its own folder.
+
+    The machine running the tests may well have LoRAs -- this one keeps six
+    beside the checkout -- and a list read from them would pass here and fail
+    in CI. The verdicts the list keeps on disk would land in the pack's own
+    folder for the same reason as the songs above. A test about the list sets
+    its folders itself.
+    """
+    from yue2_comfy.lora import catalogue
+
+    catalogue.forget()
+    monkeypatch.setattr(catalogue, "roots", lambda: [])
+    monkeypatch.setattr(catalogue, "_cache_path",
+                        lambda: str(tmp_path / "lora_verdicts" / catalogue.CACHE_NAME))

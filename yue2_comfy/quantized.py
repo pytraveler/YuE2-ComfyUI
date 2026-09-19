@@ -77,7 +77,18 @@ def pack(weight):
 
 
 class Packed(torch.nn.Module):
-    """One linear layer as INT8 rows, unpacked for a single multiply."""
+    """One linear layer as INT8 rows, unpacked for a single multiply.
+
+    A LoRA is held beside the rows rather than folded into them: 'lora_down'
+    (rank x in) and 'lora_up' (out x rank, strengths and scales multiplied in),
+    every adapter of the run stacked along the rank. Folding would put the
+    difference through the INT8 round trip, and a gentle adapter moves a weight
+    by less than one step of a row -- measured on 2026-09-19, jpop-t4 moves the
+    matrices it touches by 0.43 percent, while a step of INT8 is a percent or
+    more. Beside the rows the product is taken in the model's dtype, and costs
+    two thin multiplies per layer. Both are buffers, so they travel with the
+    half like the rows do, and the CUDA graph captures them like any other work.
+    """
 
     def __init__(self, linear, card=None):
         super().__init__()
@@ -88,10 +99,19 @@ class Packed(torch.nn.Module):
         self.register_buffer("scales", scales.to(home))
         bias = getattr(linear, "bias", None)
         self.register_buffer("bias", None if bias is None else bias.detach().to(home))
+        self.register_buffer("lora_down", None)
+        self.register_buffer("lora_up", None)
         self.out_features, self.in_features = int(weight.shape[0]), int(weight.shape[1])
+
+    def adapt(self, down=None, up=None) -> None:
+        """Hold a stacked low-rank adapter beside the rows, or none when both are None."""
+        self.lora_down = down
+        self.lora_up = up
 
     def forward(self, hidden):
         answer = F.linear(hidden, self.rows.to(hidden.dtype)) * self.scales
+        if self.lora_down is not None:
+            answer = answer + F.linear(F.linear(hidden, self.lora_down), self.lora_up)
         return answer if self.bias is None else answer + self.bias
 
     def extra_repr(self):

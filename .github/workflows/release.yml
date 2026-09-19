@@ -124,6 +124,10 @@ jobs:
                         yue2_comfy/vocals_only.py yue2_comfy/vocals/__init__.py \
                         yue2_comfy/vocals/bands.py yue2_comfy/vocals/network.py \
                         yue2_comfy/vocals/model.py yue2_comfy/vocals/runtime.py \
+                        yue2_comfy/lora/__init__.py yue2_comfy/lora/formats.py \
+                        yue2_comfy/lora/catalogue.py yue2_comfy/lora/choices.py \
+                        yue2_comfy/lora/apply.py yue2_comfy/lora/node.py \
+                        web/js/yue2_lora.js \
                         tests/data/sheetsage_pack.json tests/data/melbandroformer_keys.json \
                         web/js/yue2_editor.js web/js/yue2_sheet.js \
                         web/js/yue2_controls.js web/js/yue2_score.js \
@@ -147,7 +151,8 @@ jobs:
                       "6 - One take, both decoders" \
                       "7 - Sing a MIDI file" \
                       "8 - Cover a song" \
-                      "9 - An a cappella song"; do
+                      "9 - An a cappella song" \
+                      "10 - A song with LoRA"; do
             for needed in "example_workflows/$stem.json" "example_workflows/$stem.jpg"; do
               echo "$listed" | grep -qxF "$PREFIX/$needed" || {
                 echo "::error::$needed is missing from $ARCHIVE"

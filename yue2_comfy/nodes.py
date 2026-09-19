@@ -15,8 +15,8 @@ import time
 from . import devices, edits, phrasing, songs, transpose
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
-    DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES,
-    LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE, QUANTIZATION_CHOICES,
+    DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES, LORA_INPUT_TOOLTIP,
+    LORA_TYPE, LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE, QUANTIZATION_CHOICES,
     SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, TRANSPOSE_LIMIT, VAE_CHOICES, WRITER_AUTO,
     WRITER_LENGTH_CHOICES,
     WRITER_LENGTH_DEFAULT, WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS,
@@ -26,7 +26,8 @@ from .constants import (
 from .progress import (Band, NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 from .load_midi import MIDI_CLASSES, MIDI_NAMES
-from .staged import (STAGED_CLASSES, STAGED_NAMES, resolve, session, words)
+from .lora.node import LORA_CLASSES, LORA_NAMES
+from .staged import (STAGED_CLASSES, STAGED_NAMES, adapters, resolve, session, words)
 from .transcribe import TRANSCRIBE_CLASSES, TRANSCRIBE_NAMES
 from .vocals_only import VOCALS_CLASSES, VOCALS_NAMES, VOICE_SHARE, separator_weights, voice_of
 
@@ -385,6 +386,7 @@ class YuE2GenerateSong:
                 "options": (OPTIONS_TYPE,),
                 "score_abc": ("STRING", {"multiline": True, "default": "",
                                          "tooltip": EDITED_SCORE_TOOLTIP}),
+                "lora": (LORA_TYPE, {"tooltip": LORA_INPUT_TOOLTIP}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -394,14 +396,16 @@ class YuE2GenerateSong:
     FUNCTION = "generate"
     CATEGORY = CATEGORY
 
-    def generate(self, style, lyrics, seed, options=None, score_abc="", unique_id=None):
+    def generate(self, style, lyrics, seed, options=None, score_abc="", lora=None, unique_id=None):
         from . import generate
 
         progress = NodeProgress(unique_id)
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
+        settings["loras"] = list(lora or [])
         if int(settings.get("transpose") or 0) and settings["cot"] == "off":
             refuse(unique_id, transpose.COT_OFF)
+        adapters(settings, unique_id)
         edit = edits.read(score_abc)
         problem = edits.mismatch(edit, style, lyrics, settings["cot"], GENERATE_INSTEAD)
         if problem:
@@ -578,6 +582,7 @@ NODE_CLASS_MAPPINGS.update(STAGED_CLASSES)
 NODE_CLASS_MAPPINGS.update(TRANSCRIBE_CLASSES)
 NODE_CLASS_MAPPINGS.update(MIDI_CLASSES)
 NODE_CLASS_MAPPINGS.update(VOCALS_CLASSES)
+NODE_CLASS_MAPPINGS.update(LORA_CLASSES)
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
@@ -588,6 +593,7 @@ NODE_DISPLAY_NAME_MAPPINGS.update(STAGED_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(TRANSCRIBE_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(MIDI_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(VOCALS_NAMES)
+NODE_DISPLAY_NAME_MAPPINGS.update(LORA_NAMES)
 """One registry, so that whatever reads this module sees every node.
 
 The release workflow and the tests both import these two names to check that

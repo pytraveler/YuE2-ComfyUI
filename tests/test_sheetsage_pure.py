@@ -95,6 +95,25 @@ def test_a_long_song_is_read_in_windows_a_hundred_seconds_apart():
     assert events.stop_seconds(events.window_plan(35.0)[0], 35.0) == 35.0
 
 
+def window_events(first: float, last: float, step: float = 0.32) -> list:
+    """Beat events from ``first`` to ``last``, one every ``step`` seconds."""
+    kept, time = [], first
+    while time <= last + 1e-9:
+        kept.append({"time": time, "values": {"rhythm": {"meter": (4, 4),
+                                                         "eighth_position": 2 * (len(kept) % 4)}}})
+        time += step
+    return kept
+
+
+def test_a_window_that_ran_out_of_tokens_hands_its_last_seconds_to_the_next_one():
+    window = events.window_plan(450.0)[0]
+    assert events.resume_point(window, window_events(0.0, 198.4)) == pytest.approx(198.44, abs=1e-3)
+    assert events.resume_point(window, window_events(0.0, 199.76)) == 0.0
+    assert events.resume_point(window, []) == 0.0
+    beatless = [{"time": 120.0, "values": {"melody": []}}]
+    assert events.resume_point(window, beatless) == pytest.approx(120.125, abs=1e-3)
+
+
 def test_a_note_sounding_into_the_next_onset_is_cut_there():
     notes = [[0.0, 1.0, 60, 0], [0.5, 0.8, 62, 0], [0.2, 2.0, 50, 1]]
     assert events.notation_notes(notes) == [[0.0, 0.5, 60, 0], [0.2, 2.0, 50, 1], [0.5, 0.8, 62, 0]]
@@ -116,6 +135,17 @@ def test_a_note_or_chord_on_the_grids_last_point_alone_is_dropped_rather_than_re
 def test_a_note_shorter_than_half_a_subbeat_inside_the_grid_still_refuses_the_score():
     with pytest.raises(ValueError, match="shorter than a subbeat"):
         abc_rebuild.build(tiny_rows([[5.0, 5.03, 62, 0]]), melody_only=True)
+
+
+def test_a_bar_whose_beat_numbers_repeat_or_skip_is_as_long_as_its_beats():
+    rows = tiny_rows([[0.0, 1.0, 60, 0]])
+    numbers = [1, 2, 3, 4, 1, 2, 2, 3, 4, 1, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1]
+    rows["beats"] = [[0.5 * i, number, 4, 4] for i, number in enumerate(numbers)]
+    bars = abc_rebuild.infer_bars([abc_rebuild.Beat(*row) for row in rows["beats"]])
+    assert [bar.numerator for bar in bars] == [4, 5, 3, 4, 4]
+    text = abc_rebuild.build(rows, melody_only=True)
+    assert "M:5/4" in text and "M:3/4" in text
+    abc_tools.parse(text)
 
 
 def test_a_meter_the_model_ends_an_event_on_is_a_meter_change_that_places_no_beat():

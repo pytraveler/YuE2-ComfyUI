@@ -26,6 +26,14 @@ OPTIONS_TYPE = "YUE2_OPTIONS"
 PLAN_TYPE = "YUE2_PLAN"
 PLANS_TYPE = "YUE2_PLANS"
 LATENTS_TYPE = "YUE2_LATENTS"
+LORA_TYPE = "YUE2_LORA"
+
+LORA_INPUT_TOOLTIP = (
+    "Adapters from a 'YuE2 LoRA' node. Leave it unconnected to sing with the model as "
+    "released.\n\n"
+    "They change the song, not only its sound: an adapter for the AR half writes another "
+    "score and another performance from the same seed.")
+"""The tooltip of the 'lora' input every singing node has, in one wording for all of them."""
 
 SAMPLE_RATE = 48000
 LATENT_DIM = 64

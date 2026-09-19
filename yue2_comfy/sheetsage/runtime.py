@@ -170,5 +170,9 @@ def transcribe(path: str, device, waveform, rate: int, key, progress=None, cance
     for part in result.get("cut_short", ()):
         log.warning("[yue2_comfy.sheetsage] part %d of %d filled the decoder's tokens before its end",
                     part, len(result.get("windows", ())))
+    for handover in result.get("handed_over", ()):
+        log.warning("[yue2_comfy.sheetsage] part %d of %d takes over from %.1f s, where the part before it stopped "
+                    "(%.1f s short of its end)", handover["window"] + 1, len(result.get("windows", ())),
+                    handover["from"], handover["to"] - handover["from"])
     remember(key, result)
     return result

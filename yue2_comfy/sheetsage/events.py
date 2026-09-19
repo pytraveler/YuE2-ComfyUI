@@ -7,6 +7,11 @@ events already kept for the overlap as a prefix, so it continues them rather
 than beginning again. Inside a window, events are counted in subbeats and only
 some carry a time stamp; the rest are placed by interpolating between stamps.
 
+A window can run out of the decoder's tokens before the end of the part it
+answers for: a dense recording spends all 5120 of them a few seconds early. The
+next window heard that music too, so ``resume_point`` hands it the seconds the
+one before it never reached, and the song keeps its beats across the seam.
+
 What comes out is a list of timed events. ``score_rows`` turns them into the
 beats, chords, keys, sections and notes that ``abc_rebuild`` writes a score
 from, applying the same clean-up the model's authors apply: the beat grid is
@@ -146,6 +151,37 @@ def stitch(decoded: dict, lookup, window: dict, duration: float, index: int, bas
             note["end_time"] = min(float(duration), max(output["time"] + 0.04, end))
         kept.append(output)
     return kept
+
+
+def resume_point(window: dict, kept: list, gap_beats: float = 1.5, subbeats: int = 4) -> float:
+    """The time the next window should take over from, or 0.0 when this one reached its end.
+
+    A window that has spent the decoder's tokens stops before the end of the
+    span it answers for, and what it never said is lost: the next window drops
+    everything before the planned boundary. The seconds between the two are a
+    hole in the beat grid, which skips beats and stretches the subbeats around
+    them until a short note no longer fits. The next window has heard that music
+    as well, so it takes over at the last event of this one instead.
+
+    A window normally stops a fraction of a beat early, and a hole shorter than
+    ``gap_beats`` beats holds no beat of its own: those are left where they are,
+    so an ordinary song is stitched exactly where ComfyUI stitches it. The beat
+    is this window's own, measured over its last beats; a window that placed no
+    beat at all counts a second instead.
+
+    The point sits half a subbeat past the last event, the closest the score's
+    grid can tell two moments apart: what the next window says in that half
+    subbeat is what the window before it has already said.
+    """
+    if not kept:
+        return 0.0
+    last = max(float(event["time"]) for event in kept)
+    times = [row[0] for row in beats(kept)]
+    steps = [b - a for a, b in zip(times[-9:], times[-8:])]
+    period = _median(steps) if steps else 1.0
+    if float(window["accept_end"]) - last <= gap_beats * period:
+        return 0.0
+    return last + max(2 * EPS, period / (2.0 * subbeats))
 
 
 def _context_before(events: list, moment: float) -> dict:

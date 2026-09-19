@@ -1,4 +1,4 @@
-"""HTTP routes behind the song editor's and the score editor's windows, and the MIDI node's list.
+"""HTTP routes behind the song editor's and the score editor's windows, and the MIDI and LoRA nodes' lists.
 
 Registered on import. A failure here must never stop the nodes from loading --
 both editors are conveniences on top of widgets that work without them -- so
@@ -135,6 +135,24 @@ def answer_score_midi(body) -> tuple:
     return {"ok": True, "data": base64.b64encode(data).decode("ascii")}, 200
 
 
+def answer_loras() -> tuple:
+    """``(payload, status)`` for 'YuE2 LoRA' asking which LoRA files are for YuE2.
+
+    Every file in ComfyUI's LoRA folders whose header lands on YuE2, with what
+    the node shows under a row: the halves it changes, its rank, its trigger
+    words, and the reason when it cannot be used. Each header is read once per
+    file; see ``lora.catalogue``.
+    """
+    from .lora import catalogue
+
+    try:
+        return {"ok": True, "loras": catalogue.listing()}, 200
+    except Exception as error:  # noqa: BLE001 - the node shows what went wrong
+        log.warning("[yue2_comfy.routes] listing the LoRA files failed: %s", error, exc_info=True)
+        return {"ok": False, "loras": [],
+                "error": "Listing the LoRA files hit an error it did not expect: {}".format(error)}, 200
+
+
 def register() -> None:
     from aiohttp import web
     from server import PromptServer
@@ -169,6 +187,12 @@ def register() -> None:
     async def midi_tracks(request):
         """What a MIDI file in the input folder holds, for the list on 'YuE2 Load MIDI'."""
         payload, status = await asyncio.to_thread(answer_midi_tracks, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.get(PREFIX + "/loras")
+    async def loras(request):
+        """The LoRA files for YuE2, for the rows on 'YuE2 LoRA'."""
+        payload, status = await asyncio.to_thread(answer_loras)
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/tokens")

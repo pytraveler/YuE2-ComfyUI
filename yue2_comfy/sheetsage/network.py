@@ -373,6 +373,11 @@ class Network(nn.Module):
         reaches ``stop_seconds`` -- the part after it belongs to the next window.
         ``cancelled`` is asked every 64 tokens and ``progress`` told the count.
 
+        Returns the tokens and whether the window spent the whole budget of
+        ``MAX_TOKENS``. A window that runs out of tokens tends to end on an eos
+        of its own in the last place there is, so the eos alone does not say
+        that the window reached the end of what it was asked to hear.
+
         The decoder keeps torch's own choice of attention kernel: unlike the
         encoder's, its reference steps were taken with that choice, and cuDNN
         would also rebuild its plan for every new cache length.
@@ -410,4 +415,4 @@ class Network(nn.Module):
         cut = tokens[-1] != vocab.EOS
         if cut:
             tokens.append(vocab.EOS)
-        return tokens, cut
+        return tokens, cut or len(tokens) >= MAX_TOKENS

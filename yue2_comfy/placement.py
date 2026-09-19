@@ -338,14 +338,34 @@ def _homes(owner) -> dict:
     return homes
 
 
+def _pristines(owner) -> dict:
+    """The CPU copies one module's tensors had before a LoRA was folded into them on the card.
+
+    Only kept when the weights have no home to go back to -- under 'off', or for
+    weights that are not file-backed -- and only for a half some adapter of the
+    run changes: see ``lora.apply``. The weights on the card are then the only
+    ones a fold writes to, and this is what leaving the card puts back.
+    """
+    kept = owner.__dict__.get("_yue2_pristine")
+    if kept is None:
+        kept = {}
+        owner._yue2_pristine = kept
+    return kept
+
+
 def _home(owner, name: str, tensor):
-    """The copy to put back instead of copying ``tensor`` off the card, or None."""
-    home = owner.__dict__.get("_yue2_homes", {}).get(name)
-    if home is None or home.device.type != "cpu":
-        return None
-    if home.shape != tensor.shape or home.dtype != tensor.dtype:
-        return None
-    return home
+    """The copy to put back instead of copying ``tensor`` off the card, or None.
+
+    A file-backed home first, a pristine copy kept for a LoRA fold second.
+    """
+    for table in ("_yue2_homes", "_yue2_pristine"):
+        home = owner.__dict__.get(table, {}).get(name)
+        if home is None or home.device.type != "cpu":
+            continue
+        if home.shape != tensor.shape or home.dtype != tensor.dtype:
+            continue
+        return home
+    return None
 
 
 STAGE_BYTES = 64 * 1024 ** 2
@@ -419,13 +439,21 @@ def _to_card(tensors, device) -> list:
     return copies
 
 
-def _onto(slots, copies, keep: bool) -> None:
-    """Put the card copies in their slots, leaving each file-backed view as a home or not."""
+def _onto(slots, copies, keep: bool, pristine: bool = False) -> None:
+    """Put the card copies in their slots, leaving each file-backed view as a home or not.
+
+    ``pristine`` keeps the CPU tensor all the same when it is not kept as a
+    home: a LoRA will be folded into the card copy, and this is its way back.
+    """
     for (owner, name, parameter, tensor), copy in zip(slots, copies):
         if keep and tensor.device.type == "cpu":
             _homes(owner)[name] = tensor
         else:
             owner.__dict__.get("_yue2_homes", {}).pop(name, None)
+            if pristine and tensor.device.type == "cpu":
+                _pristines(owner)[name] = tensor
+            else:
+                owner.__dict__.get("_yue2_pristine", {}).pop(name, None)
         _hold(owner, name, parameter, copy)
 
 
@@ -446,6 +474,42 @@ def _off(slots) -> int:
             copied += tensor.numel() * tensor.element_size()
         _hold(owner, name, parameter, home)
     return copied
+
+
+class LoraState:
+    """What ``lora.apply`` knows about the adapters in one model, kept on the model itself.
+
+    Not on the Placement: that is made again whenever what it measured goes
+    stale -- ``vocabulary.narrowed`` drops it on the way into and out of every
+    stage -- while the weights it describes stay folded. Kept there, the
+    record was lost between the score and the performance, and the next stage
+    folded the adapter a second time on top of the first; measured on
+    2026-09-19, before this class existed.
+
+    'folded' says which adapters are folded into the weights of a half on the
+    card, and 'touched' which tensors took them; a half that leaves the card
+    holds its own weights again, so leaving forgets both. 'factored' is the same
+    for adapters held beside packed layers, which travel with the half and are
+    not forgotten. 'outside' and 'outside_pristine' are for the acoustic
+    modules outside the layers -- llm2vae, vae2llm, the time embedder -- which
+    never leave the card and keep a copy of their own.
+    """
+
+    def __init__(self):
+        self.folded = {}
+        self.touched = {}
+        self.factored = {}
+        self.outside = ()
+        self.outside_pristine = {}
+
+
+def lora_state(lm) -> LoraState:
+    """The model's LoraState, made on first use."""
+    state = lm.__dict__.get("_yue2_lora")
+    if state is None:
+        state = LoraState()
+        lm._yue2_lora = state
+    return state
 
 
 class Placement:
@@ -473,6 +537,10 @@ class Placement:
     through the vocabulary tables they keep in RAM; 'off' narrows nothing and
     used to let it go, so there a move onto the card forgets the home, and the
     rare move off copies, as it always did.
+
+    'pristine' is the halves whose CPU copies are kept when they go to the
+    card, set before a stage's moves, for a half an adapter of the run changes;
+    'lora' is the model's LoraState, which a half leaving the card updates.
     """
 
     def __init__(self, lm, device):
@@ -482,6 +550,8 @@ class Placement:
                                 for module in self.groups[half] for t in _tensors(module))
                       for half in HALVES}
         self.keeps_homes = bool(getattr(lm, "_yue2_file_backed", False))
+        self.pristine = set()
+        self.lora = lora_state(lm)
 
     def _place(self, device) -> str:
         if device.type == "cpu":
@@ -526,15 +596,30 @@ class Placement:
         copied = 0
         if place == CARD:
             copies = _to_card([entry[3] for entry in slots], self.device)
-            _onto(slots, copies, self.keeps_homes and homes)
+            _onto(slots, copies, self.keeps_homes and homes, half in self.pristine)
             del copies
             copied = moved
         else:
             copied = _off(slots)
             del slots
+            self.lora.folded.pop(half, None)
+            self.lora.touched.pop(half, None)
             if self.device.type == "cuda":
                 torch.cuda.empty_cache()
         return time.perf_counter() - start, moved, copied
+
+    def cycle(self, half: str, homes: bool = True) -> None:
+        """Send a half off the card and back, which leaves its own weights on the card.
+
+        How a LoRA is taken out: going off puts back each tensor's home or its
+        pristine copy without copying anything, and coming back fetches them
+        through the pinned buffers, a second or less for a half. Both moves
+        free before they allocate, so the card never holds the half twice.
+        """
+        if getattr(self.device, "type", "cpu") == "cpu":
+            return
+        self._move(half, CPU, homes)
+        self._move(half, CARD, homes)
 
     def arrange(self, mode: str, required, work: int, stage: str) -> list:
         """Move what this stage needs moved, and say so in the log."""
@@ -597,11 +682,16 @@ def load(model, device, file_backed: bool = False):
 
 
 def arrange(models, required, work: int, stage: str, mode=None) -> list:
-    """Put the halves where one stage of this run wants them.
+    """Put the halves where one stage of this run wants them, with the run's LoRAs in the one it needs.
 
     A models object without a real backbone -- the stand-ins the tests use -- is
     left alone, and so is a model that is not laid out in two halves, which the
     loader has put on the card whole.
+
+    The halves an adapter of the run changes keep their CPU copies as they go
+    onto the card, and once the moves are done the required half gets exactly
+    the run's adapters -- see ``lora.apply``. A run without adapters on a model
+    that has none folded in pays nothing here, not even the import.
     """
     lm = getattr(models, "lm", None)
     device = getattr(models, "device", None)
@@ -611,7 +701,22 @@ def arrange(models, required, work: int, stage: str, mode=None) -> list:
         keeper = placement_for(lm, device)
     except AttributeError:
         return []
-    return keeper.arrange(mode or getattr(models, "offload", AUTO), required, work, stage)
+    chosen = getattr(models, "loras", None) or ()
+    if chosen:
+        from .lora import choices
+
+        keeper.pristine = choices.halves(chosen)
+    else:
+        keeper.pristine = set()
+    mode = mode or getattr(models, "offload", AUTO)
+    done = keeper.arrange(mode, required, work, stage)
+    state = keeper.lora
+    if required in HALVES and (chosen or state.folded.get(required) or state.factored.get(required)
+                               or (required == NAR and state.outside)):
+        from .lora import apply
+
+        apply.ensure(models, keeper, required, homes=mode != OFF)
+    return done
 
 
 @contextlib.contextmanager

@@ -44,6 +44,11 @@ class Models(NamedTuple):
     resident model serves runs that choose differently. ``low_vram`` is the
     opposite: packing the layers rewrites them, so it is part of the key, and a
     run that asks differently loads the model again.
+
+    ``loras`` are the run's adapters, ``lora.choices.Choice`` objects. Like
+    ``offload`` they travel with the run: ``placement`` folds them into a half
+    when a stage brings it onto the card, and takes them out again when the
+    next run asks for others, so changing an adapter never reloads the model.
     """
 
     lm: object
@@ -52,6 +57,7 @@ class Models(NamedTuple):
     device: object
     offload: str = "auto"
     low_vram: bool = False
+    loras: tuple = ()
 
 
 def read_header(path: str) -> dict:
@@ -445,21 +451,23 @@ def is_loaded() -> bool:
 
 
 def acquire(files: Files, device_spec: str = "auto", variant: str = "standard",
-            progress=None, offload: str = "auto", low_vram: bool = False) -> Models:
+            progress=None, offload: str = "auto", low_vram: bool = False,
+            loras: tuple = ()) -> Models:
     """The three objects a run needs, from the cache when nothing has changed.
 
     ``offload`` travels with the returned Models rather than into the cache
     key: where the halves sit is decided stage by stage, so choosing
     differently moves weights instead of reloading them. ``low_vram`` cannot:
     it packs the layers into INT8 rows, and BF16 does not come back out of
-    them.
+    them. ``loras`` travel with the run as ``offload`` does.
     """
     device = devices.resolve(device_spec)
     key = _cache_key(files, device, variant, low_vram)
+    loras = tuple(loras or ())
     with _LOCK:
         if _STATE["key"] == key and _STATE["lm"] is not None:
             return Models(_STATE["lm"], _STATE["vae"], _STATE["tokenizer"], device,
-                          offload, bool(low_vram))
+                          offload, bool(low_vram), loras)
 
         unload()
         _free_comfy_vram(device_spec)
@@ -484,7 +492,7 @@ def acquire(files: Files, device_spec: str = "auto", variant: str = "standard",
             quantized.compress(lm, device if device.type == "cuda" else None)
         _STATE.update(key=key, lm=lm, vae=vae, tokenizer=tokenizer)
         log.info("[yue2_comfy.loader] resident on %s%s", device, _vram_suffix(device))
-        return Models(lm, vae, tokenizer, device, offload, bool(low_vram))
+        return Models(lm, vae, tokenizer, device, offload, bool(low_vram), loras)
 
 
 def _vram_suffix(device) -> str:

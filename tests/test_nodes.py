@@ -29,14 +29,15 @@ def test_the_menu_offers_four_nodes_and_hides_the_rest_one_level_down():
     purpose rather than by editing a class and not noticing. Transcribe is a
     headline node: covering a song is a thing people come for. So is Load
     MIDI, the other way in for a tune someone already has, and Vocals Only,
-    the way to an a cappella of any recording.
+    the way to an a cappella of any recording. And LoRA: people asked for it
+    by name, from ComfyUI's own nodes, before it existed.
     """
     plain = {name for name, cls in node_classes()
              if cls.CATEGORY == constants.CATEGORY}
     advanced = {name for name, cls in node_classes()
                 if cls.CATEGORY == constants.ADVANCED_CATEGORY}
     assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe", "YuE2LoadMidi",
-                     "YuE2VocalsOnly"}
+                     "YuE2VocalsOnly", "YuE2LoRA"}
     assert advanced == set(nodes.STAGED_CLASSES)
 
 
@@ -194,12 +195,13 @@ def test_the_edited_score_box_is_the_last_widget_on_the_song_node():
 
     'options' is a socket and holds no value, so the new box sits right after
     the seed and its control, and a workflow saved before it existed simply has
-    one value fewer.
+    one value fewer. 'lora' is a socket too, and came later, so it goes last.
     """
     spec = nodes.YuE2GenerateSong.INPUT_TYPES()
     assert list(spec["required"]) == ["style", "lyrics", "seed"]
-    assert list(spec["optional"]) == ["options", "score_abc"]
+    assert list(spec["optional"]) == ["options", "score_abc", "lora"]
     assert spec["optional"]["score_abc"][1]["default"] == ""
+    assert spec["optional"]["lora"][0] == constants.LORA_TYPE
 
 
 WRITTEN = "X:1\nK:C\n\"C\"CDEF|"

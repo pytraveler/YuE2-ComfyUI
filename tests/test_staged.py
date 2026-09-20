@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 
 import pytest
 
@@ -599,3 +600,46 @@ def test_moving_with_cot_off_says_there_is_no_score_to_move():
     with pytest.raises(ValueError) as error:
         generate.moved("", 2, "off")
     assert "'cot'" in str(error.value)
+
+
+REAL = ('X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=90\n'
+        'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+        'V: Ins clef=treble name="Ins Melody" snm="Inst."\n'
+        'K:C\n% verse\nV: Vocal\nC8D8E8G8|E8F8G8c8|\nV: Ins\nZ|Z|\n')
+"""Two bars of 4/4 at 90 BPM: eight quarter notes, five and a third seconds."""
+
+
+@pytest.mark.parametrize("style,expected", [
+    ("Russian, soft female voice, disco, 127 BPM", "127 BPM and the score is written at 90 BPM"),
+    ("Russian, soft female voice, disco, 90 BPM", ""),
+    ("Russian, soft female voice, disco, 92 BPM", ""),
+    ("Russian, soft female voice, disco", ""),
+    ("fast, 180 bpm", "180 BPM and the score is written at 90 BPM"),
+])
+def test_a_style_that_argues_with_the_score_about_the_tempo_is_reported(style, expected):
+    """Measured on a real cover: the model follows the style and the score drifts away from it."""
+    said = generate.tempo_clash(style, REAL)
+    assert (expected in said) if expected else (said == "")
+    if expected:
+        assert ("slower" in said) == (int(re.search(r"(\d+)", style.split(",")[-1]).group(1)) < 90)
+
+
+def test_a_style_beside_a_score_the_roll_cannot_read_says_nothing():
+    assert generate.tempo_clash("pop, 120 BPM", "X:1\nK:C\nCDEF|\n") == ""
+    assert generate.tempo_clash("pop, 120 BPM", "") == ""
+
+
+def test_a_song_much_shorter_than_its_score_says_so():
+    assert generate.ended_early(REAL, 5.34, 360) == ""
+    said = generate.ended_early(REAL, 2.0, 360)
+    assert "0:02" in said and "0:05" in said
+    assert "stopped there by itself" in said
+
+
+def test_a_song_stopped_by_the_length_limit_blames_the_limit_and_not_the_model():
+    said = generate.ended_early(REAL, 2.0, 2.0)
+    assert "length limit" in said and "max_seconds" in said
+
+
+def test_a_score_nothing_can_read_ends_no_song_early():
+    assert generate.ended_early("X:1\nK:C\nCDEF|\n", 1.0, 360) == ""

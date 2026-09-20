@@ -296,7 +296,12 @@ its own only when it is one.
   sings one note at a time, so a note drawn on top of another is refused, and a
   button under the roll puts the chord the two notes suggest on the chord lane
   instead. A click on the chord lane types a chord: Enter sets it, Esc leaves
-  it. Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts on a sampled
+  it, and the right button drops it. The strip along the top holds the
+  sections: drag a boundary, click a name to change it, click the strip to
+  start a new section, and right-click it to move the play cursor, as the bar
+  strip below it does. "Add bars" adds empty bars at the end, and an editor
+  with no score at all offers one to start from.
+  Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts on a sampled
   grand piano that ships with the pack -- recorded every three semitones, so no
   note is stretched by more than one. It is a guide to the notes, not the song,
   and nothing is fetched from the internet.

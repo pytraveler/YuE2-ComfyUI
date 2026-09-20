@@ -33,6 +33,12 @@ const SCORE_EVENT = "yue2-score-written";
 const READ_ROUTE = "/yue2/score/read";
 const WRITE_ROUTE = "/yue2/score/write";
 const MIDI_ROUTE = "/yue2/score/midi";
+const LENGTH_ROUTE = "/yue2/score/length";
+const NEW_BARS = 16;
+const NEW_BPM = 120;
+const ADD_BARS = [1, 2, 4, 8, 16, 32];
+const LONGER = "longer";
+const LONGER_LABEL = "Add bars\u2026";
 const WRITE_DELAY = 250;
 const READ_DELAY = 450;
 const SUMMARY_H = 58;
@@ -42,7 +48,9 @@ const SONG_SUMMARY = "yue2_song_summary";
 const ABCJS_URL = new URL("./vendor/abcjs-basic-min.cjs", import.meta.url).href;
 
 const KEYS_W = 58;
-const RULER_H = 36;
+const SECTION_H = 16;
+const BAR_H = 30;
+const RULER_H = SECTION_H + BAR_H;
 const CHORD_H = 24;
 const ROW_H = 14;
 const EDGE_PX = 7;
@@ -93,6 +101,8 @@ const SKIN = {
     keyBlackUnder: "#2F4553",
     keyBlackText: "#E4EEF2",
     keysEdge: "#11171A",
+    sectionEdge: "#F0F4F6",
+    sectionHeld: "rgba(255, 255, 255, 0.35)",
 };
 
 const PART_NAMES = { Vocal: "Voice part", Ins: "Instrument part" };
@@ -200,6 +210,23 @@ const CHORD_HELP =
     "m, dim, aug, 7, maj7, m7, dim7, m7b5, sus4, sus2, 6, m6, 7sus4, m(maj7) -- and an optional " +
     "bass note after a slash, as in C/E. Leave the box empty to remove the chord.";
 
+const SECTION_HELP =
+    "A section name is a line of text of at most " + roll.SECTION_LONGEST + " characters. The list " +
+    "offers the names the model itself writes, and the words under the lyrics follow them.";
+
+const SECTION_NOTICE =
+    "Sections are the top strip: drag a boundary to move it, click a name to change it or to " +
+    "empty the box and join it to the section before, and click anywhere else up there to start " +
+    "a new one at that bar.";
+
+const FINER = "finer";
+const FINER_LABEL = "Thirty-second notes (rewrites the score)";
+
+const FINER_NOTICE =
+    "The whole score is written again on thirty-second notes, because a grid step is one note " +
+    "length and the format has no fractions. Not a note moves, and the ABC tab shows the new " +
+    "text; Cancel still leaves the node as it was.";
+
 const SCORE_STYLE_ID = "yue2-score-style";
 const SCORE_STYLE = `
 .yue2-panel.yue2-score { width: min(1500px, 98vw); }
@@ -244,6 +271,7 @@ const SCORE_STYLE = `
 .yue2-s-hint { font-size: 11px; line-height: 1.45; color: var(--descrip-text, #999); margin: 2px 0 0; }
 .yue2-s-foot { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
 .yue2-s-foot button { font-size: 13px; padding: 6px 14px; }
+.yue2-s-or { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-color, #444); }
 .yue2-s-empty { margin: auto; padding: 40px 10px; text-align: center; font-size: 13px; line-height: 1.6;
     color: var(--descrip-text, #aaa); max-width: 560px; }
 .yue2-s-empty button { margin-top: 12px; }
@@ -647,6 +675,8 @@ class ScoreEditor {
         this.playhead = 0;
         this.playTick = null;
         this.chordInput = null;
+        this.sectionInput = null;
+        this.sectionBoxes = [];
         this.notice = null;
         this.changed = [];
         this.localChanged = [];
@@ -747,7 +777,9 @@ class ScoreEditor {
         this.redoButton = element("button", "", "Redo");
         this.redoButton.title = "Redo (Ctrl+Shift+Z).";
         this.redoButton.addEventListener("click", () => this.redo());
-        this.rollTools.append(this.partSelect, this.snapHolder, zoomOut, zoomIn, fit, this.undoButton, this.redoButton);
+        this.barsHolder = element("span");
+        this.rollTools.append(this.partSelect, this.snapHolder, this.barsHolder, zoomOut, zoomIn, fit,
+            this.undoButton, this.redoButton);
         tools.appendChild(this.rollTools);
         panel.appendChild(tools);
 
@@ -755,6 +787,7 @@ class ScoreEditor {
         this.rollBox = element("div", "yue2-s-roll");
         this.rollBox.tabIndex = 0;
         this.canvas = document.createElement("canvas");
+        this.canvas.title = SECTION_NOTICE;
         this.rollBox.appendChild(this.canvas);
         this.scroller = document.createElement("input");
         this.scroller.type = "range";
@@ -813,6 +846,15 @@ class ScoreEditor {
             chords.appendChild(option);
         }
         panel.appendChild(chords);
+
+        const sections = document.createElement("datalist");
+        sections.id = "yue2-s-sections";
+        for (const name of roll.SECTION_NAMES) {
+            const option = document.createElement("option");
+            option.value = name;
+            sections.appendChild(option);
+        }
+        panel.appendChild(sections);
 
         this.canvas.addEventListener("pointerdown", (event) => this.pointerDown(event));
         this.canvas.addEventListener("pointermove", (event) => this.pointerMove(event));
@@ -914,7 +956,7 @@ class ScoreEditor {
         }
     }
 
-    adopt(sheet, fit = true) {
+    adopt(sheet, fit = true, prefer = "Eighth notes") {
         this.sheet = sheet;
         this.model = roll.modelOf(sheet);
         this.good = this.model;
@@ -927,14 +969,8 @@ class ScoreEditor {
             box.min = String(tempi.low);
             box.max = String(tempi.high);
         }
-        const choices = roll.snapChoices(sheet.per_quarter);
-        const preferred = choices.find((c) => c.name === "Eighth notes") || choices[0];
-        this.snap = preferred ? preferred.ticks : 1;
-        this.snapHolder.replaceChildren(selectControl(choices.map((c) => [c.ticks, c.name]), this.snap,
-            "The grid notes snap to while drawing, moving and stretching.", (value) => {
-                this.snap = Number(value);
-                this.draw();
-            }));
+        this.fillSnap(sheet, prefer);
+        this.fillBars();
         this.paintFacts();
         this.playhead = 0;
         if (fit) this.fitView();
@@ -1062,15 +1098,11 @@ class ScoreEditor {
         }
         if (this.source) {
             this.empty.appendChild(element("div", "", this.source.empty));
-            return;
-        }
-        if (this.own) {
+        } else if (this.own) {
             this.empty.appendChild(element("div", "",
                 "There is no score yet. Run the workflow once: the score this node writes appears here, "
                 + "and every edit after that costs only the singing. Or paste a score into the ABC tab."));
-            return;
-        }
-        if (this.origin) {
+        } else if (this.origin) {
             this.empty.appendChild(element("div", "",
                 "There is no score yet. '" + (this.origin.title || "YuE2 Plan") + "' writes one: "
                 + "the button runs only that node, so nothing is sung, and it takes seconds once the "
@@ -1083,6 +1115,12 @@ class ScoreEditor {
                 "Connect a 'YuE2 Plan' or 'YuE2 Select Plan' to this node's plan input to edit the "
                 + "score it writes, or paste a score into the ABC tab."));
         }
+        this.empty.appendChild(element("div", "yue2-s-or",
+            "Or start from nothing: an empty grid of " + NEW_BARS + " bars to draw on, which the "
+            + "node sings in place of anything else."));
+        const blank = element("button", "", "Make an empty score");
+        blank.addEventListener("click", () => this.newScore());
+        this.empty.appendChild(blank);
     }
 
     refresh() {
@@ -1113,6 +1151,94 @@ class ScoreEditor {
             });
         }
         if (id === "notes" && drawn) this.drawNotes();
+    }
+
+    fillSnap(sheet, prefer) {
+        const choices = roll.snapChoices(sheet.per_quarter);
+        const preferred = choices.find((choice) => choice.name === prefer) || choices[0];
+        this.snap = preferred ? preferred.ticks : 1;
+        const options = choices.map((choice) => [String(choice.ticks), choice.name]);
+        if (sheet.unit < roll.FINEST) options.push([FINER, FINER_LABEL]);
+        this.snapHolder.replaceChildren(selectControl(options, String(this.snap),
+            "The grid notes snap to while drawing, moving and stretching.", (value) => {
+                if (value === FINER) {
+                    this.finerGrid();
+                    return;
+                }
+                this.snap = Number(value);
+                this.draw();
+            }));
+    }
+
+    fillBars() {
+        const options = [[LONGER, LONGER_LABEL]].concat(
+            ADD_BARS.map((count) => [String(count), "+ " + count + (count === 1 ? " bar" : " bars")]));
+        this.barsHolder.replaceChildren(selectControl(options, LONGER,
+            "Add empty bars to the end of the song. The score is written again, so the "
+            + "undo history starts over.", (value) => {
+                if (value !== LONGER) this.addBars(Number(value));
+            }));
+    }
+
+    async addBars(count) {
+        if (!this.sheet) return;
+        if (this.writePending) await this.write();
+        if (this.isClosed || !this.sheet) return;
+        await this.relength(this.current, this.sheet.bars.length + count,
+            count + (count === 1 ? " bar" : " bars") + " added at the end. The undo history starts "
+            + "here, and the new bars are silent until something is drawn in them.");
+        this.fillBars();
+    }
+
+    async newScore() {
+        await this.relength("", NEW_BARS,
+            "An empty score of " + NEW_BARS + " bars at " + NEW_BPM + " BPM. Draw notes in the roll, "
+            + "or write it out in the ABC tab. 'Add bars' at the top makes it longer.");
+    }
+
+    async relength(abc, bars, note) {
+        const sequence = ++this.writeSequence;
+        this.setStatus("Writing the score\u2026");
+        const { ok, payload } = await ask(LENGTH_ROUTE, { abc, bars, bpm: NEW_BPM });
+        if (this.isClosed || sequence !== this.writeSequence) return;
+        if (!ok || !payload.ok) {
+            this.setStatus(payload.error || "The score could not be written.", true);
+            this.fillBars();
+            return;
+        }
+        this.pendingNote = note;
+        this.pendingBad = false;
+        await this.load(payload.abc);
+    }
+
+    async finerGrid() {
+        if (!this.sheet || this.sheet.unit >= roll.FINEST) return;
+        const factor = roll.FINEST / this.sheet.unit;
+        const zoom = this.pxPerTick / factor;
+        const at = this.tick0 * factor;
+        this.setStatus("Writing the score again on thirty-second notes\u2026");
+        const asked = roll.scaledModel(this.model, factor, roll.FINEST);
+        const sequence = ++this.writeSequence;
+        const { ok, payload } = await ask(WRITE_ROUTE, { abc: this.base, sheet: roll.sheetOf(asked) });
+        if (this.isClosed || sequence !== this.writeSequence) return;
+        if (!ok || !payload.ok) {
+            this.fillSnap(this.sheet, "Eighth notes");
+            this.setStatus(payload.error || "The score could not be written on a finer grid.", true);
+            return;
+        }
+        this.base = payload.abc;
+        this.current = payload.abc;
+        this.changed = [];
+        this.history = new roll.History();
+        this.notesDrawn = null;
+        if (document.activeElement !== this.textBox) this.textBox.value = payload.abc;
+        this.adopt(payload.sheet, false, "Thirty-second notes");
+        this.pxPerTick = zoom;
+        this.tick0 = at;
+        this.clampView();
+        this.notice = FINER_NOTICE;
+        this.showDescription();
+        this.draw();
     }
 
     fitView() {
@@ -1302,20 +1428,31 @@ class ScoreEditor {
         c.rect(KEYS_W, 0, W - KEYS_W, top);
         c.clip();
         const labels = [];
-        for (const section of sheet.sections) {
+        this.sectionBoxes = [];
+        for (const section of roll.sectionSpans(model, sheet.bars.length)) {
             const startBar = sheet.bars[section.bar];
             const endBar = sheet.bars[section.bar + section.bars - 1];
+            if (!startBar || !endBar) continue;
             const left = this.x(startBar.start);
             const right = this.x(endBar.start + endBar.length);
             if (right < KEYS_W || left > W) continue;
             c.fillStyle = sectionColor(section.name);
             c.globalAlpha = 0.8;
-            c.fillRect(left + 1, 1, right - left - 2, 14);
+            c.fillRect(left + 1, 1, right - left - 2, SECTION_H - 2);
             c.globalAlpha = 1;
+            if (left >= KEYS_W) {
+                const held = this.drag?.mode === "section"
+                    && (this.drag.bar ?? this.drag.from) === section.bar;
+                c.fillStyle = held ? SKIN.playhead : SKIN.sectionEdge;
+                c.fillRect(Math.round(left), 0, 2, SECTION_H);
+            }
             c.fillStyle = "#fff";
-            const labelX = Math.max(left, KEYS_W) + 4;
-            c.fillText(section.name || "section", labelX, 12);
-            labels.push([labelX, labelX + c.measureText(section.name || "section").width + 4]);
+            const labelX = Math.max(left, KEYS_W) + 6;
+            c.fillText(section.name, labelX, 12);
+            const labelW = c.measureText(section.name).width + 4;
+            labels.push([labelX, labelX + labelW]);
+            this.sectionBoxes.push({ bar: section.bar, name: section.name,
+                                     from: labelX - 2, to: labelX + labelW });
         }
         const every = 28 / (px * (sheet.bars[0]?.length || 1)) > 1 ? 4 : 1;
         index = roll.barAt(sheet, Math.max(0, Math.floor(first)));
@@ -1323,10 +1460,10 @@ class ScoreEditor {
             const bar = sheet.bars[index];
             if (bar.start > lastTick) break;
             c.fillStyle = SKIN.rulerTick;
-            c.fillRect(Math.round(this.x(bar.start)), 17, 1, RULER_H - 17);
+            c.fillRect(Math.round(this.x(bar.start)), SECTION_H + 1, 1, RULER_H - SECTION_H - 1);
             if (index % every === 0) {
                 c.fillStyle = SKIN.rulerText;
-                c.fillText(String(index + 1), this.x(bar.start) + 4, 30);
+                c.fillText(String(index + 1), this.x(bar.start) + 4, RULER_H - 6);
             }
         }
         c.font = "11px system-ui, sans-serif";
@@ -1354,21 +1491,23 @@ class ScoreEditor {
             c.fillText(chip, chipX + 5, 12);
         }
         if (markerShown) {
+            const head = SECTION_H + 1;
             c.fillStyle = SKIN.playhead;
             c.beginPath();
-            c.moveTo(markerX - 5, 17);
-            c.lineTo(markerX + 5, 17);
-            c.lineTo(markerX, 24);
+            c.moveTo(markerX - 5, head);
+            c.lineTo(markerX + 5, head);
+            c.lineTo(markerX, head + 7);
             c.closePath();
             c.fill();
-            c.fillRect(markerX - 0.5, 24, 1, top - 24);
+            c.fillRect(markerX - 0.5, head + 7, 1, top - head - 7);
         }
         c.restore();
 
         c.fillStyle = SKIN.ruler;
         c.fillRect(0, 0, KEYS_W, top);
         c.fillStyle = SKIN.laneText;
-        c.fillText("bar", 6, 30);
+        c.fillText("section", 6, 12);
+        c.fillText("bar", 6, RULER_H - 6);
         c.fillText("chord", 6, RULER_H + CHORD_H - 8);
         c.save();
         c.beginPath();
@@ -1512,17 +1651,17 @@ class ScoreEditor {
             if (py >= top) this.blip(this.pitchAt(py));
             return;
         }
+        if (py < SECTION_H) {
+            this.sectionDown(event, px, tick);
+            return;
+        }
         if (py < RULER_H) {
-            this.playhead = clamp(roll.snapDown(tick, this.snap), 0, this.sheet.total);
-            const wasPlaying = this.player.playing;
-            this.stopPlaying();
-            this.playhead = clamp(roll.snapDown(tick, this.snap), 0, this.sheet.total);
-            if (wasPlaying) this.startPlaying();
-            this.draw();
+            this.movePlayhead(tick);
             return;
         }
         if (py < top) {
-            this.chordAt(tick, px);
+            if (event.button === 2) this.dropChord(px);
+            else this.chordAt(tick, px);
             return;
         }
         const pitch = this.pitchAt(py);
@@ -1579,6 +1718,103 @@ class ScoreEditor {
         this.draw();
     }
 
+    movePlayhead(tick) {
+        const at = clamp(roll.snapDown(tick, this.snap), 0, this.sheet.total);
+        const wasPlaying = this.player.playing;
+        this.stopPlaying();
+        this.playhead = at;
+        if (wasPlaying) this.startPlaying();
+        this.draw();
+    }
+
+    sectionEdgeAt(px) {
+        return this.model.sections.find((section) => {
+            const bar = this.sheet.bars[section.bar];
+            const left = bar ? this.x(bar.start) : null;
+            return left !== null && left >= KEYS_W && Math.abs(left - px) <= EDGE_PX;
+        }) || null;
+    }
+
+    sectionDown(event, px, tick) {
+        if (event.button === 2) {
+            this.movePlayhead(tick);
+            return;
+        }
+        if (event.button !== 0) return;
+        const edge = this.sectionEdgeAt(px);
+        if (edge) {
+            this.canvas.setPointerCapture(event.pointerId);
+            this.drag = { mode: "section", from: edge.bar, base: this.model };
+            this.draw();
+            return;
+        }
+        const named = (this.sectionBoxes || []).find((box) => px >= box.from && px <= box.to);
+        if (named) {
+            this.openSectionInput(named.bar, named.name);
+            return;
+        }
+        const bar = roll.barAt(this.sheet, clamp(Math.floor(tick), 0, this.sheet.total - 1));
+        const here = roll.sectionStarting(this.model, bar);
+        this.openSectionInput(bar, here ? here.name : "");
+    }
+
+    openSectionInput(bar, name) {
+        this.closeChordInput();
+        this.closeSectionInput();
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "yue2-s-chord";
+        input.value = name;
+        input.placeholder = name ? "name \u2014 empty joins it to the one before" : "verse, chorus\u2026";
+        input.setAttribute("list", "yue2-s-sections");
+        for (const side of ["width", "min-width", "max-width"]) {
+            input.style.setProperty(side, CHORD_BOX_W + "px", "important");
+        }
+        const at = this.sheet.bars[bar];
+        input.style.left = clamp(at ? this.x(at.start) : KEYS_W, KEYS_W,
+            Math.max(KEYS_W, this.width - CHORD_BOX_W - 10)) + "px";
+        input.style.top = "1px";
+        const entry = { input, done: false };
+        entry.finish = (keep) => {
+            if (entry.done) return true;
+            const text = input.value.trim();
+            const clean = roll.sectionName(text);
+            if (keep && text && !clean) {
+                input.classList.add("yue2-s-bad");
+                this.setStatus(SECTION_HELP, true);
+                return false;
+            }
+            this.closeSectionInput(entry);
+            if (keep && !clean && name) this.commit(roll.removeSection(this.model, bar));
+            else if (keep && clean && clean !== name) this.commit(roll.setSection(this.model, bar, clean));
+            this.showDescription();
+            return true;
+        };
+        input.addEventListener("keydown", (event) => {
+            event.stopPropagation();
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            if (entry.finish(true)) this.rollBox.focus();
+        });
+        input.addEventListener("blur", () => {
+            if (!entry.finish(true)) this.closeSectionInput(entry);
+        });
+        this.sectionInput = entry;
+        this.rollBox.appendChild(input);
+        input.focus();
+        input.select();
+        this.setStatus(name
+            ? "Name this section again and press Enter, or empty the box to join it to the one before."
+            : "Name a section starting at bar " + (bar + 1) + " and press Enter. Esc leaves the strip as it was.");
+    }
+
+    closeSectionInput(entry = this.sectionInput) {
+        if (!entry) return;
+        entry.done = true;
+        if (this.sectionInput === entry) this.sectionInput = null;
+        entry.input.remove();
+    }
+
     hover(pitch) {
         if (this.hoverPitch === pitch) return;
         this.hoverPitch = pitch;
@@ -1592,7 +1828,8 @@ class ScoreEditor {
         if (!this.drag) {
             const hit = py > RULER_H + CHORD_H && px > KEYS_W ? this.hitNote(px, py) : null;
             let cursor = "crosshair";
-            if (py <= RULER_H + CHORD_H) cursor = "pointer";
+            if (py < SECTION_H && px > KEYS_W) cursor = this.sectionEdgeAt(px) ? "ew-resize" : "pointer";
+            else if (py <= RULER_H + CHORD_H) cursor = "pointer";
             else if (hit) cursor = this.x(hit.start + hit.length) - px <= EDGE_PX ? "ew-resize" : "move";
             this.canvas.style.cursor = cursor;
             return;
@@ -1600,7 +1837,14 @@ class ScoreEditor {
         const tick = this.tickAt(px);
         const pitch = this.pitchAt(py);
         const total = this.sheet.total;
-        if (this.drag.mode === "box") {
+        if (this.drag.mode === "section") {
+            const bar = roll.barAt(this.sheet, clamp(Math.floor(tick), 0, total - 1));
+            const moved = roll.moveSection(this.drag.base, this.drag.from, bar);
+            if (moved) {
+                this.working = moved;
+                this.drag.bar = bar;
+            }
+        } else if (this.drag.mode === "box") {
             this.drag.toTick = tick;
             this.drag.toPitch = pitch;
             const inside = roll.notesIn(this.model, this.part, this.drag.tick, tick, this.drag.pitch, pitch);
@@ -1640,6 +1884,17 @@ class ScoreEditor {
         const result = this.working;
         this.drag = null;
         this.working = null;
+        if (drag.mode === "section") {
+            if (result && result !== drag.base) {
+                this.commit(result, drag.base);
+                const moved = result.sections.find((section) => section.bar === drag.bar);
+                this.notice = moved ? moved.name + " starts at bar " + (moved.bar + 1) + " now." : null;
+                this.showDescription();
+                return;
+            }
+            this.draw();
+            return;
+        }
         if ((drag.mode === "move" || drag.mode === "resize") && result && result !== drag.from) {
             if (drag.mode === "move") {
                 const lead = result.notes[this.part].find((n) => n.id === drag.ids[0]);
@@ -1757,16 +2012,34 @@ class ScoreEditor {
         this.rollBox.focus();
     }
 
-    chordAt(tick, px) {
-        if (this.barLocked(tick)) return;
+    chordUnder(px) {
         const c = this.canvas.getContext("2d");
         c.font = "11px system-ui, sans-serif";
-        const found = this.model.chords.find((chord) => {
+        return this.model.chords.find((chord) => {
             const left = this.x(chord.start);
             return px >= left && px <= left + c.measureText(chord.name).width + 10;
-        });
+        }) || null;
+    }
+
+    chordAt(tick, px) {
+        if (this.barLocked(tick)) return;
+        const found = this.chordUnder(px);
         const start = found ? found.start : clamp(roll.snapDown(tick, this.snap), 0, this.sheet.total - 1);
         this.openChordInput(start, found ? found.name : "");
+    }
+
+    dropChord(px) {
+        const found = this.chordUnder(px);
+        if (!found) {
+            this.setStatus("Right-click a chord to remove it; click the lane to add one.");
+            return;
+        }
+        if (this.barLocked(found.start)) return;
+        this.closeChordInput();
+        if (!this.commit(roll.removeChord(this.model, found.start))) return;
+        this.notice = found.name + " is gone from bar " + (roll.barAt(this.sheet, found.start) + 1)
+            + ". Ctrl+Z brings it back.";
+        this.setStatus(this.notice);
     }
 
     openChordInput(start, name) {
@@ -2096,8 +2369,9 @@ class ScoreEditor {
     }
 
     escape() {
-        if (this.chordInput) {
+        if (this.chordInput || this.sectionInput) {
             this.closeChordInput();
+            this.closeSectionInput();
             this.showDescription();
             this.rollBox.focus();
             return;

@@ -420,6 +420,10 @@ class YuE2GenerateSong:
         if edited and settings["cot"] == "full" and edits.chordless(edited):
             announce(unique_id, [("warn", edits.CHORDLESS)])
         if edited:
+            clash = generate.tempo_clash(style, edited)
+            if clash:
+                announce(unique_id, [("warn", clash)])
+        if edited:
             log.info("[yue2_comfy] singing the score given to the node, kept on it or "
                      "wired in; no score is written this run")
 
@@ -448,6 +452,10 @@ class YuE2GenerateSong:
             timing["semantic"]["execution"], timing["semantic"]["attention"], seed,
         )
         log.info("[yue2_comfy] %s", stage_times(timing, time.perf_counter() - began))
+        short = generate.ended_early(score, timing["seconds_of_audio"],
+                                     generate.song_ceiling(settings["max_seconds"], lyrics, tune_seconds))
+        if short:
+            announce(unique_id, [("warn", short)])
         progress.finish("{:.0f} seconds of {}".format(timing["seconds_of_audio"], "vocals" if voice else "audio"))
         ui = {edits.WORDS_UI: [edits.mark(style, lyrics, settings["cot"])],
               edits.AUTO_SECONDS_UI: [auto_seconds(lyrics)]}

@@ -108,6 +108,13 @@ CUT_SHORT = (
     "tokens for a part, and those filled before the part's end, so the last seconds of them may be "
     "missing from the score."
 )
+TEMPO_HEARD = (
+    "The score is written at {written} BPM, and the beat of this recording measures about "
+    "{heard} BPM. Notes are placed on the beat the transcriber decided, so a gap that wide "
+    "means their rhythm is not the recording's, and a song sung from this score will not sit "
+    "in the beat. Its melody, chords and sections are still worth having. Measured on one such "
+    "recording: a minute or two at a time is heard far more accurately than a whole long song."
+)
 CANNOT_HEAR = "SheetSage2 could not transcribe this recording: {reason}."
 CANNOT_RECOGNISE = "Qwen3-ASR could not hear this recording: {reason}."
 WRITER_FETCHED = (
@@ -139,6 +146,39 @@ def _sections(score: str) -> list:
         return sections.sections(score)
     except ValueError:
         return []
+
+
+def _written_tempo(score: str):
+    """The BPM of a freshly written score, from the header line the dialect fixes."""
+    import re
+
+    from . import notation
+
+    lines = (score or "").strip().splitlines()
+    if len(lines) <= notation.TEMPO_LINE:
+        return None
+    found = re.fullmatch(r"Q:1/4=([1-9][0-9]*)", lines[notation.TEMPO_LINE])
+    return int(found.group(1)) if found else None
+
+
+def _beat_findings(track, score: str) -> list:
+    """A warning when the pulse of the recording is not the one the score was written on.
+
+    The transcriber decides the beat and everything else it writes hangs off
+    that decision, so this is the one number worth checking against the audio
+    itself. See ``sheetsage.beat`` for what was measured.
+    """
+    from .sheetsage import beat
+
+    written = _written_tempo(score)
+    if not written:
+        return []
+    found = beat.disagreement(track["samples"], track["rate"], written)
+    if found is None:
+        return []
+    log.info("[yue2_comfy.transcribe] the score says %s BPM, the recording measures %s",
+             written, found[0])
+    return [("warn", TEMPO_HEARD.format(written=written, heard=found[0]))]
 
 
 class YuE2Transcribe:
@@ -217,6 +257,7 @@ class YuE2Transcribe:
                 findings.append(("warn", OTHER_TRACK_SCORE))
             written = self._written(heard, mode, unique_id)
             score = written
+            findings.extend(_beat_findings(track, written))
 
         from .sheetsage import sections
 

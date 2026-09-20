@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import time
 
 from . import phrasing, placement, runtime, transpose
@@ -188,6 +189,72 @@ def write_score(models, style, lyrics, seed, settings, progress=None,
     if truncated:
         log.warning("[yue2_comfy.generate] the score hit its token budget")
     return models.tokenizer.decode(ids), list(ids), {"abc": spent}
+
+
+STYLE_BPM = re.compile(r"(\d{2,3})\s*bpm", re.IGNORECASE)
+
+TEMPO_CLASH = (
+    "The style line asks for {asked} BPM and the score is written at {written} BPM. The model "
+    "follows the style, so every phrase of the score is sung {how} than it is written, the "
+    "instrumental stretches between them go first, and a long song drifts away from its words. "
+    "Make the two agree: the tempo box in the score editor moves the score, and the number in "
+    "the style line is on this node."
+)
+
+ENDED_EARLY = (
+    "The song ended after {sung}, and the score it was sung from runs to {written}: the last "
+    "sections were never sung, nor the words under them. The model stopped there by itself and "
+    "nothing here cut it short. A score whose beat does not match its own tempo, and a score "
+    "much longer than three minutes, are the two ways this usually starts."
+)
+
+ENDED_AT_LIMIT = (
+    "The song ended after {sung} at its length limit, and the score runs to {written}: the "
+    "sections after that were not sung. Raise 'max_seconds' in YuE2 Options if the whole score "
+    "should be heard."
+)
+
+SANG_ENOUGH = 0.9
+"""How much of a score counts as singing it. Below this the run says so."""
+
+
+def tempo_clash(style: str, abc: str) -> str:
+    """What to say when a style line and the score it is sung with disagree on the tempo.
+
+    Measured 2026-09-20 on a real cover: a score written at 147 BPM with '127 BPM'
+    in the style was sung 6 to 16 per cent slower than written, an instrumental
+    interlude of 36 seconds vanished, and the run stopped at 54 per cent of the
+    score. Neither number is wrong by itself, and nothing else in the pack would
+    ever mention them together.
+    """
+    from . import notation
+
+    asked = STYLE_BPM.search(style or "")
+    lines = (abc or "").strip().splitlines()
+    if not asked or len(lines) <= notation.TEMPO_LINE:
+        return ""
+    found = re.fullmatch(r"Q:1/4=([1-9][0-9]*)", lines[notation.TEMPO_LINE])
+    if not found:
+        return ""
+    one, other = int(asked.group(1)), int(found.group(1))
+    if not one or abs(one - other) <= 0.03 * other:
+        return ""
+    return TEMPO_CLASH.format(asked=one, written=other, how="slower" if one < other else "faster")
+
+
+def ended_early(abc: str, seconds: float, ceiling: float) -> str:
+    """What to say when the song is much shorter than the score it was sung from."""
+    from . import notation
+    from .progress import format_duration
+
+    try:
+        written = float(notation.read(abc)["seconds"])
+    except (ValueError, KeyError, IndexError):
+        return ""
+    if not written or seconds >= SANG_ENOUGH * written:
+        return ""
+    words = ENDED_AT_LIMIT if ceiling and seconds >= 0.95 * ceiling else ENDED_EARLY
+    return words.format(sung=format_duration(seconds), written=format_duration(written))
 
 
 def song_ceiling(max_seconds, lyrics: str, tune_seconds=None) -> float:

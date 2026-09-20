@@ -75,6 +75,77 @@ and closing it again cannot move the song.
 
 TEMPO_RANGE = "A tempo of {value} BPM is outside {low} to {high}."
 
+HEADER_LINES = 8
+"""Lines of header before the first group of music.
+
+The dialect fixes them -- X:1, an empty title, the meter, the unit, the tempo,
+the two voice definitions and the key -- and abc_tools.parse refuses a score
+whose first eight lines are anything else, so a walk over the groups can begin
+here without looking for where they start.
+"""
+
+SECTION_LONGEST = 40
+"""Characters a section name may have. The model's own labels are a word or two."""
+
+SECTION_NAME = (
+    "'{name}' cannot be a section name: a name is a line of text of at most "
+    "{longest} characters."
+)
+
+SECTION_TWICE = "Two sections start at bar {bar}, and every bar belongs to one section."
+
+SECTION_BAR = "A section starts at bar {bar}, and this song has {bars} bars."
+
+UNIT_LINE = 3
+"""Where ``L:1/<n>`` sits, fixed by the dialect like the tempo line above."""
+
+FINEST = 32
+"""The shortest note length a score is rewritten at.
+
+A grid step of the piano roll is one L: unit, and the dialect writes a length as
+a whole number of them, so a thirty-second note exists in the roll only if the
+score is written on thirty-seconds. The roll offers no finer grid, and a score
+written finer would only be longer to read.
+"""
+
+UNIT_ASKED = (
+    "A score can be rewritten on a note length of 1/{finest} at the most, and only "
+    "on a power of two; 1/{unit} is not one."
+)
+
+GROUP_BARS = 4
+"""Bars a group of music may hold, the most the dialect allows in one line."""
+
+BLANK_BARS = 16
+BLANK_BPM = 120
+BLANK_METER = "4/4"
+BLANK_UNIT = 16
+BLANK_KEY = "C"
+BLANK_SECTION = "verse"
+"""What a score made from nothing starts as.
+
+Sixteen bars of four four at 120 BPM is half a minute, enough of a grid to
+draw a verse on and short enough to read at a glance. The unit is the one the
+model itself writes for four four, and the roll offers thirty-seconds on top of
+it when a finer grid is wanted.
+"""
+
+MOST_BARS = 2000
+"""Bars either function will make.
+
+An hour of music at four four, far past anything the model sings. The cap is
+there so a mistyped number cannot build a score nothing can read, not to say
+anything about how long a song may be.
+"""
+
+BARS_ASKED = "A score can be at most {most} bars long, and {bars} were asked for."
+
+BARS_FEWER = (
+    "This score is {have} bars long and {bars} were asked for. The editor only makes "
+    "a song longer: bars are removed by deleting them, so that nothing is thrown away "
+    "by a number typed in the wrong box."
+)
+
 UNREADABLE = (
     "This score cannot be read note by note: {reason}.\n\n"
     "The piano roll draws scores written in the dialect the model writes. The ABC "
@@ -172,6 +243,313 @@ def _layout(text: str, score):
             if "[K:" in piece:
                 inline.update(bars)
     return lines, pieces, sections, inline
+
+
+def _bar_count(body: str) -> int:
+    """Bars in one music line, a Z2 to Z4 rest counting as the bars it stands for."""
+    count = 0
+    for piece in body[:-1].split("|"):
+        rest = FULL_REST.fullmatch(piece)
+        count += int(rest.group(1) or 1) if rest else 1
+    return count
+
+
+def _rest_text(bars: int) -> str:
+    return "Z" + (str(bars) if bars > 1 else "")
+
+
+def _cut_music(body: str, at: int) -> tuple:
+    """One music line as two, the second beginning *at* bars into it.
+
+    Only a whole-bar rest stands for more than one bar, so a cut that falls
+    inside a piece falls inside such a rest and is written as two shorter ones.
+    """
+    head, tail, seen = [], [], 0
+    for piece in body[:-1].split("|"):
+        rest = FULL_REST.fullmatch(piece)
+        bars = int(rest.group(1) or 1) if rest else 1
+        if seen + bars <= at:
+            head.append(piece)
+        elif seen >= at:
+            tail.append(piece)
+        else:
+            head.append(_rest_text(at - seen))
+            tail.append(_rest_text(bars - (at - seen)))
+        seen += bars
+    return "|".join(head) + "|", "|".join(tail) + "|"
+
+
+def _blocks(bodies: list) -> list:
+    """The groups of a score: the names written above each, and each part's lines.
+
+    The shape is the one upstream's reader demands -- any number of ``% name``
+    comments, then for each part its ``V:`` line, a meter or key field if the
+    group changes one, and one music line -- so a score that parsed needs no
+    checking here.
+    """
+    found = []
+    cursor = HEADER_LINES
+    while cursor < len(bodies):
+        names = []
+        while bodies[cursor].startswith("% "):
+            names.append(bodies[cursor][2:].strip())
+            cursor += 1
+        block = {"names": names, "voices": {}}
+        for name in abc_tools.VOICES:
+            head = [bodies[cursor]]
+            cursor += 1
+            while bodies[cursor].startswith(("M:", "K:")):
+                head.append(bodies[cursor])
+                cursor += 1
+            block["voices"][name] = {"head": head, "music": bodies[cursor]}
+            cursor += 1
+        found.append(block)
+    return found
+
+
+def _split_block(block: dict, at: int) -> list:
+    """A group cut in two on the same bar of both parts.
+
+    A meter or key the group carries stays with its first half, where the bar it
+    belongs to still is; the second half needs none, because a part keeps what
+    it was given until something changes it.
+    """
+    first = {"names": block["names"], "voices": {}}
+    second = {"names": [], "voices": {}}
+    for name in abc_tools.VOICES:
+        voice = block["voices"][name]
+        head, tail = _cut_music(voice["music"], at)
+        first["voices"][name] = {"head": voice["head"], "music": head}
+        second["voices"][name] = {"head": ["V: " + name], "music": tail}
+    return [first, second]
+
+
+def _resection(text: str, wanted: list) -> str:
+    """*text* with its section comments replaced by *wanted*, ``(bar, name)`` each.
+
+    A comment can only stand between groups, and a group is one to four bars, so
+    a section that begins inside one cuts it in two. Nothing else moves: every
+    bar keeps the characters it had, and the caller reads the notes back to prove
+    it.
+    """
+    lines = text.splitlines(keepends=True)
+    bodies = [line.rstrip("\r\n") for line in lines]
+    ending = lines[0][len(bodies[0]):] or "\n"
+    blocks = _blocks(bodies)
+    starts = []
+    at = 0
+    for block in blocks:
+        starts.append(at)
+        at += _bar_count(block["voices"]["Vocal"]["music"])
+    for bar, _name in wanted:
+        if bar in starts:
+            continue
+        index = max(place for place, start in enumerate(starts) if start < bar)
+        blocks[index:index + 1] = _split_block(blocks[index], bar - starts[index])
+        starts.insert(index + 1, bar)
+    named = dict(wanted)
+    out = list(lines[:HEADER_LINES])
+    for start, block in zip(starts, blocks):
+        if start in named:
+            out.append("% " + named[start] + ending)
+        for name in abc_tools.VOICES:
+            out.extend(line + ending for line in block["voices"][name]["head"])
+            out.append(block["voices"][name]["music"] + ending)
+    if not lines[-1].endswith(("\n", "\r")):
+        out[-1] = out[-1].rstrip("\r\n")
+    return "".join(out)
+
+
+def _squeezed(texts: list) -> str:
+    """Bars as a music line, a run of whole-bar rests written as one Z.
+
+    The dialect allows one to four bars in a line, so the run is cut into fours,
+    which is also how the model writes a long silence.
+    """
+    out = []
+    at = 0
+    while at < len(texts):
+        if texts[at] != "Z":
+            out.append(texts[at])
+            at += 1
+            continue
+        end = at
+        while end < len(texts) and texts[end] == "Z" and end - at < 4:
+            end += 1
+        out.append(_rest_text(end - at))
+        at = end
+    return "|".join(out) + "|"
+
+
+def _refine(text: str, unit: int) -> str:
+    """*text* written again on ``L:1/unit``, finer than the one it came in.
+
+    The song is not touched: a time and a length are the same number of quarter
+    notes either way, and the caller reads both texts back and compares them.
+    What changes is what the piano roll can hold, because its grid step is one
+    unit and the dialect has no fractional lengths.
+    """
+    source, score, lines, _pieces, _sections, _inline = _parsed(text)
+    sheet = read(source)
+    scale = unit // sheet["unit"]
+    per_quarter = Fraction(unit, 4)
+    bodies = [line.rstrip("\r\n") for line in lines]
+    ending = lines[0][len(bodies[0]):] or "\n"
+    grid = [(bar["start"] * scale, bar["length"] * scale) for bar in sheet["bars"]]
+    keys = [bar["key"] for bar in sheet["bars"]]
+    notes = {name: sorted((note["start"] * scale, note["length"] * scale, note["pitch"])
+                          for note in sheet["notes"][name]) for name in abc_tools.VOICES}
+    chords = {chord["start"] * scale: chord["name"] for chord in sheet["chords"]}
+    out = list(lines[:HEADER_LINES])
+    out[UNIT_LINE] = "L:1/{}".format(unit) + lines[UNIT_LINE][len(bodies[UNIT_LINE]):]
+    number = 0
+    for block in _blocks(bodies):
+        out.extend("% " + name + ending for name in block["names"])
+        first = number
+        for name in abc_tools.VOICES:
+            number = first
+            out.extend(line + ending for line in block["voices"][name]["head"])
+            written = []
+            for _ in range(_bar_count(block["voices"][name]["music"])):
+                start, length = grid[number]
+                inside = _inside(notes[name], start, length)
+                spelled = {note: _spell(note[2], _key_at(score.voices[name].keys,
+                                                         Fraction(note[0], per_quarter)))
+                           for note in inside}
+                in_bar = {tick: chord for tick, chord in chords.items()
+                          if start <= tick < start + length} if name == "Vocal" else {}
+                written.append(_bar_text(start, length, inside, in_bar, keys[number], spelled))
+                number += 1
+            out.append(_squeezed(written) + ending)
+    if not lines[-1].endswith(("\n", "\r")):
+        out[-1] = out[-1].rstrip("\r\n")
+    return "".join(out)
+
+
+def _same_music(before, after) -> None:
+    """Two parses of the same song, however each is written down."""
+    for name in abc_tools.VOICES:
+        if [list(note) for note in before.voices[name].notes] != \
+                [list(note) for note in after.voices[name].notes]:
+            raise ValueError("the {} part does not read back as the same notes"
+                             .format(PARTS[name]))
+        if before.voices[name].bars != after.voices[name].bars:
+            raise ValueError("the bars of the {} part moved".format(PARTS[name]))
+        if before.voices[name].keys != after.voices[name].keys:
+            raise ValueError("a key change of the {} part moved".format(PARTS[name]))
+    if before.voices["Vocal"].chords != after.voices["Vocal"].chords:
+        raise ValueError("the chords moved")
+    if before.bpm != after.bpm:
+        raise ValueError("the tempo changed")
+
+
+def _wanted_unit(sheet, current: int):
+    """The note length an edit asks the score to be rewritten on, or None.
+
+    None is the ordinary answer: an edit sends the length its score already has,
+    or sends none at all. A coarser one is ignored rather than refused, because
+    the roll asks for a finer grid and never for a wider one.
+    """
+    if not isinstance(sheet, dict) or sheet.get("unit") is None:
+        return None
+    unit = sheet["unit"]
+    if not _whole(unit) or unit <= current:
+        return None
+    if unit > FINEST or unit & (unit - 1):
+        raise ValueError(UNIT_ASKED.format(unit=unit, finest=FINEST))
+    return unit
+
+
+def _wanted_sections(sheet, bars: int):
+    """The sections an edit asks for, checked as untrusted input.
+
+    None when the edit carries none, which is what every caller sent before
+    sections could be edited and still sends when it only moves notes. A name
+    that is empty is not a refusal but a stretch with no comment above it, which
+    is how :func:`read` reports bars before the first one.
+    """
+    if not isinstance(sheet, dict) or sheet.get("sections") is None:
+        return None
+    items = sheet["sections"]
+    if not isinstance(items, list) or len(items) > bars:
+        raise ValueError("The sections must be a list, at most one for each bar.")
+    wanted = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict) or not _whole(item.get("bar")) \
+                or not isinstance(item.get("name"), str):
+            raise ValueError("Every section needs a whole-number bar and a name.")
+        name = " ".join(item["name"].split())
+        if not name:
+            continue
+        if len(name) > SECTION_LONGEST or not name.isprintable():
+            raise ValueError(SECTION_NAME.format(name=item["name"][:60].strip(),
+                                                 longest=SECTION_LONGEST))
+        if not 0 <= item["bar"] < bars:
+            raise ValueError(SECTION_BAR.format(bar=item["bar"] + 1, bars=bars))
+        if item["bar"] in seen:
+            raise ValueError(SECTION_TWICE.format(bar=item["bar"] + 1))
+        seen.add(item["bar"])
+        wanted.append((item["bar"], name))
+    wanted.sort()
+    return wanted
+
+
+def _rest_groups(bars: int, ending: str) -> list:
+    """Lines for *bars* empty bars, cut into groups the dialect allows."""
+    out = []
+    left = bars
+    while left > 0:
+        count = min(GROUP_BARS, left)
+        music = _rest_text(count) + "|"
+        for name in abc_tools.VOICES:
+            out.append("V: " + name + ending)
+            out.append(music + ending)
+        left -= count
+    return out
+
+
+def blank(bars: int = BLANK_BARS, bpm: int = BLANK_BPM) -> str:
+    """A score of *bars* empty bars, for writing one from nothing.
+
+    The header is the dialect's fixed eight lines and the music is whole-bar
+    rests in both parts, so the piano roll opens on an empty grid of the right
+    length instead of on a page telling the person to run something first.
+    """
+    _asked(bars)
+    if not isinstance(bpm, int) or isinstance(bpm, bool) or not TEMPO_LOW <= bpm <= TEMPO_HIGH:
+        raise ValueError(TEMPO_RANGE.format(value=bpm, low=TEMPO_LOW, high=TEMPO_HIGH))
+    head = ["X:1", "T:", "M:" + BLANK_METER, "L:1/{}".format(BLANK_UNIT),
+            "Q:1/4={}".format(bpm),
+            'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"',
+            'V: Ins clef=treble name="Ins Melody" snm="Inst."',
+            "K:" + BLANK_KEY, "% " + BLANK_SECTION]
+    return "".join(line + "\n" for line in head) + "".join(_rest_groups(bars, "\n"))
+
+
+def lengthened(text: str, bars: int) -> str:
+    """*text* with empty bars added at the end until the song is *bars* long.
+
+    Nothing already written moves. The added groups carry only a ``V:`` line
+    each, because a part keeps the meter and the key it was last given, and the
+    song's last section runs on into them.
+    """
+    _asked(bars)
+    source, score, _lines, _pieces, _sections, _inline = _parsed(text)
+    have = len(score.voices["Vocal"].bars)
+    if bars <= have:
+        raise ValueError(BARS_FEWER.format(have=have, bars=bars))
+    lines = source.splitlines(keepends=True)
+    ending = lines[0][len(lines[0].rstrip("\r\n")):] or "\n"
+    out = [line if line.endswith(("\n", "\r")) else line + ending for line in lines]
+    out.extend(_rest_groups(bars - have, ending))
+    return "".join(out)
+
+
+def _asked(bars) -> None:
+    """A bar count the editor may ask for, or the refusal saying what the limit is."""
+    if not isinstance(bars, int) or isinstance(bars, bool) or not 1 <= bars <= MOST_BARS:
+        raise ValueError(BARS_ASKED.format(most=MOST_BARS, bars=bars))
 
 
 def read(text: str) -> dict:
@@ -460,25 +838,52 @@ def _check(text, notes, chords, score, per_quarter, bpm) -> None:
         raise ValueError("the tempo or the note length is not the one asked for")
 
 
+def _checked(text, notes, chords, score, per_quarter, bpm) -> None:
+    """:func:`_check`, with the refusal a person editing can read.
+
+    Every path that hands text back runs it, so a bar this module moved by
+    mistake is caught here rather than sung.
+    """
+    try:
+        _check(text, notes, chords, score, per_quarter, bpm)
+    except (ValueError, KeyError, IndexError) as error:
+        raise ValueError(NOT_WRITTEN.format(reason=_reason(error))) from error
+
+
 def write(text: str, sheet) -> dict:
     """``{"abc": text, "bars": [...]}``: *text* with the notes of *sheet* in it.
 
     *sheet* is what :func:`read` returned, edited: ``notes`` per part,
-    ``chords``, and ``bpm`` when the tempo is to change; everything else in it
-    is ignored, and the bar grid comes from the text, not from the sheet.
-    ``bars`` lists the bars written again, counting from 0 -- a tempo answers
-    with an empty list, because it rewrites the header rather than a bar. An
-    edit that changes nothing returns the text untouched. A ValueError carries a
-    message for the person editing.
+    ``chords``, ``bpm`` when the tempo is to change, and ``sections`` when the
+    names above the bars are to move; everything else in it is ignored, and the
+    bar grid comes from the text, not from the sheet. ``bars`` lists the bars
+    written again, counting from 0 -- a tempo or a section answers with an empty
+    list, because neither rewrites a bar. An edit that changes nothing returns
+    the text untouched. A ValueError carries a message for the person editing.
     """
     source, score, lines, pieces, _sections, inline = _parsed(text)
+    as_it_came = source
+    unit = _wanted_unit(sheet, score.unit.denominator)
+    if unit is not None:
+        came_as = score
+        source = _refine(source, unit)
+        _text, score, lines, pieces, _sections, inline = _parsed(source)
+        try:
+            _same_music(came_as, score)
+        except (ValueError, KeyError, IndexError) as error:
+            raise ValueError(NOT_WRITTEN.format(reason=_reason(error))) from error
     per_quarter = Fraction(score.unit.denominator, 4)
+    base = read(source)
+    wanted = _wanted_sections(sheet, len(base["bars"]))
+    if wanted is not None and wanted != [(group["bar"], group["name"])
+                                         for group in base["sections"] if group["name"]]:
+        source = _resection(source, wanted)
+        _text, _score, lines, pieces, _sections, inline = _parsed(source)
     bpm = _tempo(sheet, score.bpm)
     if bpm != score.bpm:
         raw = lines[TEMPO_LINE]
         body = raw.rstrip("\r\n")
         lines[TEMPO_LINE] = "Q:1/4={}".format(bpm) + raw[len(body):]
-    base = read(source)
     grid = [(bar["start"], bar["length"]) for bar in base["bars"]]
     notes, chords = _wanted(sheet, base["bars"], base["total"])
     old = {name: sorted((n["start"], n["length"], n["pitch"]) for n in base["notes"][name])
@@ -488,6 +893,8 @@ def write(text: str, sheet) -> dict:
              "Ins": _dirty(grid, old["Ins"], notes["Ins"], [], [])}
     touched = sorted(dirty["Vocal"] | dirty["Ins"])
     if not touched and bpm == score.bpm:
+        if source is not as_it_came:
+            _checked(source, notes, chords, score, per_quarter, bpm)
         return {"abc": source, "bars": []}
     locked = [number for number in touched if number in inline]
     if locked:
@@ -522,8 +929,5 @@ def write(text: str, sheet) -> dict:
             parts[place] = piece
         lines[index] = "|".join(parts) + "|" + raw[len(body):]
     result = "".join(lines)
-    try:
-        _check(result, notes, chords, score, per_quarter, bpm)
-    except (ValueError, KeyError, IndexError) as error:
-        raise ValueError(NOT_WRITTEN.format(reason=_reason(error))) from error
+    _checked(result, notes, chords, score, per_quarter, bpm)
     return {"abc": result, "bars": touched}

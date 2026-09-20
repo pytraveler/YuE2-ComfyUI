@@ -321,6 +321,170 @@ def test_random_edits_read_back_exactly_and_touch_only_their_bars(name, text):
         source = result["abc"]
 
 
+def named_sections(sheet):
+    """The sections of a sheet as an edit sends them back: the named ones, in order."""
+    return [{"name": group["name"], "bar": group["bar"]}
+            for group in sheet["sections"] if group["name"]]
+
+
+def with_sections(sheet, items):
+    changed = copy.deepcopy(sheet)
+    changed["sections"] = items
+    return changed
+
+
+def music_of(text):
+    """Everything a moved comment or a finer note length must leave alone."""
+    score = abc_tools.parse(text)
+    return ([[list(note) for note in score.voices[name].notes] for name in abc_tools.VOICES],
+            [score.voices[name].bars for name in abc_tools.VOICES],
+            [score.voices[name].keys for name in abc_tools.VOICES],
+            score.voices["Vocal"].chords, score.bpm)
+
+
+def test_a_section_boundary_moves_to_a_bar_that_begins_no_group():
+    """The comment can only stand between groups, so the group is cut in two."""
+    text = tiny("C", "C8D8E8G8|E8F8G8c8|G8A8B8c8|")
+    sheet = notation.read(text)
+    assert named_sections(sheet) == [{"name": "verse", "bar": 0}]
+    result = notation.write(text, with_sections(
+        sheet, [{"name": "verse", "bar": 0}, {"name": "chorus", "bar": 2}]))
+    assert result["bars"] == []
+    assert notation.read(result["abc"])["sections"] == [
+        {"name": "verse", "bar": 0, "bars": 2}, {"name": "chorus", "bar": 2, "bars": 1}]
+    assert music_of(result["abc"]) == music_of(text)
+    assert result["abc"].splitlines()[8:] == [
+        "% verse", "V: Vocal", "C8D8E8G8|E8F8G8c8|", "V: Ins", "Z|Z|",
+        "% chorus", "V: Vocal", "G8A8B8c8|", "V: Ins", "Z|"]
+
+
+def test_a_section_is_renamed_where_it_stands():
+    text = tiny("C", "C8D8E8G8|")
+    sheet = notation.read(text)
+    result = notation.write(text, with_sections(sheet, [{"name": "pre-chorus", "bar": 0}]))
+    assert result["bars"] == []
+    assert result["abc"] == text.strip().replace("% verse", "% pre-chorus")
+
+
+def test_a_boundary_taken_away_joins_its_bars_to_the_section_before():
+    sheet = notation.read(AWKWARD)
+    assert [group["name"] for group in sheet["sections"]] == ["verse", "chorus"]
+    result = notation.write(AWKWARD, with_sections(sheet, [{"name": "verse", "bar": 0}]))
+    assert notation.read(result["abc"])["sections"] == [{"name": "verse", "bar": 0, "bars": 5}]
+    assert music_of(result["abc"]) == music_of(AWKWARD)
+    assert "% chorus" not in result["abc"]
+
+
+def test_a_boundary_inside_a_long_rest_splits_the_rest_and_not_the_music():
+    """Three silent bars are written Z3; a section beginning at the second is Z then Z2."""
+    text = tiny("C", "C8D8E8G8|Z3|", ins="Z|Z3|")
+    sheet = notation.read(text)
+    assert len(sheet["bars"]) == 4
+    result = notation.write(text, with_sections(
+        sheet, [{"name": "verse", "bar": 0}, {"name": "outro", "bar": 2}]))
+    assert music_of(result["abc"]) == music_of(text)
+    assert notation.read(result["abc"])["sections"] == [
+        {"name": "verse", "bar": 0, "bars": 2}, {"name": "outro", "bar": 2, "bars": 2}]
+    assert result["abc"].splitlines()[8:] == [
+        "% verse", "V: Vocal", "C8D8E8G8|Z|", "V: Ins", "Z|Z|",
+        "% outro", "V: Vocal", "Z2|", "V: Ins", "Z2|"]
+
+
+def test_a_section_name_keeps_every_other_line_where_it_was():
+    """Only the comment lines move: a diff of a renaming is one line."""
+    sheet = notation.read(AWKWARD)
+    result = notation.write(AWKWARD, with_sections(
+        sheet, [{"name": "intro", "bar": 0}, {"name": "chorus", "bar": 3}]))
+    before = AWKWARD.strip().splitlines()
+    after = result["abc"].splitlines()
+    assert len(before) == len(after)
+    assert [i for i, (one, other) in enumerate(zip(before, after)) if one != other] == [8]
+
+
+@pytest.mark.parametrize("name,text", SCORES, ids=[name for name, _ in SCORES])
+def test_a_section_can_begin_at_any_bar_of_any_score(name, text):
+    """A boundary lands where it is asked for, and no bar of music is rewritten."""
+    source = text.strip()
+    sheet = notation.read(source)
+    total = len(sheet["bars"])
+    here = named_sections(sheet)
+    for bar in sorted({0, 1, total - 1} | set(range(0, total, 5))):
+        wanted = [dict(item) for item in here if item["bar"] != bar]
+        wanted.append({"name": "bridge", "bar": bar})
+        wanted.sort(key=lambda item: item["bar"])
+        result = notation.write(source, with_sections(sheet, wanted))
+        assert result["bars"] == []
+        assert music_of(result["abc"]) == music_of(source)
+        assert named_sections(notation.read(result["abc"])) == wanted
+
+
+@pytest.mark.parametrize("sections,message", [
+    ([{"name": "verse", "bar": 0}, {"name": "chorus", "bar": 0}], "Two sections start at bar 1"),
+    ([{"name": "verse", "bar": 99}], "this song has"),
+    ([{"name": "x" * 60, "bar": 0}], "cannot be a section name"),
+    ([{"name": "verse"}], "whole-number bar"),
+    ("verse", "must be a list"),
+])
+def test_sections_an_edit_cannot_hold_are_refused_with_a_sentence(sections, message):
+    text = tiny("C", "C8D8E8G8|E8F8G8c8|G8A8B8c8|")
+    sheet = notation.read(text)
+    with pytest.raises(ValueError) as raised:
+        notation.write(text, with_sections(sheet, sections))
+    assert message in str(raised.value)
+
+
+def sixteenths(vocal, ins=None):
+    """A score on L:1/16, where a thirty-second note cannot be written at all."""
+    return tiny("C", vocal, ins).replace("L:1/32", "L:1/16")
+
+
+def test_a_finer_note_length_writes_the_same_song_on_a_grid_that_holds_it():
+    text = sixteenths("C4D4E4G4|")
+    sheet = notation.read(text)
+    assert (sheet["unit"], sheet["total"]) == (16, 16)
+    doubled = {"notes": {part: [{"start": n["start"] * 2, "length": n["length"] * 2,
+                                 "pitch": n["pitch"]} for n in rows]
+                         for part, rows in sheet["notes"].items()},
+               "chords": [{"start": c["start"] * 2, "name": c["name"]} for c in sheet["chords"]],
+               "unit": 32}
+    result = notation.write(text, doubled)
+    after = notation.read(result["abc"])
+    assert (after["unit"], after["per_quarter"], after["total"]) == (32, 8, 32)
+    assert result["abc"].splitlines()[notation.UNIT_LINE] == "L:1/32"
+    assert vocal_line(result["abc"]) == "C8D8E8G8|"
+    assert music_of(result["abc"]) == music_of(text)
+    assert after["seconds"] == sheet["seconds"]
+
+
+def test_a_finer_grid_is_what_lets_a_note_be_half_a_sixteenth():
+    """The point of the rewrite: the dialect has no fractions, only whole units."""
+    text = sixteenths("C4D4E4G4|")
+    sheet = notation.read(text)
+    finer = notation.write(text, {"notes": {"Vocal": [{"start": 0, "length": 1, "pitch": 60}],
+                                            "Ins": []},
+                                  "chords": [], "unit": 32})
+    assert notation.read(finer["abc"])["notes"]["Vocal"] == [{"start": 0, "length": 1, "pitch": 60}]
+    assert notation.read(finer["abc"])["unit"] == 32
+    assert sheet["unit"] == 16
+
+
+@pytest.mark.parametrize("name,text", SCORES, ids=[name for name, _ in SCORES])
+def test_a_score_already_that_fine_is_handed_back_untouched(name, text):
+    source = text.strip()
+    sheet = notation.read(source)
+    if sheet["unit"] >= notation.FINEST:
+        assert notation.write(source, dict(sheet, unit=notation.FINEST))["abc"] == source
+    assert notation.write(source, dict(sheet, unit=4))["abc"] == source
+
+
+@pytest.mark.parametrize("unit", [48, 64, 33])
+def test_a_note_length_the_roll_does_not_offer_is_refused(unit):
+    text = sixteenths("C4D4E4G4|")
+    with pytest.raises(ValueError) as raised:
+        notation.write(text, dict(notation.read(text), unit=unit))
+    assert "at the most" in str(raised.value)
+
+
 def test_a_tempo_moves_the_header_line_and_nothing_else():
     """One number, one line: the notes keep their lengths and the song is sung faster."""
     text = tiny("C", "C8D8E8G8|")
@@ -418,3 +582,89 @@ def test_the_write_route_carries_a_new_tempo_into_the_sheet_it_reads_back():
     assert payload["sheet"]["notes"] == sheet["notes"]
     payload, status = routes.answer_score_write({"abc": AWKWARD, "sheet": dict(sheet, bpm=9)})
     assert status == 200 and payload["ok"] is False and "outside" in payload["error"]
+
+
+def test_a_blank_score_is_the_right_length_and_holds_no_notes():
+    for bars in (1, 3, 4, 5, 7, 16, 33):
+        sheet = notation.read(notation.blank(bars))
+        assert len(sheet["bars"]) == bars
+        assert sheet["notes"] == {"Vocal": [], "Ins": []}
+        assert sheet["chords"] == []
+        assert sheet["bpm"] == notation.BLANK_BPM
+        assert sheet["unit"] == notation.BLANK_UNIT
+        assert [group["name"] for group in sheet["sections"]] == [notation.BLANK_SECTION]
+    head = notation.blank().splitlines()[:notation.HEADER_LINES]
+    assert head == ["X:1", "T:", "M:" + notation.BLANK_METER,
+                    "L:1/{}".format(notation.BLANK_UNIT),
+                    "Q:1/4={}".format(notation.BLANK_BPM)] \
+        + AWKWARD.splitlines()[5:7] + ["K:" + notation.BLANK_KEY]
+    assert abc_tools.parse(notation.blank())
+
+
+def test_a_blank_score_takes_a_tempo_and_refuses_a_length_nothing_could_hold():
+    assert notation.read(notation.blank(4, 90))["bpm"] == 90
+    for bars in (0, -1, notation.MOST_BARS + 1, 2.5, True, "8"):
+        with pytest.raises(ValueError, match="at most"):
+            notation.blank(bars)
+    for bpm in (9, 400, "120"):
+        with pytest.raises(ValueError, match="outside|BPM"):
+            notation.blank(8, bpm)
+
+
+@pytest.mark.parametrize("name,text", SCORES)
+def test_added_bars_leave_every_note_of_the_song_where_it_was(name, text):
+    before = notation.read(text)
+    added = 7
+    longer = notation.lengthened(text, len(before["bars"]) + added)
+    after = notation.read(longer)
+    assert len(after["bars"]) == len(before["bars"]) + added
+    assert after["notes"] == before["notes"], name
+    assert after["chords"] == before["chords"], name
+    assert longer.startswith(text.strip())
+    assert after["total"] > before["total"]
+    for group, was in zip(after["sections"], before["sections"]):
+        assert group["bar"] == was["bar"] and group["name"] == was["name"]
+
+
+def test_the_last_section_runs_on_into_the_bars_that_were_added():
+    text = tiny("C", "C16D16|Z|")
+    after = notation.read(notation.lengthened(text, 6))
+    assert [(g["name"], g["bar"], g["bars"]) for g in after["sections"]] == [("verse", 0, 6)]
+
+
+def test_added_bars_keep_the_line_endings_the_score_came_with():
+    windows = AWKWARD.replace("\n", "\r\n")
+    longer = notation.lengthened(windows, len(notation.read(windows)["bars"]) + 3)
+    assert "\r\n" in longer and "\n" not in longer.replace("\r\n", "")
+    assert len(notation.read(longer)["bars"]) == len(notation.read(AWKWARD)["bars"]) + 3
+
+
+def test_a_score_is_only_made_longer_never_shorter():
+    bars = len(notation.read(AWKWARD)["bars"])
+    for asked in (bars, bars - 1, 1):
+        with pytest.raises(ValueError, match="only makes a song longer"):
+            notation.lengthened(AWKWARD, asked)
+    with pytest.raises(ValueError, match="at most"):
+        notation.lengthened(AWKWARD, notation.MOST_BARS + 1)
+    with pytest.raises(ValueError, match="cannot be read"):
+        notation.lengthened("junk", 40)
+
+
+def test_the_length_route_makes_a_score_from_nothing_and_makes_one_longer():
+    assert routes.answer_score_length(None)[1] == 400
+    assert routes.answer_score_length({"abc": ""})[1] == 400
+    assert routes.answer_score_length({"abc": "", "bars": "8"})[1] == 400
+    assert routes.answer_score_length({"abc": "", "bars": True})[1] == 400
+    assert routes.answer_score_length({"abc": "", "bars": 8, "bpm": "90"})[1] == 400
+
+    payload, status = routes.answer_score_length({"abc": "   ", "bars": 8})
+    assert (status, payload["ok"]) == (200, True)
+    assert len(notation.read(payload["abc"])["bars"]) == 8
+
+    payload, status = routes.answer_score_length({"abc": AWKWARD, "bars": 9})
+    assert (status, payload["ok"]) == (200, True)
+    assert len(notation.read(payload["abc"])["bars"]) == 9
+    assert notation.read(payload["abc"])["notes"] == notation.read(AWKWARD)["notes"]
+
+    payload, status = routes.answer_score_length({"abc": AWKWARD, "bars": 2})
+    assert status == 200 and payload["ok"] is False and "longer" in payload["error"]

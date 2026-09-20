@@ -91,6 +91,33 @@ def answer_score_write(body) -> tuple:
         return _score_problem(error), 200
 
 
+def answer_score_length(body) -> tuple:
+    """``(payload, status)`` for the editor making a score longer, or making one from nothing.
+
+    An empty ``abc`` asks for a blank score of that many bars, which is how the
+    window offers a grid to someone with nothing to edit yet; anything else is
+    the score to add empty bars to. The answer is read back before it is sent,
+    so a text the roll could not draw never reaches the window.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("abc"), str) \
+            or not isinstance(body.get("bars"), int) or isinstance(body.get("bars"), bool):
+        return {"ok": False, "error": "Send a JSON object with the score as 'abc' and "
+                                      "the bars wanted as a whole number 'bars'."}, 400
+
+    from . import notation
+
+    bpm = body.get("bpm", notation.BLANK_BPM)
+    if not isinstance(bpm, int) or isinstance(bpm, bool):
+        return {"ok": False, "error": "'bpm' must be a whole number."}, 400
+    try:
+        text = notation.blank(body["bars"], bpm) if not body["abc"].strip() \
+            else notation.lengthened(body["abc"], body["bars"])
+        notation.read(text)
+        return {"ok": True, "abc": text}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        return _score_problem(error), 200
+
+
 def answer_midi_tracks(body) -> tuple:
     """``(payload, status)`` for 'YuE2 Load MIDI' asking what a file in the input folder holds.
 
@@ -175,6 +202,12 @@ def register() -> None:
     async def score_write(request):
         """Edited notes written back into the score."""
         payload, status = await asyncio.to_thread(answer_score_write, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/score/length")
+    async def score_length(request):
+        """A blank score, or the one sent with empty bars added at its end."""
+        payload, status = await asyncio.to_thread(answer_score_length, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/score/midi")

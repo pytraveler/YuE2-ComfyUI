@@ -19,6 +19,17 @@ export const SNAPS = [
     { name: "Thirty-second notes", quarters: 0.125 },
 ];
 
+export const SECTION_NAMES = [
+    "intro", "verse", "pre-chorus", "chorus", "post-chorus", "bridge", "interlude",
+    "instrumental", "solo", "rap", "theme", "variation", "development", "loop",
+    "intro and verse", "verse and pre-chorus", "pre-chorus and chorus",
+    "pre-outro", "outro", "fade-out", "preshot", "irregular", "silence",
+];
+
+export const SECTION_LONGEST = 40;
+
+export const FINEST = 32;
+
 export const LOWEST = 21;
 export const HIGHEST = 108;
 
@@ -184,7 +195,65 @@ export function modelOf(sheet) {
     const chords = (sheet.chords || [])
         .map((c) => ({ start: c.start, name: c.name }))
         .sort((a, b) => a.start - b.start);
-    return { notes, chords, next, bpm: sheet.bpm };
+    return { notes, chords, next, bpm: sheet.bpm, unit: sheet.unit, sections: sectionsOf(sheet) };
+}
+
+export function sectionsOf(sheet) {
+    return (sheet.sections || [])
+        .filter((section) => section.name)
+        .map((section) => ({ bar: section.bar, name: section.name }))
+        .sort((a, b) => a.bar - b.bar);
+}
+
+export function sectionName(name) {
+    const clean = String(name ?? "").trim().replace(/\s+/g, " ");
+    return clean.length && clean.length <= SECTION_LONGEST ? clean : "";
+}
+
+export function setSection(model, bar, name) {
+    const clean = sectionName(name);
+    if (!clean || !Number.isInteger(bar) || bar < 0) return null;
+    const sections = model.sections.filter((section) => section.bar !== bar);
+    sections.push({ bar, name: clean });
+    sections.sort((a, b) => a.bar - b.bar);
+    return { ...model, sections };
+}
+
+export function removeSection(model, bar) {
+    if (!model.sections.some((section) => section.bar === bar)) return null;
+    return { ...model, sections: model.sections.filter((section) => section.bar !== bar) };
+}
+
+export function moveSection(model, from, to) {
+    const found = model.sections.find((section) => section.bar === from);
+    if (!found || !Number.isInteger(to) || to < 0) return null;
+    if (to === from) return model;
+    if (model.sections.some((section) => section.bar === to)) return null;
+    return setSection(removeSection(model, from), to, found.name);
+}
+
+export function scaledModel(model, factor, unit) {
+    const notes = {};
+    for (const part of PARTS) {
+        notes[part] = model.notes[part]
+            .map((note) => ({ ...note, start: note.start * factor, length: note.length * factor }));
+    }
+    const chords = model.chords.map((chord) => ({ ...chord, start: chord.start * factor }));
+    return { ...model, notes, chords, unit };
+}
+
+export function sectionStarting(model, bar) {
+    return model.sections.find((section) => section.bar === bar) || null;
+}
+
+export function sectionSpans(model, bars) {
+    const spans = [];
+    for (const [index, section] of model.sections.entries()) {
+        const next = model.sections[index + 1];
+        spans.push({ name: section.name, bar: section.bar,
+                     bars: (next ? next.bar : bars) - section.bar });
+    }
+    return spans;
 }
 
 export function sheetOf(model) {
@@ -197,7 +266,8 @@ export function sheetOf(model) {
     const chords = model.chords
         .map((c) => ({ start: c.start, name: c.name }))
         .sort((a, b) => a.start - b.start);
-    return { notes, chords, bpm: model.bpm };
+    return { notes, chords, bpm: model.bpm, unit: model.unit,
+             sections: model.sections.map((section) => ({ bar: section.bar, name: section.name })) };
 }
 
 function withPart(model, part, notes) {

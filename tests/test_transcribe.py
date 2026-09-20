@@ -372,3 +372,72 @@ def test_the_marks_of_a_recording_and_its_mode_differ():
     assert recording != edits.audio_mark(b"sample5", 44100)
     assert edits.track_mark(recording, "melody") != edits.track_mark(recording, "full")
     assert len(recording) == 16 and edits.MARK_LINE.fullmatch("%yue2-words " + recording)
+
+
+def clicks(bpm: float, seconds: float, rate: int = 22050):
+    """A click track: the plainest thing with a beat, for the plainest check of one."""
+    torch = pytest.importorskip("torch")
+    wave = torch.zeros(int(seconds * rate))
+    hit = torch.hann_window(200) * torch.sin(torch.arange(200) * 0.4)
+    step = 60.0 / bpm * rate
+    at = 0.0
+    while at < wave.numel() - hit.numel():
+        wave[int(at):int(at) + hit.numel()] += hit
+        at += step
+    return wave, rate
+
+
+@pytest.mark.parametrize("bpm", [90.0, 128.5, 147.0])
+def test_the_beat_of_a_click_track_is_heard_within_a_per_cent(bpm):
+    from yue2_comfy.sheetsage import beat
+
+    wave, rate = clicks(bpm, 40.0)
+    found = beat.heard(wave, rate)
+    assert found is not None
+    assert abs(found["bpm"] - bpm) / bpm < 0.01
+    assert found["strength"] > beat.SURE_ENOUGH
+
+
+def test_nothing_is_heard_in_silence_or_in_a_snippet():
+    torch = pytest.importorskip("torch")
+    from yue2_comfy.sheetsage import beat
+
+    assert beat.heard(torch.zeros(22050 * 30), 22050) is None
+    assert beat.heard(*clicks(120.0, 5.0)) is None
+
+
+def test_a_pulse_too_weak_to_trust_says_nothing_about_a_score():
+    torch = pytest.importorskip("torch")
+    from yue2_comfy.sheetsage import beat
+
+    noise = torch.randn(22050 * 30) * 0.1
+    found = beat.heard(noise, 22050)
+    assert found is None or found["strength"] < beat.SURE_ENOUGH
+    assert beat.disagreement(noise, 22050, 120) is None
+
+
+@pytest.mark.parametrize("measured,written,same", [
+    (130.0, 130.0, True), (130.0, 65.0, True), (65.0, 130.0, True), (130.0, 32.5, True),
+    (130.0, 147.0, False), (130.0, 120.0, False), (0.0, 120.0, True),
+])
+def test_a_beat_heard_an_octave_out_is_not_a_disagreement(measured, written, same):
+    """Every tempo estimate ever written confuses a beat with its half; a warning must not."""
+    from yue2_comfy.sheetsage import beat
+
+    assert beat.agrees(measured, written) is same
+
+
+def test_the_node_says_when_the_recording_does_not_have_the_beat_the_score_claims():
+    pytest.importorskip("torch")
+    wave, rate = clicks(130.0, 40.0)
+    track = {"samples": wave, "rate": rate}
+    score = "X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=147\nV: a\nV: b\nK:C\n"
+    found = transcribe._beat_findings(track, score)
+    assert len(found) == 1 and found[0][0] == "warn"
+    assert "147 BPM" in found[0][1]
+    import re
+
+    heard = float(re.search(r"measures about ([\d.]+) BPM", found[0][1]).group(1))
+    assert abs(heard - 130.0) < 2.0, "the warning has to name the tempo it heard"
+    assert transcribe._beat_findings(track, score.replace("=147", "=130")) == []
+    assert transcribe._beat_findings(track, "X:1\nK:C\nCDEF|\n") == []

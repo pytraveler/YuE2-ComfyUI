@@ -7,6 +7,68 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.8.2 - 2026-09-20
+
+### Added
+
+- **The sections of a score can be edited.** The coloured strip along the top
+  of the piano roll was a picture of the `[intro]`, `[verse]` and `[chorus]`
+  the score names; now it is the control for them. Drag a boundary to move it,
+  click a name to change it or to empty the box and join that section to the
+  one before, and click anywhere else on the strip to start a new section at
+  that bar. The list offers the names the transcriber itself writes, and a name
+  of your own is accepted. A boundary lands on any bar: the format only allows
+  a section to begin between groups of bars, so the group is cut in two where
+  it has to be, and not a note moves -- which is checked by reading the score
+  back after every edit. Asked for in issue #4.
+- **A warning when the style and the score disagree about the tempo.** The
+  model follows the style line, so a score written at 147 BPM sung with
+  `127 BPM` in the style has every phrase stretched, loses its instrumental
+  stretches first, and drifts away from its words. Measured on a real cover:
+  the sung sections came out 6 to 16 per cent longer than written, a 36-second
+  interlude vanished, and the run stopped at 54 per cent of the score. Nothing
+  said a word about it before.
+- **A warning when a song ends before its score does**, with the two lengths,
+  and whether it was the model that stopped or `max_seconds`.
+- **A score can be started from nothing.** An editor with no score to draw now
+  offers "Make an empty score": sixteen bars of four four at 120 BPM, silent in
+  both parts, which the node sings in place of whatever else it would have.
+  Asked for by people who wanted a grid to draw on rather than a page telling
+  them to run the workflow first.
+- **A song can be made longer from the roll.** "Add bars" on the piano roll's
+  toolbar adds 1 to 32 empty bars at the end. Nothing already written moves:
+  the added groups only carry a voice line each, so the meter, the key and the
+  last section run on into them.
+- **Right-click removes a chord.** Clicking a chord in the lane still opens it
+  for editing; the right button drops it in one go, and Ctrl+Z brings it back.
+- **Right-click on the section strip moves the play cursor**, the way the bar
+  strip below it always has. The left button still renames a section, so the
+  strip does both without a modifier.
+- **A warning when a transcription's beat is not the recording's.** YuE2
+  Transcribe now measures the pulse of the recording itself -- onsets and their
+  autocorrelation, no model, a second of work -- and compares it with the tempo
+  it wrote. Measured on a five-minute song whose beat is a steady 130 BPM: the
+  transcription was written at 147, and its notes, laid against the real beat,
+  fall on it at chance. The melody, the chords and the sections of such a
+  transcription are still worth having; its rhythm is not, and nothing
+  downstream can recover it. A minute or two at a time is heard far more
+  accurately than a whole long song.
+
+### Changed
+
+- **The piano roll can be put on thirty-second notes.** The grid step is one
+  note length of the score and the format has no fractional lengths, so a score
+  written on sixteenths could not hold a thirty-second note at all -- and a
+  transcription of a song in 4/4 is always written on sixteenths. The snap list
+  now offers "Thirty-second notes (rewrites the score)" for such a score, and
+  choosing it writes the whole score again on thirty-seconds. The song is not
+  touched: every time and every length is the same number of quarter notes, and
+  the two texts are read back and compared before either is kept. Asked for in
+  issue #4.
+- **The bar strip of the piano roll is half again as tall**, 30 pixels instead
+  of 20, because it is what you click to move the play cursor and it was easy
+  to miss.
+
 ## 0.8.1 - 2026-09-20
 
 ### Added

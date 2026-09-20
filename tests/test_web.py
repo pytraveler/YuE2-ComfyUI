@@ -470,6 +470,77 @@ def run_roll(script: str):
     return json.loads(done.stdout)
 
 
+def test_the_section_names_offered_are_the_ones_the_model_writes():
+    """A name the editor suggests and the transcriber never writes would be an invention."""
+    from yue2_comfy.sheetsage import vocab
+    source = ROLL.read_text(encoding="utf-8")
+    match = re.search(r"export const SECTION_NAMES = \[(.*?)\];", source, re.DOTALL)
+    assert match, "SECTION_NAMES is not exported as a literal array"
+    assert sorted(re.findall(r'"([^"]*)"', match.group(1))) == sorted(vocab.STRUCTURE_LABELS)
+
+
+def test_the_roll_and_the_score_writer_agree_on_their_limits():
+    from yue2_comfy import notation
+    assert js_number("SECTION_LONGEST") == notation.SECTION_LONGEST
+    assert js_number("FINEST") == notation.FINEST
+
+
+@needs_node
+def test_the_roll_moves_a_section_without_touching_its_neighbours():
+    got = run_roll("""
+        const sheet = {unit: 16, per_quarter: 4, bpm: 120, notes: {Vocal: [], Ins: []}, chords: [],
+            sections: [{name: "", bar: 0, bars: 1}, {name: "verse", bar: 1, bars: 2}]};
+        const model = r.modelOf(sheet);
+        const named = r.setSection(model, 0, "  Intro  ");
+        console.log(JSON.stringify({
+            read: model.sections, unit: model.unit, named: named.sections,
+            moved: r.moveSection(named, 1, 2).sections,
+            onto: r.moveSection(named, 1, 0),
+            gone: r.removeSection(named, 0).sections,
+            missing: r.removeSection(model, 0),
+            spans: r.sectionSpans(named, 3),
+            empty: r.setSection(model, 0, "   "),
+            long: r.sectionName("x".repeat(41)),
+            sent: r.sheetOf(named).sections,
+        }));
+    """)
+    assert got["read"] == [{"bar": 1, "name": "verse"}]
+    assert got["unit"] == 16
+    assert got["named"] == [{"bar": 0, "name": "Intro"}, {"bar": 1, "name": "verse"}]
+    assert got["moved"] == [{"bar": 0, "name": "Intro"}, {"bar": 2, "name": "verse"}]
+    assert got["onto"] is None, "two sections cannot start at one bar"
+    assert got["gone"] == [{"bar": 1, "name": "verse"}]
+    assert got["missing"] is None, "removing a section that is not there is not an edit"
+    assert got["spans"] == [{"name": "Intro", "bar": 0, "bars": 1},
+                            {"name": "verse", "bar": 1, "bars": 2}]
+    assert got["empty"] is None and got["long"] == ""
+    assert got["sent"] == got["named"], "the sections travel to the server on the sheet"
+
+
+@needs_node
+def test_the_finer_grid_multiplies_every_tick_the_model_holds():
+    got = run_roll("""
+        const sheet = {unit: 16, per_quarter: 4, bpm: 120, sections: [],
+            notes: {Vocal: [{start: 4, length: 2, pitch: 60}], Ins: []},
+            chords: [{start: 4, name: "C"}]};
+        console.log(JSON.stringify(r.sheetOf(r.scaledModel(r.modelOf(sheet), 2, 32))));
+    """)
+    assert got["notes"]["Vocal"] == [{"start": 8, "length": 4, "pitch": 60}]
+    assert got["chords"] == [{"start": 8, "name": "C"}]
+    assert got["unit"] == 32
+
+
+def test_the_editor_edits_the_strip_and_offers_the_grid_the_score_cannot_hold_yet():
+    """The strip is the only place sections can be touched, so it has to answer the pointer."""
+    source = SCORE.read_text(encoding="utf-8")
+    assert "sectionDown(event, px, tick)" in source and "openSectionInput" in source
+    assert 'input.setAttribute("list", "yue2-s-sections")' in source
+    for call in ("roll.setSection", "roll.removeSection", "roll.moveSection", "roll.sectionSpans"):
+        assert call in source, call + " is never used, so that edit cannot be made"
+    assert "finerGrid" in source and "roll.scaledModel" in source
+    assert "SECTION_H" in source, "the strip has no band of its own to click in"
+
+
 def test_the_roll_knows_the_chord_qualities_upstream_knows():
     from yue2_comfy.vendor.yue2_music import abc_tools
     source = ROLL.read_text(encoding="utf-8")
@@ -862,3 +933,47 @@ def test_the_midi_list_and_file_names_read_as_the_node_describes_them():
 
 
 SONG_TITLE = "\u041f\u0435\u0441\u043d\u044f 1"
+
+
+def test_the_editors_length_controls_match_what_the_writer_will_make():
+    from yue2_comfy import notation
+    score = (WEB / "yue2_score.js").read_text(encoding="utf-8")
+    routes = (ROOT / "yue2_comfy" / "routes.py").read_text(encoding="utf-8")
+    assert 'const LENGTH_ROUTE = "/yue2/score/length";' in score and '"/score/length"' in routes
+    assert "const NEW_BARS = {};".format(notation.BLANK_BARS) in score
+    assert "const NEW_BPM = {};".format(notation.BLANK_BPM) in score
+    added = re.search(r"const ADD_BARS = \[([^\]]*)\];", score)
+    assert added, "ADD_BARS is not a literal array"
+    counts = [int(value) for value in re.findall(r"\d+", added.group(1))]
+    assert counts and counts == sorted(counts)
+    assert all(0 < count <= notation.MOST_BARS for count in counts)
+
+
+def test_the_empty_editor_offers_a_score_to_start_from():
+    score = (WEB / "yue2_score.js").read_text(encoding="utf-8")
+    body = score[score.index("    fillEmpty(problem) {"):score.index("    refresh() {")]
+    assert "Make an empty score" in body and "this.newScore()" in body
+    assert body.index("this.source") < body.index("Make an empty score")
+    assert "async newScore()" in score and "async addBars(" in score and "async relength(" in score
+    assert "if (this.writePending) await this.write();" in score
+
+
+def test_the_bar_strip_is_tall_enough_to_hit_and_the_lanes_still_stack():
+    score = (WEB / "yue2_score.js").read_text(encoding="utf-8")
+    numbers = dict(re.findall(r"const (SECTION_H|BAR_H|CHORD_H|ROW_H) = (\d+);", score))
+    assert int(numbers["BAR_H"]) >= 28
+    assert "const RULER_H = SECTION_H + BAR_H;" in score
+    assert re.search(r"c\.fillRect\(Math\.round\(this\.x\(bar\.start\)\), SECTION_H \+ 1, 1, "
+                     r"RULER_H - SECTION_H - 1\);", score)
+    assert 'c.fillText("bar", 6, RULER_H - 6);' in score
+
+
+def test_the_right_button_moves_the_playhead_and_drops_a_chord():
+    score = (WEB / "yue2_score.js").read_text(encoding="utf-8")
+    section = score[score.index("    sectionDown(event, px, tick) {"):score.index("    openSectionInput(")]
+    assert "event.button === 2" in section and "this.movePlayhead(tick)" in section
+    down = score[score.index("    pointerDown(event) {"):score.index("    movePlayhead(tick) {")]
+    assert "if (event.button === 2) this.dropChord(px);" in down
+    assert "movePlayhead(tick) {" in score and "dropChord(px) {" in score
+    assert "roll.removeChord(this.model, found.start)" in score
+    assert 'this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());' in score

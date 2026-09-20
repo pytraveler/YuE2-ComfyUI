@@ -95,6 +95,16 @@ export function widgetNamed(node, name) {
     return node?.widgets?.find((w) => w.name === name);
 }
 
+export function graphChanged() {
+    try {
+        const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
+        if (tracker?.captureCanvasState) tracker.captureCanvasState();
+        else tracker?.checkState?.();
+    } catch (error) {
+        console.error("[YuE2] the workflow was not told that its graph changed:", error);
+    }
+}
+
 export function setWidgetValue(node, name, value) {
     const widget = widgetNamed(node, name);
     if (!widget || widget.value === value) return;
@@ -102,6 +112,7 @@ export function setWidgetValue(node, name, value) {
     widget.callback?.(value, app.canvas, node);
     node.setDirtyCanvas?.(true, true);
     app.graph?.setDirtyCanvas?.(true, true);
+    graphChanged();
 }
 
 export function showWidget(node, name, shown) {

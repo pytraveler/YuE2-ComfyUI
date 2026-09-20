@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { ask, element, installStyle, widgetNamed } from "./yue2_controls.js";
+import { ask, element, graphChanged, installStyle, widgetNamed } from "./yue2_controls.js";
 
 const NODE = "YuE2LoRA";
 const WIDGET = "loras";
@@ -289,15 +289,6 @@ function readRows(node) {
     return { rows: parsed.map(normalise).filter(Boolean), broken: "" };
 }
 
-function remember() {
-    try {
-        const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
-        (tracker?.captureCanvasState ?? tracker?.checkState)?.call(tracker);
-    } catch (error) {
-        console.debug("[YuE2] the LoRA change could not be recorded for undo:", error);
-    }
-}
-
 function writeRows(node, rows, quiet) {
     const widget = widgetNamed(node, WIDGET);
     if (!widget) return;
@@ -311,7 +302,7 @@ function writeRows(node, rows, quiet) {
     }
     if (quiet) return;
     redraw(node);
-    remember();
+    graphChanged();
 }
 
 function change(node, index, edit) {
@@ -622,7 +613,7 @@ function strength(node, index, key, entry, item) {
             setTimeout(() => {
                 if (node[STATE]?.typing) return;
                 release(node, dragged);
-                if (dragged) remember();
+                if (dragged) graphChanged();
             }, 0);
         };
         window.addEventListener("pointermove", moving, true);

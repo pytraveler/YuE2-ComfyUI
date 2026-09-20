@@ -218,6 +218,22 @@ def test_the_render_node_warns_when_a_melody_only_score_meets_cot_full(monkeypat
     assert said == []
 
 
+def test_the_render_node_warns_when_a_chorded_score_meets_cot_melody(monkeypatch):
+    """The pairing the other way: 'melody' tells the model there are no chords to read."""
+    calls = stub_singing(monkeypatch)
+    said = []
+    monkeypatch.setattr(staged, "announce",
+                        lambda node, findings, kind="notice": said.append(findings))
+    plan = plain_plan()
+    plan["settings"]["cot"] = "melody"
+    staged.YuE2RenderPlan().render(plan, score_abc='X:1\nK:G\n"G"GABc|\n', unique_id="9")
+    assert calls[0]["abc"] == 'X:1\nK:G\n"G"GABc|'
+    assert said == [[("warn", edits.CHORDED)]]
+    said.clear()
+    staged.YuE2RenderPlan().render(plan, score_abc="X:1\nK:G\nGABc|\n", unique_id="9")
+    assert said == []
+
+
 BARE_TUNE = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=100\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
              'V: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\nV: Vocal\nz2C2D2E2F2G2A2B2|\nV: Ins\nZ|\n')
 

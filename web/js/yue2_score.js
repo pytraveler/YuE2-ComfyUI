@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import {
-    ask, buttonRow, element, frame, installStyle, panelWidget,
+    ask, buttonRow, element, frame, graphChanged, installStyle, panelWidget,
     setWidgetValue, showWidget, sourceOf, widgetNamed,
 } from "./yue2_controls.js";
 import * as roll from "./yue2_roll.js";
@@ -2439,6 +2439,7 @@ class ScoreEditor {
             delete this.node.properties.yue2_score_base;
         }
         paintScoreSummary(this.node);
+        graphChanged();
         this.close();
     }
 }
@@ -2468,6 +2469,7 @@ function resetScoreEdit(node) {
         delete node.properties.yue2_score_base;
     }
     paintScoreSummary(node);
+    graphChanged();
 }
 
 function plainButton(label, tooltip, onClick) {

@@ -466,6 +466,8 @@ class YuE2RenderPlan:
         given = edits.read(score_abc).score
         if given and not problem and settings["cot"] == "full" and edits.chordless(given):
             announce(unique_id, [("warn", edits.CHORDLESS)])
+        if given and not problem and settings["cot"] == "melody" and edits.chorded(given):
+            announce(unique_id, [("warn", edits.CHORDED)])
         ids, score = _chosen(plan, "" if problem else score_abc)
         tune_seconds = None
         if ids is None and score:

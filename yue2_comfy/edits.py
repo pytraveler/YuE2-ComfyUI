@@ -165,19 +165,37 @@ CHORDLESS = (
     "The score to sing has no chord symbols -- a melody-only transcription looks "
     "like that -- but 'cot' is 'full', which tells the model the score carries the "
     "harmony as well. It is sung anyway; set 'cot' to 'melody' in YuE2 Options to "
-    "let the accompaniment follow the style instead."
+    "let the accompaniment follow the style instead, or, to keep a recording's "
+    "harmony in a cover as well as its tune, transcribe it with 'mode' set to 'full'."
+)
+
+CHORDED = (
+    "The score to sing names chords over its music, but 'cot' is 'melody', which tells "
+    "the model the score has none. It is sung anyway; set 'cot' to 'full' in YuE2 "
+    "Options so the chords are read as the harmony they are. That is the pairing that "
+    "carries a recording's chords into a cover."
 )
 
 _CHORD_SYMBOL = re.compile(r'"[^"\n]*"')
 _FIELD_LINE = re.compile(r"^\s*(%|[A-Za-z]:)")
 
 
-def chordless(score) -> bool:
-    """Whether a score has music in it but not one chord symbol.
+def _music_lines(score) -> list:
+    """The lines of a score that carry music rather than describe it.
 
     Header, voice and comment lines are passed over: the ``V:`` lines quote the
     voice names, and a quoted name is not a chord.
     """
-    music = [line for line in str(score or "").split("\n")
-             if line.strip() and not _FIELD_LINE.match(line)]
+    return [line for line in str(score or "").split("\n")
+            if line.strip() and not _FIELD_LINE.match(line)]
+
+
+def chorded(score) -> bool:
+    """Whether a score names a chord over any of its music."""
+    return any(_CHORD_SYMBOL.search(line) for line in _music_lines(score))
+
+
+def chordless(score) -> bool:
+    """Whether a score has music in it but not one chord symbol."""
+    music = _music_lines(score)
     return bool(music) and not any(_CHORD_SYMBOL.search(line) for line in music)

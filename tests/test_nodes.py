@@ -312,6 +312,23 @@ def test_a_melody_only_score_sung_under_cot_full_is_sung_with_a_warning(monkeypa
     assert said == [[("warn", edits.CHORDLESS)]]
 
 
+def test_a_chorded_score_sung_under_cot_melody_is_sung_with_a_warning(monkeypatch):
+    """The other way round: the score reaches the model whatever cot promised about it."""
+    calls, said = stub_run(monkeypatch)
+    sing_with(EDITED, options=dict(constants.DEFAULT_OPTIONS, cot="melody"))
+    assert calls == [{"edited": EDITED, "cot": "melody"}]
+    assert said == [[("warn", edits.CHORDED)]]
+
+
+def test_a_score_and_a_cot_that_agree_about_chords_are_sung_in_silence(monkeypatch):
+    """Both matched pairs, so neither warning is a nag on the ordinary run."""
+    for score, cot in ((EDITED, "full"), (MELODY_ONLY, "melody")):
+        calls, said = stub_run(monkeypatch)
+        sing_with(score, options=dict(constants.DEFAULT_OPTIONS, cot=cot))
+        assert calls == [{"edited": score, "cot": cot}]
+        assert said == []
+
+
 BARE_TUNE = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=100\nV: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
              'V: Ins clef=treble name="Ins Melody" snm="Inst."\nK:C\nV: Vocal\nz2C2D2E2F2G2A2B2|\nV: Ins\nZ|\n')
 

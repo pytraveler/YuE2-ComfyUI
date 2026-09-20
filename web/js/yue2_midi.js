@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { ask, buttonRow, element, installStyle, panelWidget, widgetNamed } from "./yue2_controls.js";
+import { ask, buttonRow, element, graphChanged, installStyle, panelWidget, widgetNamed } from "./yue2_controls.js";
 import * as roll from "./yue2_roll.js";
 
 const LOAD_MIDI = "YuE2LoadMidi";
@@ -124,6 +124,7 @@ function choose(node, name) {
     }
     widget.value = name;
     widget.callback?.(name);
+    graphChanged();
     describe(node);
 }
 

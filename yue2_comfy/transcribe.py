@@ -2,9 +2,15 @@
 
 This is how a song is covered. SheetSage2 listens to the recording and writes
 what it hears -- the vocal line, the instrumental line, beats, key, sections
-and, when asked, chords -- in the same two-voice score YuE2 sings from. Wired
-into 'YuE2 Generate Song' with 'cot' at 'melody', the melody is kept and the
-style, voice and instruments are whatever the style line says.
+and, with 'mode' at 'full', chords -- in the same two-voice score YuE2 sings
+from. Wired into 'YuE2 Generate Song' with 'cot' matching the mode, the tune is
+kept and the voice and instruments are whatever the style line says.
+
+'full' and 'cot' at 'full' is the pair to cover a song with. The two modes
+share one transcription, so the chords cost no listening, and a score that has
+them stays closer to the recording than one that does not -- measured on one
+song, half again as close. 'melody' leaves them out, which is what a tune
+sung over a new harmony wants; the accompaniment then follows the style line.
 
 The lyrics output is the section tags of the transcription. With
 'lyrics_auto_recognition' on, the words sung under them are recognised too:
@@ -34,7 +40,7 @@ from .staged import resolve
 
 log = logging.getLogger(__name__)
 
-MODE_CHOICES = ("melody", "full")
+MODE_CHOICES = ("full", "melody")
 LAYOUT_TOKENS = 2048
 LAYOUT_TEMPERATURE = 0.3
 LAYOUT_TOP_P = 0.9
@@ -44,10 +50,12 @@ AUDIO_TOOLTIP = (
     "Only the first recording of a batch is used."
 )
 MODE_TOOLTIP = (
-    "'melody' writes the vocal and instrumental lines without chords -- what a cover wants, "
-    "sung with 'cot' set to 'melody' so the accompaniment follows the new style.\n\n"
-    "'full' adds the chords it hears, for 'cot' set to 'full'. Switching between the two "
-    "reuses the transcription; nothing is heard again."
+    "'full' writes the vocal and instrumental lines and the chords heard under them -- what "
+    "a cover wants, sung with 'cot' set to 'full' so the chords are read as harmony. Measured "
+    "on one song, a score with them stayed half again as close to the recording.\n\n"
+    "'melody' leaves the chords out, for 'cot' set to 'melody': the tune is kept and the "
+    "accompaniment follows the new style instead. Switching between the two reuses the "
+    "transcription; nothing is heard again."
 )
 RECOGNITION_TOOLTIP = (
     "Also recognise the words that are sung, and lay them out under the section tags, a line to a phrase.\n\n"
@@ -103,6 +111,14 @@ LAYOUT_CHANGED = (
     "lines at their punctuation instead, with the words as heard."
 )
 BATCH_NOTE = "The audio input holds {count} recordings; only the first is transcribed."
+MELODY_ONLY = (
+    "'mode' is 'melody', so the chords heard in this recording are left out of the score. "
+    "A cover sung from it keeps the tune and takes its harmony from the style line, which "
+    "is what that mode is for. To keep the recording's own chords instead, set 'mode' to "
+    "'full' and 'cot' to 'full' in YuE2 Options: it costs no listening, because both modes "
+    "are written from the same transcription, and on one song measured that way the score "
+    "stayed half again as close to the recording."
+)
 CUT_SHORT = (
     "SheetSage2 ran out of room in {parts} of the recording's {total} parts: it writes at most {tokens} "
     "tokens for a part, and those filled before the part's end, so the last seconds of them may be "
@@ -185,11 +201,11 @@ class YuE2Transcribe:
     """A recording in, a cover-ready score and its lyrics out."""
 
     DESCRIPTION = (
-        "Listens to a recording and writes its melody as a score YuE2 can sing -- the vocal and "
-        "instrumental lines, and with 'full' the chords too -- so the song can be covered in "
-        "another style. Wire 'score_abc' into YuE2 Generate Song with 'cot' set to 'melody', and "
-        "write the words under the section tags on 'lyrics', or turn on 'lyrics_auto_recognition' "
-        "to have them recognised.\n\n"
+        "Listens to a recording and writes it down as a score YuE2 can sing -- the vocal and "
+        "instrumental lines, and with 'full' the chords under them -- so the song can be covered "
+        "in another style. Wire 'score_abc' into YuE2 Generate Song and set 'cot' to the same "
+        "word as 'mode', and write the words under the section tags on 'lyrics', or turn on "
+        "'lyrics_auto_recognition' to have them recognised.\n\n"
         "The transcription model, SheetSage2, is downloaded on first use (1.29 GB); its weights "
         "are licensed CC BY-NC 4.0, like YuE2's. Recognising the words downloads Qwen3-ASR-1.7B "
         "(3.8 GB, Apache-2.0) the first time it is turned on."
@@ -233,6 +249,8 @@ class YuE2Transcribe:
         except (ValueError, AttributeError, TypeError) as error:
             refuse(unique_id, str(error))
         findings = []
+        if mode == "melody":
+            findings.append(("notice", MELODY_ONLY))
         if track["count"] > 1:
             findings.append(("notice", BATCH_NOTE.format(count=track["count"])))
         recording = track["mark"]

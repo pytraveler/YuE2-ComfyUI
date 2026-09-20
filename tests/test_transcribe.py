@@ -51,7 +51,7 @@ def node(monkeypatch):
     return calls
 
 
-def run(mode="melody", data=b"recording", score_abc="", lyrics="", recognition=False, count=1, seed=1):
+def run(mode="full", data=b"recording", score_abc="", lyrics="", recognition=False, count=1, seed=1):
     return transcribe.YuE2Transcribe().transcribe(
         {"data": data, "count": count}, mode, recognition, "auto", seed, score_abc=score_abc, lyrics=lyrics,
         unique_id="7")
@@ -125,15 +125,15 @@ def test_the_score_is_masters_and_the_ui_carries_it_with_its_mark(node, mode):
 
 def test_the_lyrics_are_the_section_tags_of_the_score(node):
     out = run()
-    found = sections.sections(SONG["abc"]["melody"])
+    found = sections.sections(SONG["abc"]["full"])
     assert out["result"][1] == sections.skeleton(found)
     assert out["result"][1].startswith("[")
     assert all(line.startswith("[") or line == "" for line in out["result"][1].splitlines())
 
 
 def test_an_edit_for_this_recording_and_mode_is_output_without_listening(node):
-    edited = SONG["abc"]["melody"].replace("Q:1/4=", "Q:1/4=1", 1)
-    mark = edits.track_mark(edits.audio_mark(b"recording", 44100), "melody")
+    edited = SONG["abc"]["full"].replace("Q:1/4=", "Q:1/4=1", 1)
+    mark = edits.track_mark(edits.audio_mark(b"recording", 44100), "full")
     out = run(score_abc=edits.attach(edited, mark))
     assert node["runs"] == 0
     assert out["result"][0] == edited.strip()
@@ -141,10 +141,10 @@ def test_an_edit_for_this_recording_and_mode_is_output_without_listening(node):
 
 
 def test_an_edit_for_the_other_mode_is_left_out_and_the_node_says_so(node):
-    mark = edits.track_mark(edits.audio_mark(b"recording", 44100), "full")
-    out = run(mode="melody", score_abc=edits.attach(SONG["abc"]["full"], mark))
+    mark = edits.track_mark(edits.audio_mark(b"recording", 44100), "melody")
+    out = run(mode="full", score_abc=edits.attach(SONG["abc"]["melody"], mark))
     assert node["runs"] == 1
-    assert out["result"][0] == SONG["abc"]["melody"]
+    assert out["result"][0] == SONG["abc"]["full"]
     assert node["said"] == [[("warn", transcribe.OTHER_TRACK_SCORE)]]
 
 
@@ -218,7 +218,7 @@ def test_recording_without_words_gives_the_tags_and_says_so(heard, monkeypatch):
     monkeypatch.setattr(asr_runtime, "recognise", lambda *args, **kwargs: {
         "language": "", "text": "", "parts": [""] * len(kwargs.get("timed", args[4]))})
     out = run(recognition=True)
-    assert out["result"][1] == sections.skeleton(sections.sections(SONG["abc"]["melody"]))
+    assert out["result"][1] == sections.skeleton(sections.sections(SONG["abc"]["full"]))
     assert heard["llm"] == []
     assert heard["said"] == [[("notice", transcribe.NO_WORDS)]]
 
@@ -231,8 +231,8 @@ def test_kept_lyrics_still_win_and_the_editor_gets_the_recognised_words(heard):
 
 
 def test_a_kept_score_is_still_transcribed_for_the_sections_of_the_words(heard):
-    mark = edits.track_mark(edits.audio_mark(b"recording", 44100), "melody")
-    out = run(recognition=True, score_abc=edits.attach(SONG["abc"]["melody"], mark))
+    mark = edits.track_mark(edits.audio_mark(b"recording", 44100), "full")
+    out = run(recognition=True, score_abc=edits.attach(SONG["abc"]["full"], mark))
     assert heard["runs"] == 1 and heard["asr"] == 1
     assert edits.SCORE_UI not in out["ui"]
 
@@ -441,3 +441,23 @@ def test_the_node_says_when_the_recording_does_not_have_the_beat_the_score_claim
     assert abs(heard - 130.0) < 2.0, "the warning has to name the tempo it heard"
     assert transcribe._beat_findings(track, score.replace("=147", "=130")) == []
     assert transcribe._beat_findings(track, "X:1\nK:C\nCDEF|\n") == []
+def test_the_node_transcribes_chords_unless_it_is_asked_not_to(node):
+    """The pair that keeps a recording's harmony is the default; the other one says what it costs."""
+    spec = transcribe.YuE2Transcribe.INPUT_TYPES()
+    assert spec["required"]["mode"][1]["default"] == "full"
+    assert transcribe.MODE_CHOICES[0] == "full"
+    assert edits.chorded(run()["result"][0])
+    assert node["said"] == [[]]
+
+    node["said"].clear()
+    out = run(mode="melody")
+    assert not edits.chorded(out["result"][0]) and edits.chordless(out["result"][0])
+    assert node["said"] == [[("notice", transcribe.MELODY_ONLY)]]
+
+
+def test_a_cover_is_told_when_its_score_and_cot_disagree_about_chords(node):
+    """Both halves of the pairing, since the score reaches the model whatever cot says."""
+    chorded, melody = run()["result"][0], run(mode="melody")["result"][0]
+    assert edits.chorded(chorded) and edits.chordless(melody)
+    assert "'cot' to 'full'" in edits.CHORDED and "'mode' to 'full'" not in edits.CHORDED
+    assert "'mode' set to 'full'" in edits.CHORDLESS

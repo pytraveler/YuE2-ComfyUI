@@ -977,3 +977,31 @@ def test_the_right_button_moves_the_playhead_and_drops_a_chord():
     assert "movePlayhead(tick) {" in score and "dropChord(px) {" in score
     assert "roll.removeChord(this.model, found.start)" in score
     assert 'this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());' in score
+def test_a_widget_the_editors_write_is_recorded_as_a_change_to_the_workflow():
+    """Measured on a live ComfyUI: without this the page reloads to an empty score box.
+
+    ComfyUI autosaves a draft of the open workflow and restores it on a reload,
+    but only what its change tracker has seen. It sees a widget the person
+    typed into; it does not see one an editor writes a second later, after the
+    click that opened it is long over. So every write of ours says so itself.
+    """
+    controls = (WEB / "yue2_controls.js").read_text(encoding="utf-8")
+    assert "export function graphChanged()" in controls
+    assert "activeWorkflow?.changeTracker" in controls
+    assert "captureCanvasState" in controls and "checkState" in controls
+    setter = controls.split("export function setWidgetValue")[1].split("\n}")[0]
+    assert "graphChanged();" in setter, "setWidgetValue writes without recording the change"
+
+    for name in ("yue2_lora.js", "yue2_midi.js", "yue2_score.js"):
+        source = (WEB / name).read_text(encoding="utf-8")
+        assert "graphChanged" in source, name + " changes the node without recording it"
+        assert "changeTracker" not in source, name + " should use the shared helper"
+
+    for name, source in ((path.name, text) for path in modules() for text in
+                         [path.read_text(encoding="utf-8")]):
+        if name in ("yue2_controls.js", "yue2_roll.js", "yue2_sheet.js", "yue2_piano.js"):
+            continue
+        for line in source.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("widget.value =") or stripped.startswith("widget.value="):
+                assert "graphChanged" in source, name + " sets a widget without recording it"

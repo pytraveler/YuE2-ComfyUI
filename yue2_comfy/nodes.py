@@ -419,6 +419,8 @@ class YuE2GenerateSong:
                 announce(unique_id, laid.notices)
         if edited and settings["cot"] == "full" and edits.chordless(edited):
             announce(unique_id, [("warn", edits.CHORDLESS)])
+        if edited and settings["cot"] == "melody" and edits.chorded(edited):
+            announce(unique_id, [("warn", edits.CHORDED)])
         if edited:
             clash = generate.tempo_clash(style, edited)
             if clash:

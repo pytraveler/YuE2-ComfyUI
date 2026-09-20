@@ -4,6 +4,7 @@ import {
     setWidgetValue, showWidget, sourceOf, widgetNamed,
 } from "./yue2_controls.js";
 import { editValue, splitMark } from "./yue2_roll.js";
+import { EXAMPLES, GENRES } from "./yue2_styles.js";
 import * as sheet from "./yue2_sheet.js";
 
 const TRANSCRIBE = "YuE2Transcribe";
@@ -90,6 +91,14 @@ const CASE_NOTE =
     "where the YuE2 tokenizer really cuts. That is a change in what the model reads, " +
     "not a stress mark -- and like any change to the words, it gives a different song " +
     "on the same seed.";
+
+const EXAMPLE_GROUPS = [["Covers and editing", "demo"], ["Genre explorer", "gallery"]];
+
+const EXAMPLES_NOTE =
+    "Lines that were really run, copied from YuE2's own pages: the first group was written "
+    + "by the model's authors for their covers and editing demos, the second is what people "
+    + "sent in for the genre gallery. One replaces the style line, and an arrow then appears "
+    + "to put yours back.";
 
 const VOICES_NOTE =
     "The voices go into the style line as one part, joined with 'and'. Naming two voices " +
@@ -180,6 +189,9 @@ const EDITOR_STYLE = `
 .yue2-part { display: flex; gap: 5px; align-items: center; }
 .yue2-part input[type="text"] { flex: 1 1 auto; }
 .yue2-add { display: flex; gap: 6px; margin-top: 4px; }
+.yue2-pick-row { display: flex; gap: 6px; }
+.yue2-pick-row select { flex: 1 1 auto; min-width: 0; }
+.yue2-pick .yue2-hint { margin-top: 5px; }
 .yue2-add input[type="text"] { flex: 1 1 auto; }
 .yue2-line-out { font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-size: 12px; }
@@ -346,6 +358,7 @@ class SongEditor {
         this.styleRaw = this.styleStart;
         this.parts = sheet.parseStyle(this.styleRaw);
         this.styleDirty = false;
+        this.styleBefore = null;
         this.lyricsRaw = this.lyricsStart;
         this.blocks = sheet.parseLyrics(this.lyricsRaw);
         this.lyricsDirty = false;
@@ -494,6 +507,9 @@ class SongEditor {
         grid.appendChild(element("div", "yue2-label", "Sound"));
         grid.appendChild(this.partsControl());
 
+        grid.appendChild(element("div", "yue2-label", "Examples"));
+        grid.appendChild(this.examplesControl());
+
         grid.appendChild(element("div", "yue2-label", "Style line"));
         const line = document.createElement("textarea");
         line.className = "yue2-line-out";
@@ -612,6 +628,47 @@ class SongEditor {
         return holder;
     }
 
+    examplesControl() {
+        const holder = element("div", "yue2-pick");
+        const row = element("div", "yue2-pick-row");
+        const pick = document.createElement("select");
+        const first = document.createElement("option");
+        first.value = "";
+        first.textContent = "Take a style that was really run\u2026";
+        pick.appendChild(first);
+        for (const [label, from] of EXAMPLE_GROUPS) {
+            const group = document.createElement("optgroup");
+            group.label = label;
+            EXAMPLES.forEach((example, index) => {
+                if (example.from !== from) return;
+                const option = document.createElement("option");
+                option.value = String(index);
+                option.textContent = example.language
+                    ? example.name + " \u00b7 " + example.language : example.name;
+                group.appendChild(option);
+            });
+            pick.appendChild(group);
+        }
+        pick.title = "Fill the style line with one of YuE2's own examples";
+        pick.addEventListener("change", () => {
+            const example = EXAMPLES[Number(pick.value)];
+            if (!example) return;
+            this.styleBefore = this.styleText();
+            this.styleChanged(sheet.parseStyle(example.style));
+        });
+        row.appendChild(pick);
+        if (this.styleBefore !== null) {
+            row.appendChild(iconButton("\u21A9", "Put back the line the example replaced", () => {
+                const back = this.styleBefore;
+                this.styleBefore = null;
+                this.styleChanged(sheet.parseStyle(back));
+            }));
+        }
+        holder.appendChild(row);
+        holder.appendChild(element("div", "yue2-hint", EXAMPLES_NOTE));
+        return holder;
+    }
+
     partsControl() {
         const holder = element("div", "yue2-parts");
         this.parts.forEach((part, index) => {
@@ -633,7 +690,7 @@ class SongEditor {
         const add = element("div", "yue2-add");
         const input = document.createElement("input");
         input.type = "text";
-        input.placeholder = "staccato phrasing, string section, lo-fi texture\u2026";
+        input.placeholder = "city pop, tenor saxophone, no guitars\u2026";
         input.setAttribute("list", "yue2-sounds");
         const commit = () => {
             if (!input.value.trim()) return;
@@ -645,7 +702,7 @@ class SongEditor {
         });
         const button = element("button", "", "Add");
         button.addEventListener("click", commit);
-        add.append(input, button, datalist("yue2-sounds", sheet.SUGGESTIONS));
+        add.append(input, button, datalist("yue2-sounds", [...sheet.SUGGESTIONS, ...GENRES]));
         holder.appendChild(add);
         return holder;
     }

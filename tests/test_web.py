@@ -76,6 +76,14 @@ def run_sheet(script: str):
     return json.loads(done.stdout)
 
 
+def js_number(name: str) -> int:
+    """A single number exported by the roll, read out of its source."""
+    source = (WEB / "yue2_roll.js").read_text(encoding="utf-8")
+    match = re.search(r"export const " + name + r" = (\d+);", source)
+    assert match, name + " is not exported as a number"
+    return int(match.group(1))
+
+
 def js_array(name: str) -> list:
     """An exported string array, read from the source without running it."""
     source = SHEET.read_text(encoding="utf-8")
@@ -287,6 +295,161 @@ def test_a_letter_click_flips_its_case_and_a_second_click_flips_it_back():
     ]
 
 
+STYLES = WEB / "yue2_styles.js"
+
+
+def run_styles(script: str):
+    """Run ``script`` with the examples as ``x`` and the sheet as ``s``."""
+    program = "import * as x from {};\nimport * as s from {};\n{}".format(
+        json.dumps(STYLES.as_uri()), json.dumps(SHEET.as_uri()), script)
+    done = subprocess.run([NODE, "--input-type=module", "-e", program],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+@needs_node
+def test_the_examples_are_named_once_each_and_come_from_one_of_two_places():
+    """The picker groups them by where they were run, so both groups must exist.
+
+    The names are what the list shows; two examples with one name would read as
+    a duplicate row nobody could tell apart.
+    """
+    got = run_styles("console.log(JSON.stringify(x.EXAMPLES));")
+    assert len(got) >= 20
+    assert len({one["name"] for one in got}) == len(got)
+    assert {one["from"] for one in got} == {"demo", "gallery"}
+    for one in got:
+        assert one["style"].strip() == one["style"] and len(one["style"]) > 20
+        assert one["language"] in ["", *js_array("LANGUAGES")]
+
+
+@needs_node
+def test_every_example_style_is_what_the_editor_gives_back():
+    """An example the chips cannot hold would be quietly rewritten on the way out.
+
+    Spacing after a comma is the one difference allowed: the gallery lines were
+    typed without it, and the editor writes its parts back the way this pack's
+    writer spells them. Everything else about the spacing is checked too, because
+    the tool that copies these lines in wraps them across source lines, and its
+    first run cut "double-kick drums" in half at the hyphen and left the halves
+    a space apart.
+    """
+    got = run_styles("""
+        console.log(JSON.stringify(x.EXAMPLES.map((one) => {
+            const parts = s.parseStyle(one.style);
+            return { back: s.formatStyle(parts), empty: parts.filter((p) => !p.text.trim()).length,
+                     kinds: parts.map((p) => p.kind) };
+        })));
+    """)
+    styles = run_styles("console.log(JSON.stringify(x.EXAMPLES.map((one) => one.style)));")
+    for style, one in zip(styles, got):
+        assert one["back"] == re.sub(r"\s*,\s*", ", ", style)
+        assert not re.search(r"[A-Za-z]- |\s,|  ", style), "spacing: " + style
+        assert one["empty"] == 0
+        for kind in ("language", "bpm", "voice"):
+            assert one["kinds"].count(kind) <= 1
+
+
+@needs_node
+def test_a_voice_suggestion_reads_as_a_voice_and_a_sound_does_not():
+    """The two datalists feed two different slots of the same line.
+
+    A voice the parser does not recognise becomes an ordinary part as soon as
+    the line is read back, and the Voices row loses what the user chose there.
+    """
+    got = run_styles("""
+        const kind = (text) => s.parseStyle(text)[0].kind;
+        console.log(JSON.stringify({
+            voices: s.VOICES.filter((text) => kind(text) !== "voice"),
+            sounds: s.SUGGESTIONS.filter((text) => kind(text) !== "other"),
+        }));
+    """)
+    assert got == {"voices": [], "sounds": []}
+
+
+def test_the_genre_names_are_offered_beside_the_sounds():
+    """The gallery's own genre names, which the Sound box completes from."""
+    source = STYLES.read_text(encoding="utf-8")
+    match = re.search(r"export const GENRES = \[(.*?)\];", source, re.DOTALL)
+    assert match, "GENRES is not exported as a literal array"
+    genres = re.findall(r'"([^"]*)"', match.group(1))
+    assert len(genres) >= 60
+    assert genres == sorted(set(genres))
+    assert '[...sheet.SUGGESTIONS, ...GENRES]' in (WEB / "yue2_editor.js").read_text(encoding="utf-8")
+
+
+PIANO = WEB / "yue2_piano.js"
+PIANO_DIR = WEB / "piano"
+SCORE = WEB / "yue2_score.js"
+
+PIANO_CEILING = 700 * 1024
+"""What the sounds may weigh, all together.
+
+They are the only binary this pack ships and the only part of it that can grow
+by a megabyte from one flag of the tool that writes them, so the limit is here
+rather than in a reviewer's memory.
+"""
+
+
+def piano_module():
+    """The pitch list as the browser reads it, without starting Node."""
+    source = PIANO.read_text(encoding="utf-8")
+    match = re.search(r"export const PITCHES = \[(.*?)\];", source, re.DOTALL)
+    assert match, "PITCHES is not exported as a literal array"
+    return [int(found) for found in re.findall(r"\d+", match.group(1))]
+
+
+def test_every_key_of_the_roll_has_a_sound_within_reach():
+    """A gap here is silence in the editor, or a note played at the wrong speed.
+
+    Salamander is sampled in minor thirds, so one semitone of stretching covers
+    the keyboard. Its middle C is the region written without pitch_keycenter,
+    which a reader that insists on the opcode drops without a word, and the hole
+    would be exactly where most songs sit.
+    """
+    source = PIANO.read_text(encoding="utf-8")
+    reach = int(re.search(r"export const REACH = (\d+);", source).group(1))
+    pitches = piano_module()
+    assert pitches == sorted(set(pitches))
+    low, high = js_number("LOWEST"), js_number("HIGHEST")
+    for pitch in range(low, high + 1):
+        near = min(abs(pitch - have) for have in pitches)
+        assert near <= reach, "nothing within {} semitones of MIDI {}".format(reach, pitch)
+
+
+def test_the_module_and_the_files_on_disk_say_the_same_thing():
+    """A sound the list does not name is never fetched; a name with no file is a 404."""
+    on_disk = sorted(int(path.stem) for path in PIANO_DIR.glob("*.ogg"))
+    assert on_disk == piano_module()
+    assert sum(path.stat().st_size for path in PIANO_DIR.glob("*.ogg")) <= PIANO_CEILING
+
+
+def test_the_sounds_are_ogg_vorbis_in_one_channel():
+    """Read from the file rather than trusted from the tool that wrote it.
+
+    A stereo copy weighs twice as much for a preview nobody pans, and a file
+    that is not Ogg at all would only show up as a decode error in a browser.
+    """
+    for path in sorted(PIANO_DIR.glob("*.ogg")):
+        head = path.read_bytes()[:64]
+        assert head[:4] == b"OggS", path.name
+        at = head.index(b"vorbis")
+        assert head[at - 1] == 1, "{}: not a vorbis identification header".format(path.name)
+        assert head[at + 10] == 1, "{}: {} channels".format(path.name, head[at + 10])
+        rate = int.from_bytes(head[at + 11:at + 15], "little")
+        assert 16000 <= rate <= 48000, "{}: {} Hz".format(path.name, rate)
+
+
+def test_the_player_strikes_the_piano_and_keeps_the_synth_for_a_bad_install():
+    """The sounds are fetched, so they can fail to arrive; silence is not an option."""
+    source = SCORE.read_text(encoding="utf-8")
+    assert 'import { PITCHES } from "./yue2_piano.js";' in source
+    assert "createBufferSource()" in source and "playbackRate" in source
+    assert "createOscillator()" in source, "the fallback synth is gone"
+    assert "PIANO.size" in source, "nothing chooses between the two"
+
+
 ROLL = WEB / "yue2_roll.js"
 
 ROLL_SCORE = ('X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\n'
@@ -334,6 +497,27 @@ def test_note_names_snaps_and_chord_tones():
     ]));""")
     assert got == [["C#4", "Db4", "C4", "A0", "C8"], [8, 4, 2, 1], [4, 2, 1], [12, 12],
                    [43, 57, 60, 64, 67], [58, 62, 65], [], "2:05"]
+
+
+@needs_node
+def test_the_tempo_range_holds_the_scores_own_and_the_model_carries_it():
+    """A transcription of something fast opens and closes without being pulled back to 200.
+
+    The tempo rides on the model rather than beside it, so undo, redo and the
+    write that follows every edit carry it without a second path of their own.
+    """
+    got = run_roll("""const sheet = {notes: {Vocal: [{start: 0, length: 8, pitch: 60}], Ins: []},
+        chords: [], bpm: 210, per_quarter: 8, total: 32};
+    const model = r.modelOf(sheet);
+    console.log(JSON.stringify([
+        r.tempoRange(120), r.tempoRange(210), r.tempoRange(20),
+        [r.tempoOf(96, 120), r.tempoOf(96.4, 120), r.tempoOf(1000, 120), r.tempoOf(1, 120),
+         r.tempoOf(215, 210), r.tempoOf("x", 120)],
+        [model.bpm, r.sheetOf(model).bpm, r.sheetOf({ ...model, bpm: 96 }).bpm],
+        r.secondsAt({ bpm: 120, per_quarter: 8 }, 960),
+    ]));""")
+    assert got == [{"low": 40, "high": 200}, {"low": 40, "high": 210}, {"low": 20, "high": 200},
+                   [96, 96, 200, 40, 210, None], [210, 210, 96], 60]
 
 
 @needs_node

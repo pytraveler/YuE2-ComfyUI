@@ -122,7 +122,7 @@ class YuE2VocalsOnly:
 
         if not audio or audio.get("waveform") is None:
             refuse(unique_id, "No audio is connected. Join a song or a Load Audio node to 'audio'.")
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Vocals Only")
         vocals = voice_of(audio, resolve(options), unique_id, progress)
         progress.finish("The voice of {:.0f} seconds of audio".format(
             vocals["waveform"].shape[-1] / float(vocals["sample_rate"])))

@@ -7,6 +7,64 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.8.1 - 2026-09-20
+
+### Added
+
+- **A progress bar in the console, beside the one on the node.** ComfyUI draws
+  a node's bar in the browser only, so the terminal the server was started from
+  said nothing at all for the minutes a song takes. Every node of this pack now
+  draws the same fraction and the same caption there as well --
+  `YuE2 Generate Song: Composing |######----|  58% [01:12]` -- through tqdm,
+  which every ComfyUI has, and through a line of its own where it is missing.
+  The line closes when the node is done, so nothing ComfyUI prints next lands
+  in the middle of it. There is no ETA on purpose: the stages do not take the
+  shares of the bar they are given, so a remaining time worked out from the
+  percentage would be a number this pack cannot stand behind. A download knows
+  its own and writes it into the caption, as it always did.
+  `YUE2_CONSOLE_PROGRESS=0` leaves a console that is really a log file alone.
+- **A tempo for the score, in the score editor.** A slider and a box beside the
+  play controls set the tempo the score is written at -- `Q:1/4` in the ABC --
+  from 40 to 200 BPM, or from the score's own tempo when it came in outside
+  that. Nothing is renotated: the notes keep their lengths in bars, and the
+  whole song is sung faster or slower. The length on the facts line moves as
+  the slider does, and so does the dashed line where the singing stops. The
+  tempo is part of the edit like a moved note, with its own undo, and it
+  reaches the node on Apply. It earns its keep most on `YuE2 Transcribe`, where
+  the tempo was heard from a recording rather than chosen.
+- **Example styles in the lyrics editor, taken from YuE2's own pages.** The
+  style line is the hardest box in this pack to fill: nothing on the screen
+  said whether the model wanted `sad piano` or five clauses about the room the
+  drums were recorded in. `Examples` now offers twenty-eight lines that were
+  really run -- ten written by the model's authors for their cover and editing
+  demos, eighteen sent in for the genre gallery, in English, Chinese, Japanese
+  and Russian. Picking one fills the style line, and an arrow puts the old one
+  back. They are copied word for word, which is the point of them: one that
+  never named its language leaves the `Language` box empty rather than being
+  tidied up on the way in. The gallery's seventy genre names now complete in
+  the sound box as well, and the voices and sounds it suggests are the demos'
+  own vocabulary -- `no guitars`, `brushed drums`, `honking sax section`,
+  `warm natural jazz-club recording` -- rather than phrases invented here. The
+  list is written from a downloaded copy of the site by a tool that refuses any
+  line it cannot reproduce exactly.
+
+### Changed
+
+- **Play sounds a real piano instead of a synth.** The roll played square and
+  triangle waves, which say where a note is but not what it is: an edit that
+  ruined a phrase sounded much like one that saved it. It now plays a grand
+  piano, thirty recordings from Salamander Grand Piano (Alexander Holm,
+  CC-BY 3.0), one every three semitones from A0 to C8, so no note is stretched
+  by more than a semitone and every key of the roll has its own sound. They
+  ship with the pack -- half a megabyte, loaded when the editor opens, nothing
+  fetched from the internet -- and if they cannot be loaded at all, Play falls
+  back to the old synth and says so rather than going silent.
+- **The piano roll names C and the row under the pointer, not every white
+  key.** Seven names an octave on rows fourteen pixels apart were a wall of
+  text beside the notes. C stays, in bold; whichever row the mouse is on says
+  what it is, black keys included, which had no name at all before -- theirs is
+  written in white, on the key itself.
+
 ## 0.8.0 - 2026-09-20
 
 ### Added

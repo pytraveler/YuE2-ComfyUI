@@ -12,16 +12,28 @@ export const CYCLE = ["Verse", "Pre-Chorus", "Chorus", "Bridge", "Outro", "Intro
 
 export const VOICES = [
     "expressive female voice", "soft female voice", "powerful female voice",
-    "breathy female voice", "female melodic vocals", "warm male voice",
-    "deep male voice", "raspy male voice", "male rap vocals", "backing choir",
+    "breathy female voice", "female melodic vocals", "warm expressive female lead vocal",
+    "intimate female jazz vocalist", "1960s female vocal", "warm male voice",
+    "deep male voice", "raspy male voice", "smooth male vocals", "gritty male lead vocal",
+    "harsh screamed vocals", "male rap vocals", "playful duet",
+    "child-and-adult unison vocals", "layered vocal harmonies", "backing choir",
 ];
 
 export const SUGGESTIONS = [
-    "acoustic piano", "acoustic guitar", "electric guitar", "rounded bass and light drums",
-    "punchy drums", "synth pads", "string section", "brass section",
-    "lyrical memorable melody", "catchy hook", "unhurried phrasing",
-    "staccato phrasing", "legato phrasing", "driving rhythm", "lo-fi texture",
-    "wide reverb",
+    "acoustic piano", "electric piano", "honky-tonk piano", "toy piano",
+    "jazz piano with rich extended chord voicings", "sparse piano comping",
+    "acoustic guitar", "electric guitar", "clean electric guitar", "distorted guitars",
+    "palm-muted riffs", "shimmering guitars", "fingerstyle jazz guitar", "steel guitar",
+    "banjo and fiddle", "pizzicato strings", "string section", "lush orchestral strings",
+    "brass section", "tenor saxophone", "honking sax section", "muted trumpet", "sousaphone",
+    "synth bass", "funky bass", "rounded bass and light drums", "walking upright double bass",
+    "upright bass and brushed drums", "punchy drums", "second-line drums", "double-kick drums",
+    "congas and shakers", "sleigh bells", "synth pads", "driving rhythm section",
+    "medium swing", "loose triplet feel", "driving rhythm", "unhurried phrasing",
+    "staccato phrasing", "legato phrasing", "lyrical memorable melody", "catchy hook",
+    "lo-fi texture", "wide reverb", "no guitars", "vintage 1950s mix",
+    "warm analog production", "polished studio recording", "warm natural jazz-club recording",
+    "4/4",
 ];
 
 export const BPM_MIN = 40;
@@ -29,7 +41,8 @@ export const BPM_MAX = 200;
 export const BPM_DEFAULT = 88;
 
 const BPM_RE = /^(?:(\d{2,3})\s*bpm|bpm\s*(\d{2,3}))$/i;
-const VOICE_RE = /\b(voice|voices|vocal|vocals|singer|singers|choir|duet|rapper|rappers)\b/i;
+const VOICE_RE =
+    /\b(voice|voices|vocal|vocals|vocalist|vocalists|singer|singers|choir|duet|rapper|rappers)\b/i;
 const TAG_RE = /^\s*\[\s*([A-Za-z][A-Za-z -]*?)\s*(\d+)?\s*\]\s*$/;
 
 export function parseStyle(line) {

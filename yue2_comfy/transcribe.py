@@ -184,7 +184,7 @@ class YuE2Transcribe:
 
     def transcribe(self, audio, mode, lyrics_auto_recognition, model, seed, options=None,
                    score_abc="", lyrics="", unique_id=None):
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Transcribe")
         settings = resolve(options)
         if mode not in MODE_CHOICES:
             refuse(unique_id, "'mode' must be one of {}.".format(", ".join(MODE_CHOICES)))

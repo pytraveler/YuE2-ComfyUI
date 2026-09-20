@@ -300,7 +300,7 @@ class YuE2Plan:
     def plan(self, style, lyrics, seed, options=None, lora=None, unique_id=None):
         from . import generate
 
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Plan")
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
         settings["loras"] = list(lora or [])
@@ -347,7 +347,7 @@ class YuE2PlanBatch:
     def batch(self, style, lyrics, seed, count, options=None, lora=None, unique_id=None):
         from . import generate
 
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Plan Batch")
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
         settings["loras"] = list(lora or [])
@@ -454,7 +454,7 @@ class YuE2RenderPlan:
         if not plan:
             refuse(unique_id, "No plan is connected. Add a 'YuE2 Plan' node and "
                               "join its 'plan' output to this input.")
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Render Plan")
         settings = _settings(plan, options, unique_id)
         if lora is not None:
             settings["loras"] = list(lora)
@@ -544,7 +544,7 @@ class YuE2DecodeLatents:
         if not latents or latents.get("latents") is None:
             refuse(unique_id, "No latents are connected. Add a 'YuE2 Render Plan' "
                               "node and join its 'latents' output to this input.")
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Decode Latents")
         settings = dict(DEFAULT_OPTIONS)
         settings.update(latents.get("settings") or {})
         if options:

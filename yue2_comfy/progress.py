@@ -10,12 +10,33 @@ Ported from the MiniMax-H3 Prompt Rewriter pack.
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import time
 
 log = logging.getLogger(__name__)
 
 TEXT_MIN_INTERVAL = 0.25
 NOTICES_EVENT = "yue2_comfy.notices"
+
+CONSOLE_SWITCH = "YUE2_CONSOLE_PROGRESS"
+"""Set it to 0, no, off or false and nothing is drawn on the console.
+
+Meant for a server whose console is really a log file, where a line redrawn
+several times a second is thousands of lines nobody reads.
+"""
+
+CONSOLE_INTERVAL = 0.1
+CONSOLE_WIDTH = 22
+CONSOLE_FORMAT = "{desc} |{bar}| {percentage:3.0f}% [{elapsed}]"
+"""No ETA on purpose.
+
+The stages do not take the shares of the bar they are given -- the table in
+generate.Stages says as much itself -- so a remaining time worked out from the
+percentage would be a number the pack cannot stand behind. Elapsed is measured.
+A download is the one stage that knows its own ETA, and TransferReporter writes
+that into the caption, where it is true.
+"""
 
 
 def interrupted() -> bool:
@@ -47,6 +68,7 @@ def translate_interrupt() -> None:
     Exception, which is why nothing around the generation is wrapped in a bare
     'except Exception'.
     """
+    ConsoleBar.shut()
     try:
         import comfy.model_management as mm
     except Exception:
@@ -64,6 +86,7 @@ def refuse(node_id, message: str):
     to close without reading. The toast is the same sentence, before the
     exception goes up.
     """
+    ConsoleBar.shut()
     announce(node_id, [("warn", message)], kind="refusal")
     raise ValueError(message)
 
@@ -110,6 +133,149 @@ def format_duration(seconds: float) -> str:
     return "{}:{:02d}".format(minutes, secs)
 
 
+def console_wanted() -> bool:
+    """Whether a node draws its progress on the console as well as on itself."""
+    return str(os.environ.get(CONSOLE_SWITCH, "1")).strip().lower() not in (
+        "0", "no", "off", "false")
+
+
+class PlainBar:
+    """The console line for an install whose Python has no tqdm.
+
+    Only the calls ConsoleBar makes are here, under tqdm's own names, and the
+    line drawn is the one CONSOLE_FORMAT asks tqdm for. ComfyUI's requirements
+    list tqdm, so this is the spare wheel rather than the road.
+    """
+
+    def __init__(self, total, desc, stream):
+        self.total = max(float(total), 1.0)
+        self.desc = desc
+        self.stream = stream
+        self.n = 0.0
+        self.started = time.monotonic()
+        self.drawn = 0
+        self.at = 0.0
+
+    def set_description_str(self, desc=None, refresh=True) -> None:
+        self.desc = self.desc if desc is None else desc
+        if refresh:
+            self.refresh()
+
+    def update(self, step=1.0) -> None:
+        self.n = min(max(self.n + float(step), 0.0), self.total)
+        if time.monotonic() - self.at >= CONSOLE_INTERVAL:
+            self.refresh()
+
+    def refresh(self) -> None:
+        self.at = time.monotonic()
+        share = self.n / self.total
+        filled = int(round(CONSOLE_WIDTH * share))
+        line = "{} |{}| {:3.0f}% [{}]".format(
+            self.desc, "#" * filled + "-" * (CONSOLE_WIDTH - filled), share * 100.0,
+            format_duration(time.monotonic() - self.started))
+        self._put("\r" + line + " " * max(0, self.drawn - len(line)))
+        self.drawn = len(line)
+
+    def close(self) -> None:
+        self.refresh()
+        self._put("\n")
+
+    def _put(self, text: str) -> None:
+        try:
+            self.stream.write(text)
+            self.stream.flush()
+        except Exception:
+            log.debug("[yue2_comfy.PlainBar] the console would not take the line", exc_info=True)
+
+
+class ConsoleBar:
+    """The node's own fraction and caption, drawn again on the console.
+
+    ComfyUI draws a node's bar in the browser. Someone who started the server
+    from a terminal and watches it work there sees nothing at all for the
+    minutes a song takes, and a song is the node where that matters most.
+
+    One line is open at a time, the way ComfyUI runs one node at a time: a bar
+    closes the one before it, so a node that raised instead of finishing leaves
+    a closed line behind rather than a half-drawn one for the next node to
+    write over.
+    """
+
+    open_bar = None
+
+    def __init__(self, title: str):
+        self.title = title or "YuE2"
+        self.caption_text = ""
+        self.bar = None
+        self.made = False
+        ConsoleBar.shut()
+        ConsoleBar.open_bar = self
+
+    @classmethod
+    def shut(cls) -> None:
+        """Close whatever line is open, leaving its number where it stood."""
+        if cls.open_bar is not None:
+            cls.open_bar.close()
+
+    def _line(self):
+        """The tqdm-shaped object, made when there is first something to say on it."""
+        if self.made:
+            return self.bar
+        self.made = True
+        stream = getattr(sys, "stderr", None)
+        if stream is None:
+            return None
+        try:
+            from tqdm import tqdm
+
+            self.bar = tqdm(total=100, desc=self.title, bar_format=CONSOLE_FORMAT,
+                            leave=True, file=stream, dynamic_ncols=True)
+        except Exception:
+            log.debug("[yue2_comfy.ConsoleBar] no tqdm here, drawing the line by hand",
+                      exc_info=True)
+            self.bar = PlainBar(100, self.title, stream)
+        return self.bar
+
+    def at(self, fraction: float) -> None:
+        bar = self._line()
+        if bar is None:
+            return
+        try:
+            bar.n = max(0.0, min(1.0, float(fraction))) * 100.0
+            bar.update(0)
+        except Exception:
+            log.debug("[yue2_comfy.ConsoleBar.at] the line could not be drawn", exc_info=True)
+
+    def caption(self, message: str) -> None:
+        bar = self._line()
+        if bar is None:
+            return
+        said = " | ".join(piece.strip() for piece in str(message).splitlines() if piece.strip())
+        text = self.title + ": " + said if said else self.title
+        if text == self.caption_text:
+            return
+        self.caption_text = text
+        try:
+            bar.set_description_str(text)
+        except Exception:
+            log.debug("[yue2_comfy.ConsoleBar.caption] the line could not be drawn", exc_info=True)
+
+    def close(self, done: bool = False) -> None:
+        """Finish the line. ``done`` fills it, for a node that really did finish."""
+        bar, self.bar = self.bar, None
+        self.made = True
+        if ConsoleBar.open_bar is self:
+            ConsoleBar.open_bar = None
+        if bar is None:
+            return
+        try:
+            if done:
+                bar.n = 100.0
+            bar.close()
+        except Exception:
+            log.debug("[yue2_comfy.ConsoleBar.close] the line would not close", exc_info=True)
+
+
 class NodeProgress:
     """The caption and the fill of the bar under one executing node.
 
@@ -120,13 +286,14 @@ class NodeProgress:
     repeats the other.
     """
 
-    def __init__(self, node_id, total: float = 1.0):
+    def __init__(self, node_id, total: float = 1.0, title: str = ""):
         self.node_id = str(node_id) if node_id is not None else None
         self.total = max(float(total), 1.0)
         self._server = None
         self._bar = None
         self._last_text = ""
         self._last_text_at = 0.0
+        self._console = ConsoleBar(title) if console_wanted() else None
         if self.node_id is None:
             return
         try:
@@ -160,6 +327,8 @@ class NodeProgress:
                 bar.update_absolute(max(0.0, min(float(value), self.total)), self.total)
             except Exception:
                 log.debug("[yue2_comfy.NodeProgress.update] bar update failed", exc_info=True)
+        if self._console is not None:
+            self._console.at(float(value) / self.total)
         if text is not None:
             self.text(text)
 
@@ -167,8 +336,6 @@ class NodeProgress:
         self.update(self.total * max(0.0, min(1.0, fraction)), text)
 
     def text(self, message: str, force: bool = False) -> None:
-        if self._server is None or self.node_id is None:
-            return
         now = time.monotonic()
         if not force and message == self._last_text:
             return
@@ -176,14 +343,26 @@ class NodeProgress:
             return
         self._last_text = message
         self._last_text_at = now
+        if self._console is not None:
+            self._console.caption(message)
+        if self._server is None or self.node_id is None:
+            return
         try:
             self._server.send_progress_text(message, self.node_id)
         except Exception:
             log.debug("[yue2_comfy.NodeProgress.text] send failed", exc_info=True)
 
     def finish(self, message=None) -> None:
+        """The node is done: the last word in the caption, and the console line closed.
+
+        Only a node calls this. A stage that is over inside a node says so with
+        ``text(..., force=True)`` instead, because closing the console line there
+        would leave the rest of the node with nowhere to draw.
+        """
         if message is not None:
             self.text(message, force=True)
+        if self._console is not None:
+            self._console.close(done=True)
 
 
 class Band:
@@ -208,6 +387,11 @@ class Band:
 
     def update(self, value: float, text=None) -> None:
         self.ratio(float(value) / self._total, text)
+
+    def finish(self, message=None) -> None:
+        """A share of the bar cannot end the node: it says its piece, the line stays open."""
+        if message is not None:
+            self._progress.text(message, force=True)
 
     def __getattr__(self, name):
         return getattr(self._progress, name)

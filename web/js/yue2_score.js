@@ -4,6 +4,7 @@ import {
     setWidgetValue, showWidget, sourceOf, widgetNamed,
 } from "./yue2_controls.js";
 import * as roll from "./yue2_roll.js";
+import { PITCHES } from "./yue2_piano.js";
 
 const RENDER = "YuE2RenderPlan";
 const GENERATE = "YuE2GenerateSong";
@@ -88,6 +89,9 @@ const SKIN = {
     keyBlackTop: "#3B4146",
     keyText: "#4A555B",
     keyTextC: "#1A2226",
+    keyUnder: "#B7D2E4",
+    keyBlackUnder: "#2F4553",
+    keyBlackText: "#E4EEF2",
     keysEdge: "#11171A",
 };
 
@@ -186,6 +190,11 @@ const LIMIT_AUTO_TOOLTIP =
     + ", or " + roll.AUTO_INSTRUMENTAL_SECONDS + " when there are no lines to count. Bars after the dashed line "
     + "are not sung; a higher 'max_seconds' in YuE2 Options brings them in, and makes a new take.";
 
+const TEMPO_TOOLTIP =
+    "The tempo written into the score, Q:1/4 in the ABC. The notes keep their lengths in bars, "
+    + "so the whole song is sung faster or slower and the dashed line moves with it. It goes to "
+    + "the node with the rest of the edit, on Apply.";
+
 const CHORD_HELP =
     "Chord symbols are a root from A to G with an optional # or b, then one of: nothing (major), " +
     "m, dim, aug, 7, maj7, m7, dim7, m7b5, sus4, sus2, 6, m6, 7sus4, m(maj7) -- and an optional " +
@@ -197,7 +206,8 @@ const SCORE_STYLE = `
 .yue2-score [hidden] { display: none !important; }
 .yue2-score h3 { font-size: 15px; font-weight: 600; margin: 0; }
 .yue2-score .yue2-s-sub { font-size: 11px; color: var(--descrip-text, #999); margin: 2px 0 10px; }
-.yue2-score button, .yue2-score select, .yue2-score input[type="text"], .yue2-score textarea {
+.yue2-score button, .yue2-score select, .yue2-score input[type="text"],
+.yue2-score input[type="number"], .yue2-score textarea {
     box-sizing: border-box; font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 6px;
     color: var(--input-text, #ddd); background: var(--comfy-input-bg, #2b2b2b);
     border: 1px solid var(--border-color, #4e4e4e); }
@@ -213,6 +223,10 @@ const SCORE_STYLE = `
 .yue2-s-facts .yue2-s-warn { cursor: help; }
 .yue2-s-check { font-size: 12px; display: inline-flex; gap: 4px; align-items: center;
     color: var(--descrip-text, #bbb); user-select: none; }
+.yue2-s-tempo { font-size: 12px; display: inline-flex; gap: 6px; align-items: center;
+    color: var(--descrip-text, #bbb); user-select: none; }
+.yue2-s-tempo input[type="range"] { width: 120px; margin: 0; accent-color: #3B7DD8; }
+.yue2-score input.yue2-s-bpm { width: 62px; padding: 4px 6px; text-align: right; }
 .yue2-s-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .yue2-s-roll { position: relative; flex: 1 1 auto; min-height: 240px; outline: none;
     border: 1px solid var(--border-color, #4e4e4e); border-radius: 6px; overflow: hidden; }
@@ -248,6 +262,11 @@ const SCORE_STYLE = `
 `;
 
 let AUDIO = null;
+let PIANO_LOADING = null;
+const PIANO = new Map();
+const PIANO_LEVEL = { Vocal: 0.32, Ins: 0.14, chords: 0.09 };
+const WAVE_LEVEL = { Vocal: 0.16, Ins: 0.07, chords: 0.03 };
+const RELEASE = 0.09;
 let ABCJS_LOADING = null;
 const TIMES = new Map();
 const TIMES_ASKED = new Set();
@@ -430,6 +449,36 @@ function midiHz(pitch) {
     return 440 * Math.pow(2, (pitch - 69) / 12);
 }
 
+function pianoUrl(pitch) {
+    return new URL("./piano/" + pitch + ".ogg", import.meta.url).href;
+}
+
+function nearestSampled(pitch) {
+    let best = PITCHES[0];
+    for (const have of PITCHES) {
+        if (Math.abs(have - pitch) < Math.abs(best - pitch)) best = have;
+    }
+    return best;
+}
+
+function loadPiano() {
+    if (!PIANO_LOADING) {
+        const context = audioContext();
+        PIANO_LOADING = Promise.all(PITCHES.map((pitch) => fetch(pianoUrl(pitch))
+            .then((response) => {
+                if (!response.ok) throw new Error("HTTP " + response.status + " for " + pianoUrl(pitch));
+                return response.arrayBuffer();
+            })
+            .then((bytes) => context.decodeAudioData(bytes))
+            .then((buffer) => PIANO.set(pitch, buffer))))
+            .catch((error) => {
+                PIANO_LOADING = null;
+                throw error;
+            });
+    }
+    return PIANO_LOADING;
+}
+
 function loadAbcjs() {
     if (window.ABCJS) return Promise.resolve(window.ABCJS);
     if (!ABCJS_LOADING) {
@@ -478,9 +527,32 @@ class Player {
     }
 
     tone(context, master, start, length, pitch, part) {
+        return PIANO.size
+            ? this.struck(context, master, start, length, pitch, part)
+            : this.wave(context, master, start, length, pitch, part);
+    }
+
+    struck(context, master, start, length, pitch, part) {
+        const take = nearestSampled(pitch);
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        const level = PIANO_LEVEL[part] ?? PIANO_LEVEL.chords;
+        source.buffer = PIANO.get(take);
+        source.playbackRate.value = Math.pow(2, (pitch - take) / 12);
+        const stop = start + Math.max(0.06, length);
+        gain.gain.setValueAtTime(level, start);
+        gain.gain.setValueAtTime(level, stop);
+        gain.gain.linearRampToValueAtTime(0, stop + RELEASE);
+        source.connect(gain).connect(master);
+        source.start(start);
+        source.stop(stop + RELEASE + 0.02);
+        return source;
+    }
+
+    wave(context, master, start, length, pitch, part) {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
-        const level = part === "Vocal" ? 0.16 : part === "Ins" ? 0.07 : 0.03;
+        const level = WAVE_LEVEL[part] ?? WAVE_LEVEL.chords;
         oscillator.type = part === "Vocal" ? "triangle" : part === "Ins" ? "square" : "sine";
         oscillator.frequency.value = midiHz(pitch);
         const stop = start + Math.max(0.06, length);
@@ -568,6 +640,10 @@ class ScoreEditor {
         this.selection = new Set();
         this.drag = null;
         this.working = null;
+        this.hoverPitch = null;
+        this.sheetTempo = null;
+        this.shownTempo = null;
+        this.tempoFrom = null;
         this.playhead = 0;
         this.playTick = null;
         this.chordInput = null;
@@ -581,12 +657,16 @@ class ScoreEditor {
         this.tick0 = 0;
         this.pxPerTick = 4;
         this.pitchTop = 79;
+        this.pianoWait = false;
         this.width = 0;
         this.height = 0;
         this.ratio = 1;
         installStyle(SCORE_STYLE_ID, SCORE_STYLE);
         this.build();
         this.open();
+        loadPiano().catch((error) => {
+            void error;
+        });
     }
 
     build() {
@@ -621,7 +701,7 @@ class ScoreEditor {
 
         const tools = element("div", "yue2-s-bar");
         this.playButton = element("button", "", "Play");
-        this.playButton.title = "Play from the marker (Space). A plain synth, not YuE2: the song itself is made when the workflow runs.";
+        this.playButton.title = "Play from the marker (Space). A sampled piano, not YuE2: the song itself is made when the workflow runs.";
         this.playButton.addEventListener("click", () => this.togglePlay());
         const rewind = element("button", "", "From start");
         rewind.title = "Put the play marker back at the first bar.";
@@ -636,7 +716,7 @@ class ScoreEditor {
         this.hearIns = checkControl("instrument", true, "Play the instrument part.");
         this.hearChords = checkControl("chords", false, "Play the chord symbols as soft held chords.");
         tools.append(this.playButton, rewind, this.hearVoice.holder, this.hearIns.holder, this.hearChords.holder,
-            element("span", "yue2-s-gap"));
+            element("span", "yue2-s-gap"), this.tempoControl(), element("span", "yue2-s-gap"));
 
         this.rollTools = element("span", "yue2-s-bar");
         this.rollTools.style.margin = "0";
@@ -736,6 +816,7 @@ class ScoreEditor {
 
         this.canvas.addEventListener("pointerdown", (event) => this.pointerDown(event));
         this.canvas.addEventListener("pointermove", (event) => this.pointerMove(event));
+        this.canvas.addEventListener("pointerleave", () => this.hover(null));
         this.canvas.addEventListener("pointerup", (event) => this.pointerUp(event));
         this.canvas.addEventListener("pointercancel", () => this.cancelDrag());
         this.canvas.addEventListener("mousedown", (event) => event.preventDefault());
@@ -838,6 +919,14 @@ class ScoreEditor {
         this.model = roll.modelOf(sheet);
         this.good = this.model;
         this.localChanged = [];
+        this.sheetTempo = sheet.bpm;
+        this.shownTempo = null;
+        this.tempoFrom = null;
+        const tempi = roll.tempoRange(sheet.bpm);
+        for (const box of [this.tempoSlider, this.tempoBox]) {
+            box.min = String(tempi.low);
+            box.max = String(tempi.high);
+        }
         const choices = roll.snapChoices(sheet.per_quarter);
         const preferred = choices.find((c) => c.name === "Eighth notes") || choices[0];
         this.snap = preferred ? preferred.ticks : 1;
@@ -852,6 +941,67 @@ class ScoreEditor {
         this.showTab(this.tab);
         this.showDescription();
         this.refresh();
+    }
+
+    tempoControl() {
+        const holder = element("span", "yue2-s-tempo");
+        holder.title = TEMPO_TOOLTIP;
+        this.tempoSlider = document.createElement("input");
+        this.tempoSlider.type = "range";
+        this.tempoSlider.step = "1";
+        this.tempoSlider.min = String(roll.TEMPO_LOW);
+        this.tempoSlider.max = String(roll.TEMPO_HIGH);
+        this.tempoSlider.addEventListener("input", () => this.previewTempo(this.tempoSlider.value));
+        this.tempoSlider.addEventListener("change", () => this.setTempo(this.tempoSlider.value));
+        this.tempoBox = document.createElement("input");
+        this.tempoBox.type = "number";
+        this.tempoBox.className = "yue2-s-bpm";
+        this.tempoBox.step = "1";
+        this.tempoBox.addEventListener("change", () => this.setTempo(this.tempoBox.value));
+        holder.append(element("span", "", "Tempo"), this.tempoSlider, this.tempoBox,
+            element("span", "", "BPM"));
+        return holder;
+    }
+
+    previewTempo(value) {
+        if (!this.model || !this.sheet) return;
+        const bpm = roll.tempoOf(value, this.sheetTempo);
+        if (bpm === null || bpm === this.model.bpm) return;
+        if (!this.tempoFrom) this.tempoFrom = this.model;
+        this.model = { ...this.model, bpm };
+        this.draw();
+    }
+
+    setTempo(value) {
+        if (!this.model || !this.sheet) return;
+        const bpm = roll.tempoOf(value, this.sheetTempo);
+        const from = this.tempoFrom || this.model;
+        this.tempoFrom = null;
+        this.model = from;
+        if (bpm === null || bpm === from.bpm) {
+            this.shownTempo = null;
+            this.draw();
+            return;
+        }
+        this.commit({ ...from, bpm }, from);
+    }
+
+    showTempo() {
+        const bpm = this.model && this.model.bpm;
+        this.tempoSlider.disabled = !bpm;
+        this.tempoBox.disabled = !bpm;
+        if (!bpm) {
+            this.shownTempo = null;
+            this.tempoBox.value = "";
+            return;
+        }
+        if (!this.sheet || this.shownTempo === bpm) return;
+        this.shownTempo = bpm;
+        this.sheet.bpm = bpm;
+        this.sheet.seconds = roll.secondsAt(this.sheet, this.sheet.total);
+        this.tempoSlider.value = String(bpm);
+        this.tempoBox.value = String(bpm);
+        this.paintFacts();
     }
 
     paintFacts() {
@@ -879,14 +1029,21 @@ class ScoreEditor {
     }
 
     describe() {
+        if (!this.sheet) return "";
+        const retimed = this.model && this.model.bpm !== this.sheetTempo
+            ? "The score is now " + this.model.bpm + " BPM, where it came in at " + this.sheetTempo
+                + ": the notes keep their lengths, so the whole song is sung "
+                + (this.model.bpm > this.sheetTempo ? "faster" : "slower") + ". "
+            : "";
         if (!this.changed.length) {
-            if (!this.sheet) return "";
-            return "No changes. This is the score as it came in." + (this.cutTick() === null ? ""
+            return retimed + (retimed ? "Nothing else changed." : "No changes. This is the score as it came in.")
+                + (this.cutTick() === null ? ""
                 : " Only its first " + roll.clock(this.limit.seconds) + " is sung: " + limitReason(this.limit)
                     + " ends the song at the dashed line.");
         }
         const late = this.lateBars(this.changed);
-        return "Bars " + barList(this.changed) + " will be written again; every other bar stays exactly as it was."
+        return retimed
+            + "Bars " + barList(this.changed) + " will be written again; every other bar stays exactly as it was."
             + (late.length ? " Bars " + barList(late) + " come after " + roll.clock(this.limit.seconds) + ", where "
                 + limitReason(this.limit) + " ends the song: they will not be heard " + limitRemedy(this.limit) + "."
                 : "");
@@ -929,6 +1086,7 @@ class ScoreEditor {
     }
 
     refresh() {
+        this.showTempo();
         this.undoButton.disabled = !this.history.canUndo;
         this.redoButton.disabled = !this.history.canRedo;
         this.writeButton.hidden = !this.origin || this.own;
@@ -1036,6 +1194,7 @@ class ScoreEditor {
     }
 
     draw() {
+        this.showTempo();
         if (!this.sheet || this.rollBox.hidden || !this.width) return;
         const sheet = this.sheet;
         const model = this.shownModel();
@@ -1231,22 +1390,29 @@ class ScoreEditor {
             const pitch = this.pitchTop - r;
             const rowY = top + r * ROW_H;
             const tone = ((pitch % 12) + 12) % 12;
-            if (roll.isBlack(pitch)) {
+            const black = roll.isBlack(pitch);
+            const under = pitch === this.hoverPitch;
+            if (black) {
                 c.fillStyle = SKIN.keyEdge;
                 c.fillRect(blackW, rowY + ROW_H / 2, KEYS_W - blackW, 1);
-                c.fillStyle = SKIN.keyBlack;
+                c.fillStyle = under ? SKIN.keyBlackUnder : SKIN.keyBlack;
                 c.fillRect(0, rowY + 1, blackW, ROW_H - 2);
                 c.fillStyle = SKIN.keyBlackTop;
                 c.fillRect(blackW - 4, rowY + 3, 2, ROW_H - 6);
-            } else if (tone === 0 || tone === 5) {
-                c.fillStyle = SKIN.keyEdge;
-                c.fillRect(0, rowY + ROW_H - 1, KEYS_W, 1);
+            } else {
+                if (under) {
+                    c.fillStyle = SKIN.keyUnder;
+                    c.fillRect(0, rowY + 1, KEYS_W, ROW_H - 2);
+                }
+                if (tone === 0 || tone === 5) {
+                    c.fillStyle = SKIN.keyEdge;
+                    c.fillRect(0, rowY + ROW_H - 1, KEYS_W, 1);
+                }
             }
-            if (!roll.isBlack(pitch)) {
-                c.font = (tone === 0 ? "600 " : "") + "10px system-ui, sans-serif";
-                c.fillStyle = tone === 0 ? SKIN.keyTextC : SKIN.keyText;
-                c.fillText(roll.noteName(pitch), KEYS_W - 24, rowY + ROW_H - 3);
-            }
+            if (tone !== 0 && !under) continue;
+            c.font = (tone === 0 ? "600 " : "") + "10px system-ui, sans-serif";
+            c.fillStyle = black ? SKIN.keyBlackText : tone === 0 ? SKIN.keyTextC : SKIN.keyText;
+            c.fillText(roll.noteName(pitch), black ? 5 : KEYS_W - 24, rowY + ROW_H - 3);
         }
     }
 
@@ -1413,9 +1579,16 @@ class ScoreEditor {
         this.draw();
     }
 
+    hover(pitch) {
+        if (this.hoverPitch === pitch) return;
+        this.hoverPitch = pitch;
+        if (!this.drag) this.draw();
+    }
+
     pointerMove(event) {
         if (!this.sheet) return;
         const { px, py } = this.local(event);
+        this.hover(py > RULER_H + CHORD_H ? this.pitchAt(py) : null);
         if (!this.drag) {
             const hit = py > RULER_H + CHORD_H && px > KEYS_W ? this.hitNote(px, py) : null;
             let cursor = "crosshair";
@@ -1796,6 +1969,30 @@ class ScoreEditor {
     }
 
     startPlaying() {
+        if (!this.sheet || this.pianoWait) return;
+        audioContext();
+        if (PIANO.size) {
+            this.playNow();
+            return;
+        }
+        this.pianoWait = true;
+        this.setStatus("Loading the piano\u2026");
+        let failed = null;
+        loadPiano()
+            .catch((error) => {
+                failed = error;
+            })
+            .then(() => {
+                this.pianoWait = false;
+                if (this.isClosed) return;
+                this.setStatus(failed
+                    ? "The piano did not load, so this plays as a plain synth: " + failed.message
+                    : this.notice, Boolean(failed));
+                this.playNow();
+            });
+    }
+
+    playNow() {
         if (!this.sheet) return;
         const from = this.playhead >= this.sheet.total ? 0 : this.playhead;
         const list = roll.events(this.sheet, this.model, from, {

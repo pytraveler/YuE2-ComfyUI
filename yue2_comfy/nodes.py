@@ -399,7 +399,7 @@ class YuE2GenerateSong:
     def generate(self, style, lyrics, seed, options=None, score_abc="", lora=None, unique_id=None):
         from . import generate
 
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Generate Song")
         style, lyrics = words(style, lyrics, unique_id)
         settings = resolve(options)
         settings["loras"] = list(lora or [])
@@ -510,7 +510,7 @@ class YuE2WriteSong:
         settings = dict(DEFAULT_OPTIONS)
         if options:
             settings.update(options)
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Write Song")
 
         idea = (idea or "").strip()
         if not idea:

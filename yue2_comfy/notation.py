@@ -30,8 +30,10 @@ a mark written on every one were sung as well as the model's own spelling, so
 the spelling here buys readable, minimal diffs, not better singing.
 
 The bar grid does not move: notes and chord symbols change inside the bars
-that exist, and tempo, meter and key stay as they are. A bar that changes key
-halfway through is left to the ABC text.
+that exist, and the meter and the key stay as they are. The tempo is the one
+header the editor may set, because it is one number that moves nothing else:
+the notes keep their lengths in bars, and the song is sung faster or slower. A
+bar that changes key halfway through is left to the ABC text.
 """
 
 from __future__ import annotations
@@ -53,6 +55,25 @@ thousand; the cap only stops a pasted book from tying up a server thread."""
 
 MOST_NOTES = 20000
 """Notes per part an edit may carry, for the same reason."""
+
+TEMPO_LINE = 4
+"""Where ``Q:1/4=<BPM>`` sits.
+
+The dialect fixes the order of the header and abc_tools.parse refuses a score
+whose fifth line is not that tempo, so the line can be replaced without reading
+the rest of the text.
+"""
+
+TEMPO_LOW = 40
+TEMPO_HIGH = 200
+"""The tempi an editor offers.
+
+A score that came in outside them -- a transcription of something fast, a MIDI
+file at 210 -- keeps its own as the far end of the range, so opening an editor
+and closing it again cannot move the song.
+"""
+
+TEMPO_RANGE = "A tempo of {value} BPM is outside {low} to {high}."
 
 UNREADABLE = (
     "This score cannot be read note by note: {reason}.\n\n"
@@ -192,6 +213,27 @@ def read(text: str) -> dict:
         "chords": [{"start": at(start), "name": name} for start, name in vocal.chords],
         "signatures": {key: abc_tools.KEYS[key] for key in sorted({b["key"] for b in bars})},
     }
+
+
+def _tempo(sheet, current: int) -> int:
+    """The tempo the sheet asks for, as a whole quarter-note BPM.
+
+    A sheet without one keeps the score's own, so a caller with no tempo to
+    offer goes on sending what it always sent.
+    """
+    asked = sheet.get("bpm") if isinstance(sheet, dict) else None
+    if asked is None:
+        return current
+    if isinstance(asked, bool) or not isinstance(asked, (int, float)):
+        raise ValueError("the tempo must be a number")
+    number = float(asked)
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError("the tempo must be a number")
+    value = int(round(number))
+    low, high = min(TEMPO_LOW, current), max(TEMPO_HIGH, current)
+    if not low <= value <= high:
+        raise ValueError(TEMPO_RANGE.format(value=value, low=low, high=high))
+    return value
 
 
 def _whole(value) -> bool:
@@ -395,8 +437,8 @@ def _bar_text(start, length, notes, chords, key, spelled) -> str:
     return "".join(out)
 
 
-def _check(text, notes, chords, score, per_quarter) -> None:
-    """The written score read back: the asked-for notes and chords, the old grid."""
+def _check(text, notes, chords, score, per_quarter, bpm) -> None:
+    """The written score read back: the asked-for notes, chords and tempo, the old grid."""
     result = abc_tools.parse(text)
 
     def at(value):
@@ -414,21 +456,28 @@ def _check(text, notes, chords, score, per_quarter) -> None:
             raise ValueError("a key change of the {} part moved".format(PARTS[name]))
     if [(at(start), name) for start, name in result.voices["Vocal"].chords] != chords:
         raise ValueError("the chords do not read back as the chords asked for")
-    if result.bpm != score.bpm or result.unit != score.unit:
-        raise ValueError("the tempo or the note length changed")
+    if result.bpm != bpm or result.unit != score.unit:
+        raise ValueError("the tempo or the note length is not the one asked for")
 
 
 def write(text: str, sheet) -> dict:
     """``{"abc": text, "bars": [...]}``: *text* with the notes of *sheet* in it.
 
-    *sheet* is what :func:`read` returned, edited: ``notes`` per part and
-    ``chords``; everything else in it is ignored, and the bar grid comes from
-    the text, not from the sheet. ``bars`` lists the bars written again,
-    counting from 0; an edit that changes nothing returns the text untouched and
-    an empty list. A ValueError carries a message for the person editing.
+    *sheet* is what :func:`read` returned, edited: ``notes`` per part,
+    ``chords``, and ``bpm`` when the tempo is to change; everything else in it
+    is ignored, and the bar grid comes from the text, not from the sheet.
+    ``bars`` lists the bars written again, counting from 0 -- a tempo answers
+    with an empty list, because it rewrites the header rather than a bar. An
+    edit that changes nothing returns the text untouched. A ValueError carries a
+    message for the person editing.
     """
     source, score, lines, pieces, _sections, inline = _parsed(text)
     per_quarter = Fraction(score.unit.denominator, 4)
+    bpm = _tempo(sheet, score.bpm)
+    if bpm != score.bpm:
+        raw = lines[TEMPO_LINE]
+        body = raw.rstrip("\r\n")
+        lines[TEMPO_LINE] = "Q:1/4={}".format(bpm) + raw[len(body):]
     base = read(source)
     grid = [(bar["start"], bar["length"]) for bar in base["bars"]]
     notes, chords = _wanted(sheet, base["bars"], base["total"])
@@ -438,7 +487,7 @@ def write(text: str, sheet) -> dict:
     dirty = {"Vocal": _dirty(grid, old["Vocal"], notes["Vocal"], old_chords, chords),
              "Ins": _dirty(grid, old["Ins"], notes["Ins"], [], [])}
     touched = sorted(dirty["Vocal"] | dirty["Ins"])
-    if not touched:
+    if not touched and bpm == score.bpm:
         return {"abc": source, "bars": []}
     locked = [number for number in touched if number in inline]
     if locked:
@@ -474,7 +523,7 @@ def write(text: str, sheet) -> dict:
         lines[index] = "|".join(parts) + "|" + raw[len(body):]
     result = "".join(lines)
     try:
-        _check(result, notes, chords, score, per_quarter)
+        _check(result, notes, chords, score, per_quarter, bpm)
     except (ValueError, KeyError, IndexError) as error:
         raise ValueError(NOT_WRITTEN.format(reason=_reason(error))) from error
     return {"abc": result, "bars": touched}

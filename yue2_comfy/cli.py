@@ -129,7 +129,7 @@ def generate(binary: str, model_path: str, messages: list, seed: int, n_ctx: int
             log.debug("[yue2_comfy.cli] could not remove %s", prompt_file)
 
     if progress is not None:
-        progress.finish("Written - {} chars{}".format(len(text), child.speed(stderr_text)))
+        progress.text("Written - {} chars{}".format(len(text), child.speed(stderr_text)), force=True)
     return text
 
 

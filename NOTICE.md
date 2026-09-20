@@ -1,6 +1,6 @@
 # Licenses and provenance
 
-This pack carries eight kinds of material under their own terms.
+This pack carries ten kinds of material under their own terms.
 
 ## The pack's own code
 
@@ -51,6 +51,35 @@ stable-audio-tools (Copyright (c) 2023 Stability AI, MIT) and from BigVGAN's
 SnakeBeta (Copyright (c) 2022 NVIDIA CORPORATION, MIT). Those notices travel
 with the model repository and are reproduced in the upstream
 `THIRD_PARTY_NOTICES.md`.
+
+## The example style lines
+
+**No licence.** YuE2's demo site carries none, as its reference code does not.
+
+`web/js/yue2_styles.js` holds twenty-eight style prompts and seventy genre
+names copied from [YuE2's demo site](https://map-yue2.github.io/): ten of the
+prompts from its Cover & Editing pages, eighteen from its Genre Explorer, each
+one the line that was really sent to the model for the song on that page, and
+the genre names the gallery's own. They are short factual descriptions of a
+sound, copied word for word rather than paraphrased, so that this pack's editor
+can show what the model was actually asked for. Nothing else from the site is
+carried here: no audio, no scores, no lyrics. The file is written from a local
+copy of the site by a tool that refuses any line it cannot reproduce exactly.
+
+## The preview piano
+
+**CC-BY 3.0.**
+[Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html),
+by Alexander Holm: a Yamaha C5 recorded in sixteen velocity layers and
+published by FreePats under the Creative Commons Attribution 3.0 license.
+
+`web/js/piano/` holds thirty of those recordings -- the loudest of the sixteen
+layers, one sound every three semitones from A0 to C8 -- each cut to three
+seconds, mixed down to one channel and re-encoded as Ogg Vorbis, which is what
+the score editor plays when Play is pressed. Nothing else from the package is
+carried here: no other velocity layer, no hammer noise, no string resonance.
+The copies are made by a tool from the original FreePats release rather than
+from a mirror.
 
 ## abcjs
 

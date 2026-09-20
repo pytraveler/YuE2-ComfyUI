@@ -236,7 +236,7 @@ class YuE2LoadMidi:
              unique_id=None):
         from .midi import score, smf
 
-        progress = NodeProgress(unique_id)
+        progress = NodeProgress(unique_id, title="YuE2 Load MIDI")
         if mode not in MODE_CHOICES:
             refuse(unique_id, "'mode' must be one of {}.".format(", ".join(MODE_CHOICES)))
         try:

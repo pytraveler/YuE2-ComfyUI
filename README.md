@@ -210,17 +210,26 @@ second -- between tokens during generation, between tiles during decoding.
 The button opens a window over the canvas, the style on top and the lyrics
 under it, and nothing is written to the node until Apply.
 
-![The song editor over the canvas. Under STYLE: language Russian; tempo 60 BPM on a slider; two voices, male rap vocal and expressive female voice, with the hint about voices under them; five sound parts, rap, heavy bass, hip hop beat, rhythmic punchy melody and staccato flow, each with up, down and remove buttons; and the style line the model will read. Under LYRICS: 399 tokens in the lyrics, the + Section and Edit as text buttons, a blue [Verse] and an orange [Chorus] of four lines each, thin marks under the letters where the tokenizer cuts, and a token count at the end of every line. Cancel and Apply at the bottom](docs/song_editor.png)
+![The song editor over the canvas, titled Song -- YuE2 Generate Song, with the line Style and lyrics for this node. Nothing is written to it until Apply. Under STYLE: Language (not named); Tempo ticked, with a slider and 80 in the box beside it; an empty voice box showing its placeholder, expressive female voice, and a + Voice button; two sound parts, acoustic piano and synth pads, each with up, down and remove buttons, and under them an empty box reading city pop, tenor saxophone, no guitars... beside an Add button; an Examples list closed on Take a style that was really run..., with the note about where its lines come from under it; and the style line the model will read, acoustic piano, synth pads, 80 BPM. Under LYRICS: 400 tokens in the lyrics, the + Section and Edit as text buttons, the note about clicking a letter to flip its case, then a blue [Verse] and an orange [Chorus] of four Russian lines each, thin marks under the letters where the tokenizer cuts, and a token count at the end of every line](docs/song_editor.png)
 
-*A Russian rap for two voices. The style line under the parts is the string the
-model reads, and the marks under the letters are where the YuE2 tokenizer cuts
-the words.*
+*A Russian song over piano and pads. The style line under the parts is the
+string the model reads, and the marks under the letters are where the YuE2
+tokenizer cuts the words. `Language` reads `(not named)` and the voice box is
+empty because this line names neither: the editor shows what is in the line
+rather than filling it in.*
 
 - **Style** is built from parts: a language, a tempo or none at all, the
   voices, and any other part in a list to add to, edit and reorder. The line
   underneath can be edited directly. A line the editor has not touched is not
   rewritten, because a different string is a different song even when it reads
   the same.
+- **Examples** fills the style line with one that was really run: twenty-eight
+  of them, ten written by YuE2's authors for their cover and editing demos and
+  eighteen sent in for the genre gallery, in English, Chinese, Japanese and
+  Russian. They are copied word for word, so one that never named its language
+  leaves the `Language` box empty; the arrow beside the list puts your own line
+  back. The gallery's seventy genre names complete in the sound box too, beside
+  the instruments and textures those demos use.
 - **Voices.** Naming two asks for both; it does not decide who sings where.
   Tags such as `[Chorus - male rap vocal]` and roles written into the style
   were both tried on twelve songs, and neither put a voice where it was asked
@@ -239,6 +248,13 @@ the words.*
   instance, are shown by the name of the node they come from and are edited
   there.
 
+![The Examples list open over the song editor. At the top the row it drops from, Take a style that was really run...; then the group Covers and editing with Jazz-funk (English), Jazz ballad (Chinese), Chamber folk (Chinese), Brass funk (Chinese), Heavy metal (English), Christmas pop, Hard rock (English) under the pointer, Acoustic pop (Chinese), Vocal jazz (Chinese) and Swing jazz (Chinese); then the group Genre explorer with Ambient (Chinese), Bachata (English), Big Band (Chinese), Boogie Woogie (English), City Pop (Chinese), Country Gospel (English), Electropop (Chinese), Emo-Pop (English), Eurobeat (English), Folktronica (Russian), Glam Metal (English), Honky Tonk (English), Industrial Metal (Chinese), Jump Blues (English), Lo-Fi Hip Hop (Chinese), Nu-Disco (Chinese), Southern Gospel (English) and Yacht Rock (Japanese). Behind the list the Examples and Style line rows of the style card, and the LYRICS card below](docs/lyrics_examples.png)
+
+*Twenty-eight lines, kept apart by where they were really run: above, the ten the
+model's authors wrote for their own covers and editing demos; below, the eighteen
+sent in for the genre gallery. `Christmas pop` shows no language because its line
+never named one.*
+
 The marks need the YuE2 weights on disk, and ComfyUI needs a restart after the
 pack is installed or updated before they appear. The window is in English only.
 
@@ -249,12 +265,12 @@ a summary of the score they will sing. The button opens a window over the
 canvas with three views of one score, and nothing is written to the node until
 Apply.
 
-<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- The MIDI file, the name of the YuE2 Load MIDI node in template 7. On top the Piano roll, Notes and ABC tabs, with Key Gm, 4/4, 97 BPM, 12 bars, 0:29 on the right; under them Play and From start, the voice and instrument boxes ticked and chords not, the Voice part list, an Eighth notes grid with zoom buttons, Whole song, Undo and Redo. The roll shows bars 5 to 12 of one unnamed section, the chords Cm, Gsus4, Cm, Cm, Gsus4, Cm, Gm7, Eb, Gm7 and Gm in the lane under the bar numbers, the green notes of the voice with their names, and a keyboard from A1 to C7 with every white key named and the Cs in bold. Under the roll the line No changes. This is the score as it came in, the note on how the file's score is written, Back to the file's score and Save as MIDI... on the left, and Cancel and Apply on the right">
+<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key F, 4/4, 78 BPM, 86 bars, 4:24 and, in orange, sung up to 0:30. Under them Play and From start, the voice and instrument boxes ticked and chords not, a Tempo slider with 78 in the box beside it, the Instrument part list, an Eighth notes grid with zoom buttons, Whole song, Undo and a greyed-out Redo. The roll shows bars 1 to 8 of the section intro, the chords Dm, Dm, Bb, F, C, Dm, Bb and F in the lane under the bar numbers, green notes with their names on them -- F5, E5, C5, D5, A4 and G4 -- and one picked note in salmon. The keyboard names only the Cs, C1 to C6, in bold, and A4 on the highlighted row the pointer rests on. Under the roll the line No changes. This is the score as it came in. Only its first 0:30 is sung: max_seconds ends the song at the dashed line, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Cancel and Apply on the right">
 
-*The same window on `YuE2 Load MIDI`, for a MIDI file read with `mode` at
-`full`: the voice line in green and, in the lane under the bar numbers, the
-chords guessed from what the file's other tracks play. A click in that lane
-types a chord or changes one.*
+*The window on `YuE2 Generate Song`, on the score the node wrote on its last
+run: the tempo slider beside the play controls, the chords in the lane under
+the bar numbers, one picked note in salmon, and a keyboard that names its Cs
+and whichever row the pointer is on -- here A4.*
 
 On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
 run, so run it once first. The next run sings the edit instead of writing a
@@ -266,7 +282,8 @@ its own only when it is one.
 
 - **Piano roll**, in the look most music software shares: green notes
   with their names on them, a blue-grey grid and a keyboard down the
-  side with every white key named. The voice part and the instrument
+  side: C is named in every octave, and the row the pointer is on says
+  what it is, black keys included. The voice part and the instrument
   part are edited one at a time, with the other drawn faintly behind;
   the sections run along the top, and a chord lane sits under the bar
   numbers. A click draws a note, a drag moves it, and a right-click or
@@ -279,9 +296,10 @@ its own only when it is one.
   sings one note at a time, so a note drawn on top of another is refused, and a
   button under the roll puts the chord the two notes suggest on the chord lane
   instead. A click on the chord lane types a chord: Enter sets it, Esc leaves
-  it. Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts through a plain
-  synth in the browser: a guide to the notes, not the song, and it downloads
-  nothing.
+  it. Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts on a sampled
+  grand piano that ships with the pack -- recorded every three semitones, so no
+  note is stretched by more than one. It is a guide to the notes, not the song,
+  and nothing is fetched from the internet.
 - **Notes** draws the score as sheet music, with the bars the edit rewrites in
   red.
 - **ABC** is the text the model reads. A score pasted here loads into the other
@@ -293,8 +311,18 @@ without a change leaves the box empty, so the node sings what it sang before. A
 rewritten bar is spelled the way the model spells
 one -- an accidental only where the key needs it, a whole bar of rest as `Z` --
 and the result is read back with upstream's own ABC parser and compared note
-for note before it reaches the node. The bars, meter, tempo and key are fixed
-in this version; a bar with a key change inside it can be edited only as text.
+for note before it reaches the node. The bars, meter and key are fixed in this
+version; a bar with a key change inside it can be edited only as text.
+
+**The tempo.** A slider and a box beside the play controls set the tempo the
+score is written at -- `Q:1/4` in the ABC -- from 40 to 200 BPM, or from the
+score's own tempo when it came in outside that. Nothing is renotated: the notes
+keep their lengths in bars, and the whole song is sung faster or slower. The
+length on the facts line moves as the slider does, and so does the dashed line
+where the singing stops. The tempo is part of the edit like a moved note, with
+its own undo, and it reaches the node on Apply. It earns its keep most on
+`YuE2 Transcribe`, where the tempo was heard from a recording rather than
+chosen.
 
 **An edit belongs to its words.** On Apply the editor marks the edit with the
 style, lyrics and `cot` it was made for, in a comment line the node takes off
@@ -1138,8 +1166,18 @@ per run turns one fix into three.
 | `YUE2_OLLAMA_MODELS` | Where an Ollama store lives, for the ones this process will not reach on its own -- a WSL or container store |
 | `YUE2_LLAMA_BIN` | The llama.cpp binary to use, ahead of every other place it is looked for |
 | `HF_HUB_CACHE`, `HF_HOME` | Honoured when looking through the Hugging Face cache |
+| `YUE2_CONSOLE_PROGRESS` | `0`, `no`, `off` or `false` leaves the console alone; the bar on the node itself is untouched. Anything else, or nothing at all, draws the line |
 
 ## Notes
+
+**Progress in the console.** ComfyUI draws a node's bar in the browser, so a
+terminal the server was started from says nothing while a song is made. Every
+node of this pack draws the same fraction and the same caption there as well --
+`YuE2 Generate Song: Composing |######----|  58% [01:12]` -- through tqdm,
+which every ComfyUI has, or a line of its own where it is missing. There is no
+ETA: the stages do not take the shares of the bar they are given, so a
+remaining time worked out from the percentage would be a number this pack
+cannot stand behind. A download knows its own and writes it into the caption.
 
 **VRAM accounting.** The loaded model is cached by this pack rather than
 registered with ComfyUI's model manager. That means no other node can evict it

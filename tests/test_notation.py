@@ -321,6 +321,65 @@ def test_random_edits_read_back_exactly_and_touch_only_their_bars(name, text):
         source = result["abc"]
 
 
+def test_a_tempo_moves_the_header_line_and_nothing_else():
+    """One number, one line: the notes keep their lengths and the song is sung faster."""
+    text = tiny("C", "C8D8E8G8|")
+    sheet = notation.read(text)
+    result = notation.write(text, dict(sheet, bpm=120))
+    assert result["bars"] == []
+    assert result["abc"].splitlines()[notation.TEMPO_LINE] == "Q:1/4=120"
+    assert result["abc"].replace("Q:1/4=120", "Q:1/4=90") == text.strip()
+    again = notation.read(result["abc"])
+    assert again["bpm"] == 120
+    assert again["notes"] == sheet["notes"]
+    assert again["total"] == sheet["total"]
+    assert again["seconds"] < sheet["seconds"]
+
+
+def test_a_tempo_and_a_changed_note_travel_together():
+    text = tiny("D", '"D"d8f8a8f8|"G"g8b8d\'8b8|')
+    sheet = notation.read(text)
+    items = notes(sheet)
+    items[1] = (8, 8, 79)
+    result = notation.write(text, dict(with_notes(sheet, "Vocal", items), bpm=140))
+    assert result["bars"] == [0]
+    assert vocal_line(result["abc"]) == '"D"d8g8a8f8|"G"g8b8d\'8b8|'
+    assert notation.read(result["abc"])["bpm"] == 140
+
+
+def test_a_sheet_with_no_tempo_in_it_leaves_the_score_where_it_was():
+    """Every caller that does not offer a tempo goes on sending what it always sent."""
+    text = tiny("C", "C8D8E8G8|")
+    sheet = notation.read(text)
+    sheet.pop("bpm")
+    assert notation.write(text, dict(sheet, bpm=None)) == {"abc": text.strip(), "bars": []}
+    assert notation.write(text, sheet) == {"abc": text.strip(), "bars": []}
+
+
+def test_a_tempo_the_dialect_cannot_hold_is_refused_with_a_sentence():
+    text = tiny("C", "C8D8E8G8|")
+    sheet = notation.read(text)
+    with pytest.raises(ValueError) as problem:
+        notation.write(text, dict(sheet, bpm=400))
+    assert "outside 40 to 200" in str(problem.value)
+    for junk in ("fast", True, float("nan")):
+        with pytest.raises(ValueError):
+            notation.write(text, dict(sheet, bpm=junk))
+    assert notation.write(text, dict(sheet, bpm=96.4))["abc"].splitlines()[
+        notation.TEMPO_LINE] == "Q:1/4=96"
+
+
+def test_a_score_faster_than_the_range_keeps_its_own_tempo():
+    """A transcription of something fast opens and closes without being pulled back to 200."""
+    text = tiny("C", "C8D8E8G8|").replace("Q:1/4=90", "Q:1/4=210")
+    sheet = notation.read(text)
+    assert notation.write(text, sheet) == {"abc": text.strip(), "bars": []}
+    assert notation.write(text, dict(sheet, bpm=205))["abc"].splitlines()[
+        notation.TEMPO_LINE] == "Q:1/4=205"
+    with pytest.raises(ValueError):
+        notation.write(text, dict(sheet, bpm=215))
+
+
 def test_the_read_route_draws_a_score_or_says_why_not():
     assert routes.answer_score_read(None)[1] == 400
     assert routes.answer_score_read({"abc": 5})[1] == 400
@@ -348,3 +407,14 @@ def test_a_failure_nobody_foresaw_reaches_the_window_as_a_sentence(monkeypatch):
     monkeypatch.setattr(notation, "read", broken)
     payload, status = routes.answer_score_read({"abc": AWKWARD})
     assert status == 200 and payload["ok"] is False and "boom" in payload["error"]
+
+
+def test_the_write_route_carries_a_new_tempo_into_the_sheet_it_reads_back():
+    sheet = notation.read(AWKWARD)
+    payload, status = routes.answer_score_write({"abc": AWKWARD, "sheet": dict(sheet, bpm=72)})
+    assert status == 200 and payload["ok"] is True
+    assert payload["bars"] == []
+    assert payload["sheet"]["bpm"] == 72
+    assert payload["sheet"]["notes"] == sheet["notes"]
+    payload, status = routes.answer_score_write({"abc": AWKWARD, "sheet": dict(sheet, bpm=9)})
+    assert status == 200 and payload["ok"] is False and "outside" in payload["error"]

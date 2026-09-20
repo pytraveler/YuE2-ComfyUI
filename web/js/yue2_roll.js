@@ -84,6 +84,21 @@ export function modifiersOf(event) {
     return { alt, ctrl: Boolean(event.ctrlKey || event.metaKey) && !alt, shift: Boolean(event.shiftKey) };
 }
 
+export const TEMPO_LOW = 40;
+export const TEMPO_HIGH = 200;
+
+export function tempoRange(bpm) {
+    const own = Math.round(Number(bpm)) || TEMPO_LOW;
+    return { low: Math.min(TEMPO_LOW, own), high: Math.max(TEMPO_HIGH, own) };
+}
+
+export function tempoOf(value, own) {
+    const asked = Math.round(Number(value));
+    if (!Number.isFinite(asked)) return null;
+    const range = tempoRange(own);
+    return Math.min(range.high, Math.max(range.low, asked));
+}
+
 export function secondsAt(sheet, tick) {
     return (tick * 60) / (sheet.bpm * sheet.per_quarter);
 }
@@ -169,7 +184,7 @@ export function modelOf(sheet) {
     const chords = (sheet.chords || [])
         .map((c) => ({ start: c.start, name: c.name }))
         .sort((a, b) => a.start - b.start);
-    return { notes, chords, next };
+    return { notes, chords, next, bpm: sheet.bpm };
 }
 
 export function sheetOf(model) {
@@ -182,7 +197,7 @@ export function sheetOf(model) {
     const chords = model.chords
         .map((c) => ({ start: c.start, name: c.name }))
         .sort((a, b) => a.start - b.start);
-    return { notes, chords };
+    return { notes, chords, bpm: model.bpm };
 }
 
 function withPart(model, part, notes) {

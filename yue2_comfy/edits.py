@@ -145,9 +145,17 @@ def audio_mark(data: bytes, rate) -> str:
     return digest.hexdigest()[:16]
 
 
-def track_mark(audio: str, mode: str) -> str:
-    """The mark of a score transcribed from a recording in one mode: melody alone, or with chords."""
-    return hashlib.sha256(json.dumps([str(audio), str(mode)]).encode("utf-8")).hexdigest()[:16]
+def track_mark(audio: str, mode: str, listen=None) -> str:
+    """The mark of a score transcribed from a recording in one mode: melody alone, or with chords.
+
+    ``listen`` names the way the recording was listened to when that was not
+    the usual one (see ``transcribe.LISTEN_CHOICES``): the same recording heard
+    a minute at a time is a different score, and an edit of one does not belong
+    to the other. It is left out of the mark otherwise, so a score edited
+    before there was anything to choose keeps the mark it was saved with.
+    """
+    payload = [str(audio), str(mode)] + ([str(listen)] if listen else [])
+    return hashlib.sha256(json.dumps(payload).encode("utf-8")).hexdigest()[:16]
 
 
 def file_mark(data: bytes) -> str:

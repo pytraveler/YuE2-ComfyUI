@@ -7,6 +7,80 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.8.3 - 2026-09-21
+
+### Added
+
+- **`YuE2 Transcribe` can listen a minute at a time.** The transcriber is
+  handed 300 seconds at once, decides that window's beat, and writes every
+  note against it -- so a pulse it settles on wrongly early in a window is
+  carried to the end of it, and the rhythm of the score is fiction however
+  right its notes look. The new `listen` widget offers `a minute at a time`
+  instead: a minute of music per window, each one hearing the beat afresh.
+  Measured on eight recordings against the pulse each one really has, read
+  from its own onsets without a model. **All three with a singer came out
+  better**: a five-minute pop song at a steady 130.1 BPM was written at 147
+  BPM whole and at 130 a minute at a time, and two songs the pack sang itself
+  went from 100 to 100 against 100.0 and from 148 to 140 against 140.0, while
+  the share of their sung notes landing on the recording's own beat rose from
+  23, 27 and 28 per cent to 40, 47 and 45. The five instrumentals were mixed,
+  and their bar counts suffered: a window seam is where the bars can slip, and
+  a minute at a time has one every twenty seconds instead of one every
+  hundred. So `the whole song` stays the default, the warning about a beat
+  that is not the recording's now names the switch, and the two scores are
+  there to be compared. The time is about the same either way, because a
+  shorter window decodes less.
+- **A notice when `YuE2 Transcribe` is asked for the melody alone.** With
+  `mode` at `melody` the chords the recording is heard in are left out of the
+  score, and a cover sung from it takes its harmony from the style line
+  instead. That is what the mode is for, and worth saying out loud when a
+  cover was the point.
+- **A warning when a score with chords is sung under `cot` at `melody`.** The
+  score reaches the model word for word whatever `cot` says, so this is an
+  instruction that contradicts it -- the mirror of the warning a chordless
+  score under `cot` at `full` has had since 0.5.0. Both name which of the two
+  to change, and neither stops the song. The older warning now offers
+  transcribing at `full` as the other way out of it.
+
+### Changed
+
+- **The warning about a beat that is not the recording's fires sooner**, at
+  two and a half per cent apart instead of five. Calibrated on the same eight
+  recordings, not chosen: under two per cent apart, listening a minute at a
+  time changed nothing worth having, and between three and five it wrote the
+  recording's own tempo instead -- which is to say the old threshold stayed
+  silent on songs it could have helped. Halves and doubles still count as
+  agreement, because every tempo estimate ever written confuses them.
+- **`mode` on `YuE2 Transcribe` is `full` by default**, and `8 - Cover a song`
+  transcribes and sings at `full` throughout. `full` writes down the chords
+  heard under the tune as well as the tune itself, and costs no listening,
+  because both modes are written from the same transcription. Measured against
+  one recording: its melody-only score held 0.235 of it, and the same
+  transcription with the chords held 0.358 -- the chords are the whole of the
+  difference. `cot` in `YuE2 Options` was already `full`, so out of the box
+  the two settings now agree rather than warn about each other.
+
+### Fixed
+
+- **A note too short for the grid no longer throws the whole score away.** A
+  transcription is written on a grid of sixteenths, and a note shorter than one
+  of them cannot be written on it at all; until now that refused the score.
+  One 130-millisecond note at a window seam was enough to lose a five-minute
+  transcription that was otherwise the best of the eight measured for that
+  recording. Such a note is now dropped, exactly as a note past the end of the
+  grid already was, and so is a chord or a section shorter than a subbeat.
+- **An edit made in one of the pack's windows survives a reload of the page.**
+  ComfyUI keeps a draft of the open workflow and restores it when the browser
+  comes back, but only as far as its change tracker has seen -- and it does not
+  see a widget written a second after the click that opened the window, which
+  is when an editor's Apply lands. So a score drawn from nothing, an edited
+  melody, rewritten lyrics, a tempo and a chosen MIDI file were all in the
+  workflow saved to a file and all missing from the one the browser brought
+  back. Measured on a live ComfyUI, before and after: the score box used to
+  come back empty while every widget beside it came back filled, and now it
+  comes back as it was left. The LoRA rows already recorded their own changes,
+  and that is now the one helper every editor uses.
+
 ## 0.8.2 - 2026-09-20
 
 ### Added

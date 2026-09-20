@@ -35,9 +35,12 @@ def node(monkeypatch):
         return {"samples": "samples", "rate": 44100, "count": audio.get("count", 1),
                 "mark": edits.audio_mark(audio["data"], 44100), "seconds": SONG["seconds"]}
 
-    def fake_transcribe(path, device, waveform, rate, key, progress=None, cancelled=None):
+    def fake_transcribe(path, device, waveform, rate, key, progress=None, cancelled=None,
+                        length=None, carry=True):
         calls["runs"] += 1
         calls["key"] = key
+        calls["length"] = length
+        calls["carry"] = carry
         return master_result()
 
     monkeypatch.setattr(transcribe, "track_of", fake_track)
@@ -51,10 +54,11 @@ def node(monkeypatch):
     return calls
 
 
-def run(mode="full", data=b"recording", score_abc="", lyrics="", recognition=False, count=1, seed=1):
+def run(mode="full", data=b"recording", score_abc="", lyrics="", recognition=False, count=1, seed=1,
+        listen=transcribe.LISTEN_CHOICES[0]):
     return transcribe.YuE2Transcribe().transcribe(
         {"data": data, "count": count}, mode, recognition, "auto", seed, score_abc=score_abc, lyrics=lyrics,
-        unique_id="7")
+        listen=listen, unique_id="7")
 
 
 def faithful_answer(messages):
@@ -105,7 +109,7 @@ def test_the_widgets_sit_in_their_final_order():
     """ComfyUI restores saved widget values by position, so this order is a promise."""
     spec = transcribe.YuE2Transcribe.INPUT_TYPES()
     assert list(spec["required"]) == ["audio", "mode", "lyrics_auto_recognition", "model", "seed"]
-    assert list(spec["optional"]) == ["options", "score_abc", "lyrics"]
+    assert list(spec["optional"]) == ["options", "score_abc", "lyrics", "listen"]
     assert transcribe.YuE2Transcribe.RETURN_NAMES == ("score_abc", "lyrics")
     assert spec["required"]["lyrics_auto_recognition"][1]["default"] is False
     assert spec["required"]["seed"][1]["control_after_generate"] == "fixed"
@@ -335,15 +339,19 @@ def test_a_machine_without_a_language_model_is_told_about_the_download(heard, mo
 
 def test_the_runtime_reuses_a_transcription_for_the_same_recording(monkeypatch):
     heard = []
-    fake_model = types.SimpleNamespace(transcribe=lambda net, waveform, rate, cancelled=None, progress=None:
-                                       heard.append(rate) or {"events": [], "seconds": 1.0})
+    fake_model = types.SimpleNamespace(
+        transcribe=lambda net, waveform, rate, cancelled=None, progress=None, length=None, carry=True:
+        heard.append((rate, length, carry)) or {"events": [], "seconds": 1.0})
     monkeypatch.setitem(sys.modules, "yue2_comfy.sheetsage.model", fake_model)
     monkeypatch.setattr(runtime, "acquire", lambda path, device, progress=None: "net")
     monkeypatch.setattr(runtime, "_RESULTS", runtime.collections.OrderedDict())
     first = runtime.transcribe("w", "d", "samples", 44100, key=("a", 1))
     second = runtime.transcribe("w", "d", "samples", 44100, key=("a", 1))
     runtime.transcribe("w", "d", "samples", 48000, key=("b", 1))
-    assert heard == [44100, 48000] and first is second
+    assert heard == [(44100, 300.0, True), (48000, 300.0, True)] and first is second
+    runtime.transcribe("w", "d", "samples", 44100, key=("a", 1), length=events.MINUTE, carry=False)
+    assert heard[-1] == (44100, events.MINUTE, False), "the same recording heard another way is heard again"
+    assert runtime.transcribe("w", "d", "samples", 44100, key=("a", 1)) is first
 
 
 def test_the_runtime_keeps_only_the_last_eight_transcriptions(monkeypatch):
@@ -419,6 +427,7 @@ def test_a_pulse_too_weak_to_trust_says_nothing_about_a_score():
 @pytest.mark.parametrize("measured,written,same", [
     (130.0, 130.0, True), (130.0, 65.0, True), (65.0, 130.0, True), (130.0, 32.5, True),
     (130.0, 147.0, False), (130.0, 120.0, False), (0.0, 120.0, True),
+    (130.0, 128.0, True), (130.1, 126.0, False), (179.4, 183.0, True), (140.0, 147.0, False),
 ])
 def test_a_beat_heard_an_octave_out_is_not_a_disagreement(measured, written, same):
     """Every tempo estimate ever written confuses a beat with its half; a warning must not."""
@@ -441,6 +450,8 @@ def test_the_node_says_when_the_recording_does_not_have_the_beat_the_score_claim
     assert abs(heard - 130.0) < 2.0, "the warning has to name the tempo it heard"
     assert transcribe._beat_findings(track, score.replace("=147", "=130")) == []
     assert transcribe._beat_findings(track, "X:1\nK:C\nCDEF|\n") == []
+
+
 def test_the_node_transcribes_chords_unless_it_is_asked_not_to(node):
     """The pair that keeps a recording's harmony is the default; the other one says what it costs."""
     spec = transcribe.YuE2Transcribe.INPUT_TYPES()
@@ -461,3 +472,45 @@ def test_a_cover_is_told_when_its_score_and_cot_disagree_about_chords(node):
     assert edits.chorded(chorded) and edits.chordless(melody)
     assert "'cot' to 'full'" in edits.CHORDED and "'mode' to 'full'" not in edits.CHORDED
     assert "'mode' set to 'full'" in edits.CHORDLESS
+
+
+def test_a_recording_can_be_heard_a_minute_at_a_time(node):
+    """The switch reaches the transcriber as a window length; a window continues the one before it either way."""
+    spec = transcribe.YuE2Transcribe.INPUT_TYPES()
+    assert spec["optional"]["listen"][0] == ["the whole song", "a minute at a time"]
+    assert spec["optional"]["listen"][1]["default"] == transcribe.LISTEN_CHOICES[0]
+    run()
+    assert (node["length"], node["carry"]) == (vocab.WINDOW_SECONDS, True)
+    run(listen="a minute at a time")
+    assert (node["length"], node["carry"]) == (events.MINUTE, True)
+
+
+def test_the_two_ways_of_listening_are_two_transcriptions(node):
+    """Same recording, same mode, another window: another score, so another mark and another cache key."""
+    recording = edits.audio_mark(b"recording", 44100)
+    whole = run()
+    assert whole["ui"][edits.WORDS_UI] == [edits.track_mark(recording, "full")], \
+        "a score edited before there was a choice has to go on matching"
+    minute = run(listen="a minute at a time")
+    assert minute["ui"][edits.WORDS_UI] != whole["ui"][edits.WORDS_UI]
+    assert minute["ui"][edits.MARKS_UI] != whole["ui"][edits.MARKS_UI]
+    edited = edits.attach(SONG["abc"]["full"].replace("Q:1/4=", "Q:1/4=1", 1),
+                          edits.track_mark(recording, "full"))
+    node["runs"] = 0
+    out = run(score_abc=edited, listen="a minute at a time")
+    assert node["runs"] == 1 and out["result"][0] == SONG["abc"]["full"]
+    assert node["said"][-1] == [("warn", transcribe.OTHER_TRACK_SCORE)]
+    assert "'listen'" in transcribe.OTHER_TRACK_SCORE
+
+
+def test_the_beat_warning_names_the_switch_that_answers_it():
+    """A warning that advises something the node cannot do is worse than none."""
+    pytest.importorskip("torch")
+    wave, rate = clicks(130.0, 40.0)
+    track = {"samples": wave, "rate": rate}
+    score = "X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=147\nV: a\nV: b\nK:C\n"
+    whole = transcribe._beat_findings(track, score)
+    assert "'a minute at a time'" in whole[0][1] and "'listen'" in whole[0][1]
+    minute = transcribe._beat_findings(track, score, "a minute at a time")
+    assert len(minute) == 1 and minute[0][0] == "warn"
+    assert "'a minute at a time'" not in minute[0][1] and "already" in minute[0][1]

@@ -95,6 +95,18 @@ def test_a_long_song_is_read_in_windows_a_hundred_seconds_apart():
     assert events.stop_seconds(events.window_plan(35.0)[0], 35.0) == 35.0
 
 
+def test_a_minute_at_a_time_is_the_same_plan_in_fifths():
+    """The short window keeps the shape of the long one: two thirds overlap, a third kept."""
+    assert events.plan_for(450.0) == events.window_plan(450.0)
+    plan = events.plan_for(450.0, events.MINUTE)
+    assert [(w["start"], w["accept_start"], w["accept_end"], w["stop"]) for w in plan[:3]] == [
+        (0.0, 0.0, 40.0, 40.0), (20.0, 40.0, 60.0, 40.0), (40.0, 60.0, 80.0, 40.0)]
+    assert len(plan) == 21 and plan[-1]["accept_end"] == 450.0
+    assert events.stop_seconds(plan[-1], 450.0, length=events.MINUTE) == events.MINUTE
+    assert events.plan_for(35.0, events.MINUTE) == [
+        {"start": 0.0, "end": 35.0, "accept_start": 0.0, "accept_end": 35.0, "prefix_end": 0.0, "stop": None}]
+
+
 def window_events(first: float, last: float, step: float = 0.32) -> list:
     """Beat events from ``first`` to ``last``, one every ``step`` seconds."""
     kept, time = [], first
@@ -132,9 +144,14 @@ def test_a_note_or_chord_on_the_grids_last_point_alone_is_dropped_rather_than_re
     assert '"C"' in with_chord
 
 
-def test_a_note_shorter_than_half_a_subbeat_inside_the_grid_still_refuses_the_score():
-    with pytest.raises(ValueError, match="shorter than a subbeat"):
-        abc_rebuild.build(tiny_rows([[5.0, 5.03, 62, 0]]), melody_only=True)
+def test_a_note_too_short_for_the_grid_is_dropped_rather_than_refusing_the_score():
+    """One 30-millisecond note is not a reason to throw away a five-minute transcription."""
+    text = abc_rebuild.build(tiny_rows([[0.0, 1.0, 60, 0], [5.0, 5.03, 62, 0]]), melody_only=True)
+    assert "C8" in text and "D" not in text.split("K:C", 1)[1].replace("Vocal Melody", "")
+    kept = abc_rebuild.build(tiny_rows([[0.0, 1.0, 60, 0]], chords=[[0.0, 5.0, "C:maj"],
+                                                                   [5.0, 5.03, "G:maj"],
+                                                                   [5.03, 10.0, "C:maj"]]))
+    assert '"G"' not in kept and '"C"' in kept
 
 
 def test_a_bar_whose_beat_numbers_repeat_or_skip_is_as_long_as_its_beats():

@@ -64,7 +64,7 @@ describes:
 
     [YuE2 Transcribe]
       audio  (a recording)
-      -> score_abc  -> [YuE2 Generate Song]  with cot at melody
+      -> score_abc  -> [YuE2 Generate Song]  with cot at full
       -> lyrics     ->
 
 See [YuE2 Transcribe](#yue2-transcribe).
@@ -478,11 +478,12 @@ A recording in; a score YuE2 can sing and its lyrics out. This is how a song is
 covered: the node writes down the tune of a song you already have, and
 `YuE2 Generate Song` sings that tune in whatever style its style line describes.
 
-![YuE2 Transcribe after a 0.110 s run. Inputs audio, options, score_abc and lyrics; the outputs score_abc and lyrics wired on. Widgets: mode full, lyrics_auto_recognition true, model auto, seed 107215315253946 with control after generate on fixed. A row of four buttons: Edit lyrics..., Reset lyrics, Edit score... and Reset score. The lyrics summary: Edited lyrics, 5 sections, 61 lines, sent on instead of the node's own lyrics, beginning with [Intro]. The score summary: Edited score, key Bm, 4/4, 112 BPM, 48 bars, bars 1-46 rewritten and the rest as transcribed. Under them the caption 5 sections, 99 seconds](docs/node_transcribe.png)
+![YuE2 Transcribe before its first run. Inputs audio, options, score_abc and lyrics; the outputs score_abc and lyrics wired on. Widgets: mode full, lyrics_auto_recognition false, model auto, seed 107215315253946, control after generate fixed, and listen on a minute at a time. Two buttons, Edit lyrics... and Edit score..., over two empty panels: No section tags yet, run once and the tags of the transcription appear here; and No score yet, run once and the transcription can be edited here](docs/node_transcribe.png)
 
-*Both editors used on the node, both for this recording: the lyrics edited into
-five sections, and the first 46 of the score's 48 bars rewritten. Nothing had to
-be heard again, so the run took 0.11 s.*
+*The node as it comes, with `listen` turned to `a minute at a time`. Both panels
+fill in on the first run -- the section tags on one, the transcription on the
+other -- and a **Reset** button appears beside each editor once there is
+something to reset.*
 
 **Outputs**
 
@@ -495,10 +496,12 @@ be heard again, so the run took 0.11 s.*
 
 - `audio` -- the recording. A song with a singer works best, and only the first
   recording of a batch is used.
-- `mode` -- `melody` writes the two lines without chords, which is what a cover
-  wants: sung with `cot` at `melody`, the accompaniment follows the new style.
-  `full` adds the chords it hears, for `cot` at `full`. Switching between the
-  two reuses the transcription.
+- `mode` -- `full`, the default, writes the two lines and the chords heard
+  under them, which is what a cover wants: sung with `cot` at `full`, the
+  recording's harmony goes into the cover along with its tune. `melody` leaves
+  the chords out, for `cot` at `melody`, and the accompaniment follows the new
+  style instead; the node says so when it does. Switching between the two
+  reuses the transcription, so the chords cost no listening.
 - `lyrics_auto_recognition` -- off at first. Turned on, the sung words are
   recognised and laid out under the section tags, as described below.
 - `model` -- the language model that breaks recognised words into lines, from
@@ -513,12 +516,58 @@ be heard again, so the run took 0.11 s.*
 - `score_abc`, `lyrics` -- the edits kept on the node, filled by the editors and
   hidden behind their buttons. Empty, as they start, the node outputs what it
   hears.
+- `listen` -- how much of the recording is heard at a time. `the whole song`,
+  the default, is the 300 seconds the model was built for, with a longer song
+  carried across the seams. `a minute at a time` hands it a minute and lets
+  every minute hear the beat for itself; it is what to reach for when a cover
+  does not sit in the beat, and it is not free. See **The beat** below.
 
 **A cover** is three wires: `score_abc` into the `score_abc` of
 `YuE2 Generate Song`, `lyrics` into its `lyrics`, and a `YuE2 Options` with
-`cot` at `melody` on the song node. The style line is yours to write, and it
-decides the genre, the voice and the instruments. A score without chords sung
-under `cot` at `full` is still sung, with a warning to set `melody`.
+`cot` set to the same word as `mode` on the song node. The style line is yours
+to write, and it decides the genre, the voice and the instruments.
+
+`mode` and `cot` are a pair. The score reaches the model whatever `cot` says,
+so a mismatch is an instruction that contradicts the score: a chordless score
+under `cot` at `full` promises a harmony that is not written down, and a
+chorded one under `cot` at `melody` tells the model to ignore what is. Either
+way the song is sung and the node says which to change. Measured against one
+recording, its melody-only score held 0.235 of it and the same transcription
+with the chords held 0.358 -- the chords are the whole of the difference,
+which is why `full` is the default on both.
+
+**The beat.** The transcriber decides a window's beat once and writes
+everything else against it, so a pulse it settles on wrongly early in a
+300-second window is carried to the end of that window -- and then the rhythm
+of the score is fiction however right its notes look, because every note is
+placed on that beat. The node measures the recording's own pulse as well, from
+its onsets and without a model, and warns when the two disagree.
+
+`listen` at `a minute at a time` is what to do about it. Measured on eight
+recordings, each against the pulse it really has:
+
+| Recording | The whole song | A minute at a time |
+|---|---|---|
+| Five minutes of Russian pop, a steady 130.1 BPM | written at 147 BPM, 23 per cent of its sung notes on the recording's own beat | 130 BPM, 40 per cent |
+| Three minutes the pack sang itself, 100.0 BPM | 100 BPM, 27 per cent | 100 BPM, 47 per cent |
+| Five and a half minutes the pack sang itself, 140.0 BPM | 148 BPM, 28 per cent | 140 BPM, 45 per cent |
+| Five drum and bass instrumentals, 175 to 179 BPM counted double, one 165 | 183 to 193 BPM, and 185 for the 165 | mixed, and their bars fragmented |
+
+Every recording with a singer came out better, and the instrumentals did not.
+The notes are counted against a grid at the recording's own tempo whose phase
+is fitted in each 30-second block, so what is being judged is the rhythm alone.
+The time is about the same either way: a shorter window decodes less, which
+pays for hearing more windows.
+
+The cost is the seams. A window keeps a third of itself and overlaps the rest,
+so a minute at a time is stitched every twenty seconds instead of every hundred,
+and the bar count can slip at a seam -- a bar of an odd length, written as a
+meter change. On the songs with a singer it stayed small: one went from 21
+meter changes to 9, one stayed at 5, one went from 5 to 19. On the
+instrumentals it did not: the drum and bass track whose whole-song score held
+one time signature from beginning to end came back with 49 changes of it. Both scores are there to compare; `Edit score...` shows the
+bars, and the tempo on its facts line is the number to check against the
+recording.
 
 **The words.** With `lyrics_auto_recognition` on, Qwen3-ASR-1.7B hears the whole
 recording in one pass, which is where it recognises words best. Each sung

@@ -5,6 +5,12 @@ MERT-v2 encoder with m-a-p's adapters already merged, the decoder, and the mel
 filters and statistics the front end needs. A song is read in 300-second
 windows (see ``events``), each padded with silence to the full 300 seconds,
 because the encoder was trained to hear a whole window, silence included.
+
+``transcribe`` takes the window as a parameter, because how much the model
+hears at a time decides the beat it settles on (see ``events.MINUTE``): a
+minute at a time is written on the recording's own pulse where the whole song
+is not. The encoder is handed 300 seconds either way, so the short window is
+the same pass over less music, not a cheaper one.
 """
 
 from __future__ import annotations
@@ -51,14 +57,21 @@ def mono_24k(waveform: torch.Tensor, rate: int) -> torch.Tensor:
     return mono
 
 
-def _slice(audio: torch.Tensor, start: float) -> torch.Tensor:
+def _slice(audio: torch.Tensor, start: float, length: float = vocab.WINDOW_SECONDS) -> torch.Tensor:
+    """``length`` seconds of the recording from ``start``, padded with silence to a full window.
+
+    The encoder is always handed 300 seconds because that is what it was
+    trained on, silence included. A shorter window is therefore not a cheaper
+    one: it is the same pass over less music.
+    """
     offset = round(start * network.SAMPLE_RATE)
-    piece = audio[offset:offset + network.WINDOW_SAMPLES]
+    piece = audio[offset:offset + int(round(length * network.SAMPLE_RATE))]
     return torch.nn.functional.pad(piece, (0, network.WINDOW_SAMPLES - piece.numel()))
 
 
 @torch.inference_mode()
-def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelled=None, progress=None) -> dict:
+def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelled=None, progress=None,
+               length: float = vocab.WINDOW_SECONDS, carry: bool = True) -> dict:
     """A recording's events, in song order, with the tokens of every window.
 
     ``progress(stage, window, windows, tokens)`` hears about each window's
@@ -74,7 +87,7 @@ def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelle
         raise ValueError("the recording needs at least 1025 finite samples at 24 kHz")
     duration = audio.numel() / network.SAMPLE_RATE
     device = net.encoder_projection.weight.device
-    plan = events.window_plan(duration)
+    plan = events.plan_for(duration, length)
     stitched = []
     windows = []
     warnings = []
@@ -86,12 +99,13 @@ def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelle
         if progress is not None:
             progress("encode", index, len(plan), 0)
         prefix, base = None, 0
-        if index:
+        if index and carry:
             prefix, base = events.carried_prefix(stitched, vocab.FULL_PROMPTS, window)
             if prefix is not None and len(prefix) >= network.MAX_TOKENS - 128:
                 raise ValueError("the overlap between windows fills the decoder's context")
-        memory = net.encode(_slice(audio, window["start"])[None].to(device))
-        tokens, cut = net.generate(memory, prefix or vocab.prompt_prefix(), events.stop_seconds(window, duration),
+        memory = net.encode(_slice(audio, window["start"], length)[None].to(device))
+        tokens, cut = net.generate(memory, prefix or vocab.prompt_prefix(),
+                                   events.stop_seconds(window, duration, length=length),
                                    cancelled=cancelled,
                                    progress=(lambda count, i=index: progress("decode", i, len(plan), count))
                                    if progress is not None else None)
@@ -102,7 +116,7 @@ def transcribe(net: network.Network, waveform: torch.Tensor, rate: int, cancelle
         decoded, warning = vocab.decode_window(tokens)
         if warning:
             warnings.append(warning)
-        kept = events.stitch(decoded, events.time_map(decoded), window, duration, index, base or 0)
+        kept = events.stitch(decoded, events.time_map(decoded, target=length), window, duration, index, base or 0)
         stitched.extend(kept)
         resume = events.resume_point(window, kept) if index + 1 < len(plan) else 0.0
         if resume:

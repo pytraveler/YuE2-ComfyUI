@@ -29,6 +29,30 @@ from . import vocab
 
 EPS = 1e-4
 
+MINUTE = 60.0
+"""The short window: a minute of a recording at a time, for a song heard at the wrong tempo.
+
+The model decides a window's beat once and writes everything else against it,
+so a pulse it settles on wrongly early in a long window is carried to the end
+of that window. Measured on the recording of ``beat``, whose beat is a steady
+130.1 BPM: heard whole, the score came out at 147 BPM with 23 percent of its
+sung notes on the recording's own beat; heard a minute at a time, at 130 BPM
+with 40 percent, and no slower, because a shorter window decodes less.
+
+A window still starts from the events kept for its overlap. Letting every
+minute start from nothing was measured as well: no closer to the beat, worse
+bars, twice the time.
+"""
+
+
+def plan_for(duration: float, window: float = vocab.WINDOW_SECONDS) -> list:
+    """The windows of a recording at a chosen window length, overlapping as they always have.
+
+    Two thirds of a window overlap the one before it and a third of it is kept,
+    which at the full 300 seconds is the 200 and 100 the plan has always used.
+    """
+    return window_plan(duration, window=window, overlap=window * 2.0 / 3.0, lookahead=window / 3.0)
+
 
 def window_plan(duration: float, window: float = vocab.WINDOW_SECONDS,
                 overlap: float = 200.0, lookahead: float = 100.0) -> list:

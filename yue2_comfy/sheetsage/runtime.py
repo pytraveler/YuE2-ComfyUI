@@ -141,8 +141,19 @@ def remember(key, result) -> None:
             _RESULTS.popitem(last=False)
 
 
-def transcribe(path: str, device, waveform, rate: int, key, progress=None, cancelled=None) -> dict:
-    """A recording's events and tokens, from the cache when this key has been heard before."""
+def transcribe(path: str, device, waveform, rate: int, key, progress=None, cancelled=None,
+               length=None, carry: bool = True) -> dict:
+    """A recording's events and tokens, from the cache when this key has been heard before.
+
+    ``length`` is how many seconds of the recording the model hears at a time
+    and ``carry`` whether a window is started from the one before it (see
+    ``events.MINUTE``). Both join the key: the same recording heard two ways is
+    two transcriptions, and either is kept once it has been made.
+    """
+    from . import vocab
+
+    length = vocab.WINDOW_SECONDS if length is None else float(length)
+    key = (key, round(length, 3), bool(carry))
     result = remembered(key)
     if result is not None:
         if progress is not None:
@@ -164,7 +175,8 @@ def transcribe(path: str, device, waveform, rate: int, key, progress=None, cance
             progress.ratio(window * share + share * (0.1 + 0.9 * done),
                            "Writing down what it hears: {} tokens".format(tokens))
 
-    result = model.transcribe(net, waveform, rate, cancelled=cancelled, progress=report)
+    result = model.transcribe(net, waveform, rate, cancelled=cancelled, progress=report,
+                              length=length, carry=carry)
     for warning in result.get("warnings", ()):
         log.info("[yue2_comfy.sheetsage] %s", warning)
     for part in result.get("cut_short", ()):

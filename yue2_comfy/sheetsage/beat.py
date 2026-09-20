@@ -112,12 +112,18 @@ def _peak(both, at: int, first: int, last: int, per_second: float):
     return (lag, middle) if lag > 0 else None
 
 
-def agrees(measured: float, written: float, tolerance: float = 0.05) -> bool:
+def agrees(measured: float, written: float, tolerance: float = 0.025) -> bool:
     """Whether two tempi are the same beat, counting halves and doubles as agreement.
 
     A pulse heard an octave out is the ordinary failure of every tempo estimate
     ever written, and a warning that fires on it would be wrong more often than
     right.
+
+    The tolerance is calibrated on eight recordings measured 2026-09-20, not
+    chosen: below two per cent apart, hearing the recording a minute at a time
+    changed nothing worth having, and at three to five per cent it wrote the
+    recording's own tempo instead. The pulse itself is read to within one per
+    cent on a click track, so there is room for both.
     """
     if not measured or not written:
         return True

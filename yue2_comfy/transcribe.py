@@ -12,6 +12,12 @@ them stays closer to the recording than one that does not -- measured on one
 song, half again as close. 'melody' leaves them out, which is what a tune
 sung over a new harmony wants; the accompaniment then follows the style line.
 
+'listen' decides how much of the recording is heard at a time. The transcriber
+settles a window's beat once and places every note against it, so a long
+window heard at the wrong tempo is wrong to its end; 'a minute at a time'
+gives each minute its own hearing of the beat, at the price of a seam every
+twenty seconds (see ``sheetsage.events.MINUTE``).
+
 The lyrics output is the section tags of the transcription. With
 'lyrics_auto_recognition' on, the words sung under them are recognised too:
 Qwen3-ASR hears the whole recording, its words are cut into the sections (see
@@ -41,6 +47,7 @@ from .staged import resolve
 log = logging.getLogger(__name__)
 
 MODE_CHOICES = ("full", "melody")
+LISTEN_CHOICES = ("the whole song", "a minute at a time")
 LAYOUT_TOKENS = 2048
 LAYOUT_TEMPERATURE = 0.3
 LAYOUT_TOP_P = 0.9
@@ -56,6 +63,18 @@ MODE_TOOLTIP = (
     "'melody' leaves the chords out, for 'cot' set to 'melody': the tune is kept and the "
     "accompaniment follows the new style instead. Switching between the two reuses the "
     "transcription; nothing is heard again."
+)
+LISTEN_TOOLTIP = (
+    "How much of the recording the transcriber hears at a time.\n\n"
+    "'the whole song' hands it 300 seconds at once, which is what the model was built for.\n\n"
+    "'a minute at a time' hands it a minute. The model decides a window's beat once and writes "
+    "everything else against it, so a long window heard at the wrong tempo stays wrong, while a "
+    "short one cannot carry its mistake far. Measured on eight recordings: all three with a "
+    "singer came out closer to the pulse the recording really has, and the share of their sung "
+    "notes landing on it went from about a quarter to about two fifths. The five instrumentals "
+    "were mixed. The cost is the seams -- one every twenty seconds instead of one every hundred "
+    "-- and a bar of an odd length can appear at each of them. The time is about the same.\n\n"
+    "Reach for it when a cover does not sit in the beat, and compare the two scores."
 )
 RECOGNITION_TOOLTIP = (
     "Also recognise the words that are sung, and lay them out under the section tags, a line to a phrase.\n\n"
@@ -88,9 +107,9 @@ LYRICS_EDIT_TOOLTIP = (
 )
 
 OTHER_TRACK_SCORE = (
-    "The edited score on this node was made for another recording, or for the other 'mode'. "
-    "It was left out and this recording was transcribed anew; open 'Edit score...' to edit "
-    "the new score, or press 'Reset score'."
+    "The edited score on this node was made for another recording, for the other 'mode', or "
+    "for another 'listen'. It was left out and this recording was transcribed anew; open "
+    "'Edit score...' to edit the new score, or press 'Reset score'."
 )
 OTHER_TRACK_LYRICS = (
     "The edited lyrics on this node were written for another recording, so this recording's "
@@ -128,8 +147,17 @@ TEMPO_HEARD = (
     "The score is written at {written} BPM, and the beat of this recording measures about "
     "{heard} BPM. Notes are placed on the beat the transcriber decided, so a gap that wide "
     "means their rhythm is not the recording's, and a song sung from this score will not sit "
-    "in the beat. Its melody, chords and sections are still worth having. Measured on one such "
-    "recording: a minute or two at a time is heard far more accurately than a whole long song."
+    "in the beat. Its melody, chords and sections are still worth having. Set 'listen' to "
+    "'a minute at a time': the beat is then heard afresh every minute, and on the recording "
+    "this was measured on that wrote the tempo the recording actually has."
+)
+TEMPO_HEARD_MINUTE = (
+    "The score is written at {written} BPM, and the beat of this recording measures about "
+    "{heard} BPM. Notes are placed on the beat the transcriber decided, so a gap that wide "
+    "means their rhythm is not the recording's, and a song sung from this score will not sit "
+    "in the beat. Its melody, chords and sections are still worth having. This recording was "
+    "already heard a minute at a time, which is the shortest window there is here, so its "
+    "beat is beyond the transcriber."
 )
 CANNOT_HEAR = "SheetSage2 could not transcribe this recording: {reason}."
 CANNOT_RECOGNISE = "Qwen3-ASR could not hear this recording: {reason}."
@@ -177,7 +205,31 @@ def _written_tempo(score: str):
     return int(found.group(1)) if found else None
 
 
-def _beat_findings(track, score: str) -> list:
+def _listening(choice: str) -> tuple:
+    """How many seconds the transcriber hears at a time, and whether a window continues the one before it.
+
+    A window still continues the one before it in both. Measured against
+    letting every minute start from nothing: continuing came as close to the
+    recording's beat, usually wrote fewer bars of an odd length, and cost half
+    the time, because a window handed its overlap has that much less to decode.
+    """
+    from .sheetsage import events, vocab
+
+    if choice == LISTEN_CHOICES[1]:
+        return events.MINUTE, True
+    return vocab.WINDOW_SECONDS, True
+
+
+def _listen_mark(choice: str):
+    """What the way of listening adds to a score's mark: nothing at all when it is the usual one.
+
+    A score edited before there was a choice carries a mark made of the
+    recording and the mode alone, and it has to go on matching.
+    """
+    return None if choice == LISTEN_CHOICES[0] else choice
+
+
+def _beat_findings(track, score: str, listen: str = LISTEN_CHOICES[0]) -> list:
     """A warning when the pulse of the recording is not the one the score was written on.
 
     The transcriber decides the beat and everything else it writes hangs off
@@ -194,7 +246,8 @@ def _beat_findings(track, score: str) -> list:
         return []
     log.info("[yue2_comfy.transcribe] the score says %s BPM, the recording measures %s",
              written, found[0])
-    return [("warn", TEMPO_HEARD.format(written=written, heard=found[0]))]
+    said = TEMPO_HEARD_MINUTE if listen == LISTEN_CHOICES[1] else TEMPO_HEARD
+    return [("warn", said.format(written=written, heard=found[0]))]
 
 
 class YuE2Transcribe:
@@ -229,6 +282,7 @@ class YuE2Transcribe:
                 "options": (OPTIONS_TYPE,),
                 "score_abc": ("STRING", {"multiline": True, "default": "", "tooltip": SCORE_EDIT_TOOLTIP}),
                 "lyrics": ("STRING", {"multiline": True, "default": "", "tooltip": LYRICS_EDIT_TOOLTIP}),
+                "listen": (list(LISTEN_CHOICES), {"default": LISTEN_CHOICES[0], "tooltip": LISTEN_TOOLTIP}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -239,11 +293,13 @@ class YuE2Transcribe:
     CATEGORY = CATEGORY
 
     def transcribe(self, audio, mode, lyrics_auto_recognition, model, seed, options=None,
-                   score_abc="", lyrics="", unique_id=None):
+                   score_abc="", lyrics="", listen=LISTEN_CHOICES[0], unique_id=None):
         progress = NodeProgress(unique_id, title="YuE2 Transcribe")
         settings = resolve(options)
         if mode not in MODE_CHOICES:
             refuse(unique_id, "'mode' must be one of {}.".format(", ".join(MODE_CHOICES)))
+        if listen not in LISTEN_CHOICES:
+            refuse(unique_id, "'listen' must be one of {}.".format(", ".join(LISTEN_CHOICES)))
         try:
             track = track_of(audio)
         except (ValueError, AttributeError, TypeError) as error:
@@ -254,14 +310,14 @@ class YuE2Transcribe:
         if track["count"] > 1:
             findings.append(("notice", BATCH_NOTE.format(count=track["count"])))
         recording = track["mark"]
-        score_mark = edits.track_mark(recording, mode)
+        score_mark = edits.track_mark(recording, mode, _listen_mark(listen))
 
         kept = edits.read(score_abc)
         keep_score = bool(kept.score) and kept.words in (None, score_mark)
         heard = None
         if not keep_score or lyrics_auto_recognition:
             band = Band(progress, 0.0, 0.4) if lyrics_auto_recognition else progress
-            heard = self._heard(track, recording, settings, band, unique_id)
+            heard = self._heard(track, recording, settings, band, unique_id, listen)
             if heard.get("cut_short"):
                 from .sheetsage import vocab
 
@@ -275,7 +331,7 @@ class YuE2Transcribe:
                 findings.append(("warn", OTHER_TRACK_SCORE))
             written = self._written(heard, mode, unique_id)
             score = written
-            findings.extend(_beat_findings(track, written))
+            findings.extend(_beat_findings(track, written, listen))
 
         from .sheetsage import sections
 
@@ -293,13 +349,14 @@ class YuE2Transcribe:
             words_out = own
         announce(unique_id, findings)
         ui = {edits.WORDS_UI: [score_mark], edits.TRACK_UI: [recording], edits.LYRICS_UI: [own],
-              edits.MARKS_UI: [{chosen: edits.track_mark(recording, chosen) for chosen in MODE_CHOICES}]}
+              edits.MARKS_UI: [{chosen: edits.track_mark(recording, chosen, _listen_mark(listen))
+                                for chosen in MODE_CHOICES}]}
         if written is not None:
             ui[edits.SCORE_UI] = [written]
         progress.finish("{} sections, {:.0f} seconds".format(len(found), track["seconds"]))
         return {"ui": ui, "result": (score, words_out)}
 
-    def _heard(self, track, recording, settings, progress, unique_id) -> dict:
+    def _heard(self, track, recording, settings, progress, unique_id, listen) -> dict:
         """SheetSage2's transcription of the recording, from the cache when it has been heard before."""
         from . import devices, download
         from .sheetsage import runtime
@@ -312,9 +369,11 @@ class YuE2Transcribe:
             path = download.ensure_sheetsage(settings, progress)
         except (FileNotFoundError, download.DownloadError) as error:
             refuse(unique_id, str(error))
+        length, carry = _listening(listen)
         try:
             return runtime.transcribe(path, devices.resolve(settings["device"]), track["samples"],
                                       track["rate"], key=(recording, runtime.stamp(path)),
+                                      length=length, carry=carry,
                                       progress=progress, cancelled=interrupted)
         except InterruptedError:
             translate_interrupt()

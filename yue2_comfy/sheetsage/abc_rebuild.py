@@ -309,16 +309,13 @@ class Grid:
 
 
 def _fill(rows: list, grid: Grid, default) -> list:
-    """Each grid point's value from timed rows; a row on the grid's last point alone is dropped, not refused."""
+    """Each grid point's value from timed rows; one too short for a subbeat of the grid is dropped."""
     values = [default] * len(grid.times)
     for start, end, value in rows:
         a = grid.clamp(grid.at(start))
         b = grid.clamp(grid.at(end))
         if b <= a:
-            if a == len(values) - 1:
-                continue
-            raise NotationError("{} from {:.3f} s to {:.3f} s is shorter than a subbeat of the grid"
-                                .format(value, start, end))
+            continue
         for t in range(a, b):
             values[t] = value
     if len(values) > 1:
@@ -327,16 +324,22 @@ def _fill(rows: list, grid: Grid, default) -> list:
 
 
 def _voice(notes: list, grid: Grid, name: str) -> list:
-    """A voice's notes on the grid as sustain values, onsets odd; a note on the grid's last point alone is dropped."""
+    """A voice's notes on the grid as sustain values, onsets odd.
+
+    A note too short for a subbeat of the grid is dropped, the way a note on
+    the grid's last point already was: the grid has no shorter value to write
+    it with, and writing it as a whole subbeat only takes that subbeat from
+    the note that has a claim on it. Refusing the whole score over one of them
+    was measured to throw away scores worth having -- a recording heard a
+    minute at a time gave the closest score of the eight measured for it, and
+    a single 130-millisecond note at a seam had been enough to lose it.
+    """
     values = [0] * len(grid.times)
     for start, end, pitch in sorted(notes, key=lambda note: (note[0], note[1], note[2])):
         a = grid.clamp(grid.at(start))
         b = grid.clamp(grid.at(end))
         if b <= a:
-            if a == len(values) - 1:
-                continue
-            raise NotationError("{} note {} from {:.3f} s to {:.3f} s is shorter than a subbeat of the grid"
-                                .format(name, pitch, start, end))
+            continue
         if any(values[t] for t in range(a, b)):
             raise NotationError("{} notes overlap at subbeats {} to {} once quantized".format(name, a, b))
         sustain = pitch * 2 + 2

@@ -668,3 +668,113 @@ def test_the_length_route_makes_a_score_from_nothing_and_makes_one_longer():
 
     payload, status = routes.answer_score_length({"abc": AWKWARD, "bars": 2})
     assert status == 200 and payload["ok"] is False and "longer" in payload["error"]
+
+
+CUTTABLE = HEADER + (
+    'K:C\n% intro\nV: Vocal\nZ2|\nV: Ins\nc32|e32|\n'
+    '% verse\nV: Vocal\nC8D8E8F8|G8A8B8c8-|c8B8A8G8|\nV: Ins\nZ|e32|Z|\n'
+    '% chorus\nV: Vocal\nE16G16|C32|\nV: Ins\nc32-|c32|\n'
+    '% outro\nV: Vocal\nZ|\nV: Ins\nC32|\n')
+"""Eight bars: intro 0-1, verse 2-4, chorus 5-6, outro 7. A Vocal tie from bar 3
+into 4, an Ins tie from bar 5 into 6, and whole-bar rests on both sides of an Ins
+bar that can be cut."""
+
+
+def bar_texts(text):
+    """Each part's bars as written, a Z2 to Z4 rest counted as that many Z bars."""
+    score = abc_tools.parse(text.strip())
+    lines = text.strip().splitlines()
+    found = {name: [] for name in abc_tools.VOICES}
+    for index, name in sorted(score.music_lines.items()):
+        for piece in lines[index][:-1].split("|"):
+            rest = notation.FULL_REST.fullmatch(piece)
+            found[name].extend(["Z"] * int(rest.group(1) or 1) if rest else [piece])
+    return found
+
+
+def test_a_cut_takes_whole_bars_out_and_leaves_every_other_line_as_it_was():
+    cut = notation.without(CUTTABLE, 5, 7)
+    assert cut == CUTTABLE.replace('% chorus\nV: Vocal\nE16G16|C32|\nV: Ins\nc32-|c32|\n', '')
+    assert len(notation.read(cut)["bars"]) == 6
+
+
+def test_a_line_that_loses_bars_is_written_again_with_its_rests_folded():
+    cut = notation.without(CUTTABLE, 3, 4)
+    assert "V: Vocal\nC8D8E8F8|c8B8A8G8|\nV: Ins\nZ2|\n" in cut
+    assert cut.count("\n") == CUTTABLE.count("\n")
+
+
+def test_a_tie_into_the_cut_is_taken_off_in_both_parts():
+    assert "C8D8E8F8|G8A8B8c8|\n" in notation.without(CUTTABLE, 4, 5)
+    cut = notation.without(CUTTABLE, 6, 7)
+    assert "V: Vocal\nE16G16|\nV: Ins\nc32|\n" in cut
+
+
+def test_a_cut_takes_every_name_written_above_the_section():
+    """A group may carry several names; all of them go with its bars, and none of the others."""
+    named = CUTTABLE.replace('% chorus\n', '% chorus\n% hook\n').replace('% outro\n', '% outro\n% end\n')
+    assert notation.without(named, 5, 7) == notation.without(CUTTABLE, 5, 7).replace(
+        '% outro\n', '% outro\n% end\n')
+    assert notation.without(named, 7, 8) == CUTTABLE.replace('% chorus\n', '% chorus\n% hook\n').replace(
+        '% outro\nV: Vocal\nZ|\nV: Ins\nC32|\n', '')
+
+
+def test_a_cut_to_the_end_leaves_no_tie_hanging_and_no_empty_section():
+    cut = notation.without(CUTTABLE, 6, 8)
+    assert "% outro" not in cut and cut.endswith("V: Ins\nc32|\n")
+    assert len(notation.read(cut)["bars"]) == 6
+
+
+def test_a_cut_keeps_what_surrounds_the_score():
+    wrapped = "\n" + CUTTABLE + "\n"
+    cut = notation.without(wrapped, 5, 7)
+    assert cut.startswith("\nX:1") and cut.endswith("C32|\n\n")
+
+
+@pytest.mark.parametrize("start,stop,message", [
+    (0, 8, "every bar"), (3, 9, "not bars"), (-1, 2, "not bars"), (4, 4, "not bars")])
+def test_a_cut_the_score_cannot_take_is_refused(start, stop, message):
+    with pytest.raises(ValueError, match=message):
+        notation.without(CUTTABLE, start, stop)
+
+
+def test_a_bar_that_changes_key_inside_itself_is_not_cut_out():
+    text = tiny("C", "C16[K:G]F16|D32|", ins="z16[K:G]z16|Z|")
+    with pytest.raises(ValueError, match="changes key halfway"):
+        notation.without(text, 0, 1)
+
+
+def test_a_cut_that_would_take_a_key_change_with_it_is_refused_by_reading_back():
+    text = HEADER + ('K:C\n% verse\nV: Vocal\nC32|\nV: Ins\nZ|\n'
+                     '% chorus\nV: Vocal\nK:G\nG32|\nV: Ins\nK:G\nZ|\n'
+                     '% verse\nV: Vocal\nD32|\nV: Ins\nZ|\n')
+    with pytest.raises(ValueError, match="could not be cut.*changed its key"):
+        notation.without(text, 1, 2)
+    assert "K:G" in notation.without(text, 2, 3)
+
+
+@pytest.mark.parametrize("name,text", SCORES, ids=[name for name, _ in SCORES])
+def test_random_cuts_leave_every_other_bar_as_it_was_written(name, text):
+    rng = random.Random(name)
+    before = bar_texts(text)
+    count = len(before["Vocal"])
+    done = 0
+    for _ in range(8):
+        start = rng.randrange(count - 1)
+        stop = rng.randrange(start + 1, min(count, start + 12) + 1)
+        if stop - start >= count:
+            continue
+        try:
+            cut = notation.without(text, start, stop)
+        except ValueError as error:
+            assert "could not be cut" in str(error) or "changes key" in str(error)
+            continue
+        done += 1
+        after = bar_texts(cut)
+        assert cut.endswith(text[len(text.rstrip()):])
+        for part in abc_tools.VOICES:
+            kept = before[part][:start] + before[part][stop:]
+            if start and kept[start - 1].rstrip().endswith("-"):
+                kept[start - 1] = kept[start - 1].rstrip()[:-1]
+            assert after[part] == kept, (part, start, stop)
+    assert done >= 4

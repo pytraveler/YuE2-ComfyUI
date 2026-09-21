@@ -154,6 +154,29 @@ def _windowed(lm, value: bool):
 
 
 @contextlib.contextmanager
+def windowed(models):
+    """The windows on for work that feeds and reads only the rows ``tune`` chose.
+
+    GraphAR turns them on around its own capture. This is for a caller that
+    runs the model in ordinary forward passes over tokens that all lie in the
+    window: an edit choosing its join scores a few hundred codec tokens a hundred
+    times, and with the windows off every one of those passes would multiply its
+    positions by the whole head on the processor. The windows are released on
+    the way out, as the graph releases them. Does nothing when the tables are
+    not narrowed.
+    """
+    lm = getattr(models, "lm", None)
+    if not _tables(lm):
+        yield
+        return
+    _windowed(lm, True)
+    try:
+        yield
+    finally:
+        _windowed(lm, False)
+
+
+@contextlib.contextmanager
 def narrowed(models, enabled: bool = True):
     """Keep the two tables in RAM and only a phase's window on the card.
 

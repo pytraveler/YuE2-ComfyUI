@@ -160,16 +160,29 @@ def test_the_vendor_package_stays_lazy():
     transformers, and those names move between major versions. Importing them
     at registration time would turn a future transformers change into a pack
     that does not load at all.
+
+    Checked in a fresh interpreter. Tests that build the model import the
+    modeling modules into this one, and this process's sys.modules would then
+    say whatever the order the tests ran in says.
     """
+    import pathlib
+    import subprocess
     import sys
 
-    from yue2_comfy.vendor import yue2
-
-    assert yue2.UPSTREAM_VERSION
-    assert "yue2_comfy.vendor.yue2.modeling_yue2" not in sys.modules
-    assert "yue2_comfy.vendor.yue2.modeling_vae" not in sys.modules
-    with pytest.raises(AttributeError):
-        yue2.YuE2Pipeline
+    package = pathlib.Path(loader.__file__).resolve().parent
+    program = "\n".join([
+        "import sys, types",
+        "package = types.ModuleType('yue2_comfy')",
+        "package.__path__ = [{!r}]".format(str(package)),
+        "sys.modules['yue2_comfy'] = package",
+        "from yue2_comfy.vendor import yue2",
+        "assert yue2.UPSTREAM_VERSION",
+        "assert 'yue2_comfy.vendor.yue2.modeling_yue2' not in sys.modules",
+        "assert 'yue2_comfy.vendor.yue2.modeling_vae' not in sys.modules",
+        "assert not hasattr(yue2, 'YuE2Pipeline')",
+    ])
+    done = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
 
 
 def test_a_narrow_decoder_is_refused_by_name(tmp_path):

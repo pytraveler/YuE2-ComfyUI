@@ -459,6 +459,25 @@ def recall(waveform, sample_rate):
     return store().get(key(waveform, sample_rate))
 
 
+def made(origin, style, lyrics, seed, settings, score, prefix, negative, codec, noise, latents,
+         sample_rate, channels, samples) -> Song:
+    """A song from plain sequences, its latents and the size of its audio, checked.
+
+    What a singing node remembers and what an edit makes both come through
+    here, so both are written down the same way. ``latents`` may be a tensor, a
+    numpy array or the bytes themselves.
+    """
+    song = Song(
+        origin=origin, style=style or "", lyrics=lyrics or "", seed=normalize_seed(seed),
+        settings=_plain(settings), score=score or "", prefix=_numbers("i", prefix),
+        negative=None if negative is None else _numbers("i", negative),
+        codec=_numbers("h", codec), noise=[[int(value) for value in run] for run in noise],
+        latents=_floats(latents), sample_rate=int(sample_rate), channels=int(channels),
+        samples=int(samples))
+    song.check()
+    return song
+
+
 def keep(audio, origin, style, lyrics, seed, settings, score, performance):
     """Remember a song a node has just sung. Returns its key, or None when it was not kept.
 
@@ -471,15 +490,10 @@ def keep(audio, origin, style, lyrics, seed, settings, score, performance):
         return None
     try:
         waveform = audio["waveform"]
-        codec = _numbers("h", performance.codec)
-        song = Song(
-            origin=origin, style=style or "", lyrics=lyrics or "", seed=normalize_seed(seed),
-            settings=_plain(settings), score=score or "",
-            prefix=_numbers("i", performance.prefix),
-            negative=None if performance.negative is None else _numbers("i", performance.negative),
-            codec=codec, noise=[[int(performance.seed), 0, len(codec)]],
-            latents=_floats(performance.latents), sample_rate=int(audio["sample_rate"]),
-            channels=int(waveform.shape[-2]), samples=int(waveform.shape[-1]))
+        song = made(origin, style, lyrics, seed, settings, score, performance.prefix,
+                    performance.negative, performance.codec,
+                    [[int(performance.seed), 0, len(performance.codec)]], performance.latents,
+                    audio["sample_rate"], waveform.shape[-2], waveform.shape[-1])
         return remember(waveform, song.sample_rate, song)
     except Exception:
         log.warning("[yue2_comfy.songs] this song could not be remembered, so it cannot be "

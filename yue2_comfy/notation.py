@@ -33,7 +33,9 @@ The bar grid does not move: notes and chord symbols change inside the bars
 that exist, and the meter and the key stay as they are. The tempo is the one
 header the editor may set, because it is one number that moves nothing else:
 the notes keep their lengths in bars, and the song is sung faster or slower. A
-bar that changes key halfway through is left to the ABC text.
+bar that changes key halfway through is left to the ABC text. The one exception
+to the grid is ``without``, which takes whole bars out of both parts for a cut
+of the song, and writes again only the lines that lose bars.
 """
 
 from __future__ import annotations
@@ -160,6 +162,16 @@ NOT_WRITTEN = (
 KEY_CHANGE_BAR = (
     "Bar {bar} changes key halfway through, and the piano roll leaves such bars "
     "as they are. Edit that bar in the ABC tab."
+)
+
+NOT_CUT = (
+    "The bars could not be cut out of the score: {reason}.\n\n"
+    "Nothing was changed. The score is as it was before the cut."
+)
+
+KEY_CHANGE_CUT = (
+    "Bar {bar} changes key halfway through, and cutting it out would move the key "
+    "of everything after it. Cut up to that bar, or from the bar after it."
 )
 
 UNKNOWN_CHORD = (
@@ -931,3 +943,140 @@ def write(text: str, sheet) -> dict:
     result = "".join(lines)
     _checked(result, notes, chords, score, per_quarter, bpm)
     return {"abc": result, "bars": touched}
+
+
+def _rests(bars: int) -> list:
+    """``bars`` whole-bar rests as the model writes them: Z4 for every four, then Z to Z3 for the rest."""
+    found = ["Z4"] * (bars // 4)
+    left = bars % 4
+    if left:
+        found.append("Z" if left == 1 else "Z{}".format(left))
+    return found
+
+
+def _folded(pieces) -> list:
+    """The pieces of one line with neighbouring whole-bar rests folded together, as the model writes them."""
+    found = []
+    run = 0
+    for piece in pieces:
+        rest = FULL_REST.fullmatch(piece)
+        if rest:
+            run += int(rest.group(1) or 1)
+            continue
+        found.extend(_rests(run))
+        run = 0
+        found.append(piece)
+    found.extend(_rests(run))
+    return found
+
+
+def _declared(lines, index: int) -> list:
+    """The lines that open the music line at *index*: its V: line and any M: or K: lines under it."""
+    found = []
+    cursor = index - 1
+    while cursor >= 0 and lines[cursor].startswith(("M:", "K:")):
+        found.append(cursor)
+        cursor -= 1
+    if cursor < 0 or not lines[cursor].startswith("V: "):
+        raise ValueError("a line of music has no V: line above it")
+    return found + [cursor]
+
+
+def _cut_back(before, after, start: int, stop: int) -> None:
+    """The cut score read back: every bar left has the length, meter and key it had."""
+    removed = stop - start
+    for name in abc_tools.VOICES:
+        old, new = before.voices[name], after.voices[name]
+        if len(new.bars) != len(old.bars) - removed:
+            raise ValueError("the {} part has {} bars where {} should be left".format(
+                PARTS[name], len(new.bars), len(old.bars) - removed))
+        kept = [bar for number, bar in enumerate(old.bars) if not start <= number < stop]
+        for number, (was, now) in enumerate(zip(kept, new.bars), 1):
+            if tuple(was[1:]) != tuple(now[1:]):
+                raise ValueError("bar {} of the {} part changed its length".format(number, PARTS[name]))
+            if _key_at(old.keys, was[0]) != _key_at(new.keys, now[0]):
+                raise ValueError("bar {} of the {} part changed its key".format(number, PARTS[name]))
+    if after.bpm != before.bpm or after.unit != before.unit:
+        raise ValueError("the tempo or the note length changed")
+
+
+def without(text: str, start: int, stop: int) -> str:
+    """*text* with bars *start* to *stop* taken out of both parts: what a cut of the song does to its score.
+
+    Bars count from 0 and *stop* is not included. A line that keeps all its bars
+    comes back character for character, and so does everything around the
+    score, its final newline included. A line that loses bars is written again
+    from the ones it keeps, with neighbouring whole-bar rests folded into Z2 to
+    Z4 the way the model writes them; a line left with none goes, together with
+    the V: line above it, and a section comment with no music left under it goes
+    too. A tie from the last bar before the cut is taken off in both parts: the
+    note it held on into is gone.
+
+    The result is read back before it is returned: every bar left must have the
+    length, meter and key it had. A cut that would take a key or meter change
+    with it is refused by that check rather than sung in the wrong key.
+    """
+    source, score, lines, pieces, _sections, inline = _parsed(text)
+    count = len(score.voices["Vocal"].bars)
+    if not (_whole(start) and _whole(stop) and 0 <= start < stop <= count):
+        raise ValueError("Bars {} to {} are not bars of this score, which has {}.".format(
+            start + 1 if _whole(start) else start, stop, count))
+    if stop - start >= count:
+        raise ValueError("That is every bar of the score, and a cut has to leave some.")
+    locked = [number for number in range(start, stop) if number in inline]
+    if locked:
+        raise ValueError(KEY_CHANGE_CUT.format(bar=locked[0] + 1))
+
+    lines = list(lines)
+    gone = set()
+    try:
+        for name in abc_tools.VOICES:
+            by_line = {}
+            for piece in pieces[name]:
+                by_line.setdefault(piece["line"], []).append(piece)
+            for index, found in by_line.items():
+                body = lines[index].rstrip("\r\n")
+                texts = body[:-1].split("|")
+                kept, changed = [], False
+                for piece in sorted(found, key=lambda entry: entry["place"]):
+                    left = [bar for bar in piece["bars"] if not start <= bar < stop]
+                    written = texts[piece["place"]]
+                    if len(left) < len(piece["bars"]):
+                        changed = True
+                        if not left:
+                            continue
+                        written = _rests(len(left))[0]
+                    elif piece["bars"] == [start - 1] and written.rstrip().endswith("-"):
+                        changed = True
+                        written = written.rstrip()[:-1]
+                    kept.append(written)
+                if not changed:
+                    continue
+                if not kept:
+                    gone.add(index)
+                    gone.update(_declared(lines, index))
+                    continue
+                lines[index] = "|".join(_folded(kept)) + "|" + lines[index][len(body):]
+
+        for index, line in enumerate(lines):
+            if not line.startswith("% "):
+                continue
+            under = []
+            for after in range(index + 1, len(lines)):
+                if lines[after].startswith("% "):
+                    if under:
+                        break
+                    continue
+                if after in score.music_lines:
+                    under.append(after)
+            if under and all(after in gone for after in under):
+                gone.add(index)
+
+        result = "".join(line for index, line in enumerate(lines) if index not in gone)
+        _cut_back(score, abc_tools.parse(result.strip()), start, stop)
+    except (ValueError, KeyError, IndexError) as error:
+        raise ValueError(NOT_CUT.format(reason=_reason(error))) from error
+    raw = str(text or "")
+    leading = raw[:len(raw) - len(raw.lstrip())]
+    trailing = raw[len(raw.rstrip()):]
+    return leading + result.strip() + trailing

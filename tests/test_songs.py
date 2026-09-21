@@ -356,3 +356,16 @@ def test_save_audio_as_flac_then_load_audio_keeps_the_key_and_mp3_does_not():
     assert songs.key(flac, 48000) == songs.key(waveform, 48000)
     mp3 = comfy_save_and_load(av, torch, waveform, "mp3")
     assert songs.key(mp3, 48000) != songs.key(waveform, 48000)
+
+
+def test_a_song_made_from_plain_sequences_is_the_song_written_out_field_by_field():
+    """What a singing node keeps and what an edit makes come through the same door."""
+    song = a_song()
+    made = songs.made(song.origin, song.style, song.lyrics, song.seed, song.settings, song.score,
+                      list(song.prefix), list(song.negative), list(song.codec), song.noise,
+                      song.latents, song.sample_rate, song.channels, song.samples)
+    assert made == song
+    with pytest.raises(ValueError, match="noise covers"):
+        songs.made(song.origin, song.style, song.lyrics, song.seed, song.settings, song.score,
+                   list(song.prefix), None, list(song.codec), [[1, 0, FRAMES - 1]], song.latents,
+                   song.sample_rate, song.channels, song.samples)

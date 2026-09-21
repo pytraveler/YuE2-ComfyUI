@@ -114,6 +114,14 @@ class Grid:
     of every bar in those units, with the end of the score after the last.
     ``by_voice`` says the separated voice placed the song's start, rather than
     the pitch classes of the mix alone.
+
+    ``lines`` is the second each bar line really falls on, and is empty until
+    an edit moves them off the clock: a cut takes frames out of the middle of
+    a song without touching its tempo, and a retake may sing a second more or
+    less than it replaced, so from there on no single line through the score
+    reaches the bars after the edit. Everything that asks where a bar is goes
+    through ``at`` and ``moment``, which answer from the clock while the lines
+    are empty and from the lines once they are not.
     """
 
     offset: float
@@ -121,6 +129,7 @@ class Grid:
     tick: float
     starts: tuple
     by_voice: bool = False
+    lines: tuple = ()
 
     def seconds(self, ticks: float) -> float:
         return self.offset + self.rate * self.tick * float(ticks)
@@ -131,6 +140,20 @@ class Grid:
     def frames(self, ticks: float) -> int:
         """A length in score units as a whole number of frames."""
         return int(round(self.rate * self.tick * float(ticks) / FRAME_SECONDS))
+
+    def at(self, bar: int) -> float:
+        """The second the bar line ``bar`` falls on."""
+        return self.lines[bar] if self.lines else self.seconds(self.starts[bar])
+
+    def moment(self, bar: int, before: float = 0.0) -> int:
+        """The frame that falls ``before`` score units ahead of the bar line ``bar``."""
+        if self.lines:
+            return int(round((self.lines[bar] - float(before) * self.rate * self.tick) / FRAME_SECONDS))
+        return self.frame(self.starts[bar] - float(before))
+
+    def bar_seconds(self) -> tuple:
+        """The second of every bar line, the end of the last bar after them."""
+        return self.lines if self.lines else tuple(self.seconds(start) for start in self.starts)
 
 
 def tick_seconds(sheet) -> float:
@@ -286,7 +309,8 @@ def _stretch(first: int, stop: int, start: int, end: int, frames: int):
     return start, end
 
 
-def _bars(sheet, first: int, stop: int) -> None:
+def bars_of(sheet, first: int, stop: int) -> None:
+    """Refuse bars ``first`` to ``stop`` that are not bars of ``sheet``, with a ValueError saying so."""
     count = len(sheet["bars"])
     if not 0 <= first < stop <= count:
         raise ValueError("Bars {} to {} are not bars of this score, which has {}.".format(first + 1, stop, count))
@@ -297,19 +321,18 @@ def cut_frames(sheet, grid: Grid, marks, first: int, stop: int, frames: int):
 
     A cut that reaches the song's end takes the rest of it, and one from the
     start begins at frame 0; otherwise both ends move back by the same shift,
-    and the stretch taken out is the bars' own length. Bars the song never
-    reached raise a ValueError.
+    so the stretch taken out is the bars' own length to within the rounding
+    of each end to a frame. Bars the song never reached raise a ValueError.
     """
-    _bars(sheet, first, stop)
+    bars_of(sheet, first, stop)
     beat, margin = _beat_and_margin(sheet, grid)
-    starts = grid.starts
     if first <= 0:
-        return _stretch(first, stop, 0, grid.frame(starts[stop] - opening(marks[stop], beat, margin)), frames)
+        return _stretch(first, stop, 0, grid.moment(stop, opening(marks[stop], beat, margin)), frames)
     shift = cut_shift(marks[first], marks[stop], beat, margin)
-    start = max(0, grid.frame(starts[first] - shift))
-    if stop >= len(starts) - 1:
+    start = max(0, grid.moment(first, shift))
+    if stop >= len(grid.starts) - 1:
         return _stretch(first, stop, start, frames, frames)
-    return _stretch(first, stop, start, start + grid.frames(starts[stop] - starts[first]), frames)
+    return _stretch(first, stop, start, grid.moment(stop, shift), frames)
 
 
 def retake_frames(sheet, grid: Grid, marks, first: int, stop: int, frames: int):
@@ -319,12 +342,61 @@ def retake_frames(sheet, grid: Grid, marks, first: int, stop: int, frames: int):
     takes the rest of it, and one from the start begins at frame 0. Bars the
     song never reached raise a ValueError.
     """
-    _bars(sheet, first, stop)
+    bars_of(sheet, first, stop)
     beat, margin = _beat_and_margin(sheet, grid)
-    starts = grid.starts
-    start = 0 if first <= 0 else grid.frame(starts[first] - opening(marks[first], beat, margin))
-    end = frames if stop >= len(starts) - 1 else grid.frame(starts[stop] - opening(marks[stop], beat, margin))
+    start = 0 if first <= 0 else grid.moment(first, opening(marks[first], beat, margin))
+    end = frames if stop >= len(grid.starts) - 1 else grid.moment(stop, opening(marks[stop], beat, margin))
     return _stretch(first, stop, start, end, frames)
+
+
+def after_cut(grid: "Grid", starts, first: int, stop: int, start: int, removed: int) -> "Grid":
+    """The grid of the song a cut of bars ``first`` to ``stop`` leaves: ``removed`` frames from ``start`` are gone.
+
+    ``starts`` are the bar starts of the score the cut leaves, which
+    ``notation.without`` writes and ``starts_of`` reads. The bars before the
+    cut stay where they were; the ones after it come back by exactly what came
+    out, and the two sides meet on one line. A cut that ran into the end of
+    the song took less than its bars' own length, and no line can then stand
+    before where the cut began: what is left of the song ends there.
+    """
+    lines = grid.bar_seconds()
+    gone = removed * FRAME_SECONDS
+    floor = start * FRAME_SECONDS
+    kept = lines[:first] + tuple(max(second - gone, floor) for second in lines[stop:])
+    return dataclasses.replace(grid, starts=tuple(starts), lines=kept)
+
+
+def after_retake(grid: "Grid", start: int, stop: int, count: int) -> "Grid":
+    """The grid of the song after frames ``start`` to ``stop`` were sung again as ``count`` of them.
+
+    A retake may come out a second or so from the length it replaced, and from
+    there on the score no longer lies on the song by one line. The bars after
+    it move by the difference; the bar lines inside it are spread through the
+    new singing in the proportions the score has them, which is a guess -- the
+    new take alone knows where it put its bars.
+    """
+    moved = (count - (stop - start)) * FRAME_SECONDS
+    if not moved:
+        return grid
+    head, tail = start * FRAME_SECONDS, stop * FRAME_SECONDS
+    span = tail - head
+    lines = []
+    for second in grid.bar_seconds():
+        if second >= tail:
+            lines.append(second + moved)
+        elif second > head and span > 0:
+            lines.append(head + (second - head) * (span + moved) / span)
+        else:
+            lines.append(second)
+    return dataclasses.replace(grid, lines=tuple(lines))
+
+
+def _span(sheet, clock: Grid, bar: int) -> float:
+    """Seconds of one unit of L: within bar ``bar``: the clock's own, or what the lines have left it."""
+    length = float(sheet["bars"][bar]["length"]) if 0 <= bar < len(sheet["bars"]) else 0.0
+    if not clock.lines or length <= 0:
+        return clock.rate * clock.tick
+    return (clock.at(bar + 1) - clock.at(bar)) / length
 
 
 def layout(sheet, clock: Grid, frames: int) -> dict:
@@ -333,24 +405,28 @@ def layout(sheet, clock: Grid, frames: int) -> dict:
     A section carries the second its singing begins as well as its first bar
     line, because that is where an edit of it opens, and the two are not the
     same wherever the words come in before the downbeat. A section that sings
-    nothing before its end carries None there.
+    nothing before its end carries None there. After an edit a bar is as long
+    as its lines say, and its beats and pickups are measured by that length.
     """
     marks = seams(sheet)
     beats = []
-    for bar in sheet["bars"]:
+    for index, bar in enumerate(sheet["bars"]):
+        span = _span(sheet, clock, index)
         for beat in range(max(1, int(round(bar["length"] / sheet["per_quarter"])))):
-            beats.append(round(clock.seconds(bar["start"] + beat * sheet["per_quarter"]), 3))
+            beats.append(round(clock.at(index) + beat * sheet["per_quarter"] * span, 3))
     sections = []
     for section in sheet["sections"]:
         stop = section["bar"] + section["bars"]
-        sung = clock.starts[section["bar"]] - marks[section["bar"]].pickup
+        pickup = marks[section["bar"]].pickup
+        sung = clock.at(section["bar"]) - pickup * _span(
+            sheet, clock, section["bar"] - 1 if pickup > 0 else section["bar"])
         sections.append({"name": section["name"], "bar": section["bar"], "bars": section["bars"],
-                         "start": round(clock.seconds(clock.starts[section["bar"]]), 3),
-                         "end": round(clock.seconds(clock.starts[stop]), 3),
-                         "sung": None if sung >= clock.starts[stop] else round(clock.seconds(sung), 3)})
+                         "start": round(clock.at(section["bar"]), 3),
+                         "end": round(clock.at(stop), 3),
+                         "sung": None if sung >= clock.at(stop) else round(sung, 3)})
     return {"seconds": round(frames * FRAME_SECONDS, 3), "offset": round(clock.offset, 3),
             "rate": round(clock.rate, 6), "by_voice": bool(clock.by_voice),
-            "bars": [round(clock.seconds(start), 3) for start in clock.starts],
+            "bars": [round(clock.at(bar), 3) for bar in range(len(clock.starts))],
             "beats": beats, "sections": sections}
 
 

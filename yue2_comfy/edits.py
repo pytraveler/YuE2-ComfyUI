@@ -132,6 +132,9 @@ MARKS_UI = "yue2_marks"
 MIDI_UI = "yue2_midi"
 """Where 'YuE2 Load MIDI' hands over the file's tracks and the facts of the score written from them, for its list."""
 
+EDIT_TRACK_UI = "yue2_edit_track"
+"""Where 'YuE2 Edit Track' hands over the track: its wave, its grid, the edits made and the takes to choose between."""
+
 
 def audio_mark(data: bytes, rate) -> str:
     """Sixteen hex digits that name a recording: its samples and their rate.

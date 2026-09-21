@@ -26,6 +26,7 @@ from .constants import (
 from .progress import (Band, NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 from .load_midi import MIDI_CLASSES, MIDI_NAMES
+from .edit_track import EDIT_CLASSES, EDIT_NAMES
 from .lora.node import LORA_CLASSES, LORA_NAMES
 from .staged import (STAGED_CLASSES, STAGED_NAMES, adapters, engine_line, resolve, session,
                      stage_times, words)
@@ -571,6 +572,7 @@ NODE_CLASS_MAPPINGS.update(TRANSCRIBE_CLASSES)
 NODE_CLASS_MAPPINGS.update(MIDI_CLASSES)
 NODE_CLASS_MAPPINGS.update(VOCALS_CLASSES)
 NODE_CLASS_MAPPINGS.update(LORA_CLASSES)
+NODE_CLASS_MAPPINGS.update(EDIT_CLASSES)
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YuE2GenerateSong": "YuE2 Generate Song",
@@ -582,6 +584,7 @@ NODE_DISPLAY_NAME_MAPPINGS.update(TRANSCRIBE_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(MIDI_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(VOCALS_NAMES)
 NODE_DISPLAY_NAME_MAPPINGS.update(LORA_NAMES)
+NODE_DISPLAY_NAME_MAPPINGS.update(EDIT_NAMES)
 """One registry, so that whatever reads this module sees every node.
 
 The release workflow and the tests both import these two names to check that

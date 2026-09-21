@@ -109,6 +109,7 @@ jobs:
                         yue2_comfy/vocabulary.py yue2_comfy/songs.py \
                         yue2_comfy/inpaint/__init__.py yue2_comfy/inpaint/ops.py \
                         yue2_comfy/inpaint/core.py yue2_comfy/inpaint/grid.py \
+                        yue2_comfy/inpaint/track.py yue2_comfy/edit_track.py \
                         yue2_comfy/asr/__init__.py yue2_comfy/asr/align.py \
                         yue2_comfy/asr/decode.py yue2_comfy/asr/layout.py \
                         yue2_comfy/asr/model.py yue2_comfy/asr/network.py \

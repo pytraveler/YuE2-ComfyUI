@@ -20,24 +20,26 @@ def test_every_node_is_wired(name, cls):
     assert cls.DESCRIPTION.strip()
 
 
-def test_the_menu_offers_four_nodes_and_hides_the_rest_one_level_down():
+def test_the_menu_offers_the_headline_nodes_and_hides_the_rest_one_level_down():
     """The whole product is that someone can write a song without reading.
 
-    Nine nodes in one menu is the pack this one was written not to be. The
+    Every node in one menu is the pack this one was written not to be. The
     staged four and their selector earn their place by being one click further
     in, so demoting a headline node or promoting a staged one has to be done on
     purpose rather than by editing a class and not noticing. Transcribe is a
     headline node: covering a song is a thing people come for. So is Load
     MIDI, the other way in for a tune someone already has, and Vocals Only,
     the way to an a cappella of any recording. And LoRA: people asked for it
-    by name, from ComfyUI's own nodes, before it existed.
+    by name, from ComfyUI's own nodes, before it existed. And Edit Track: a
+    song is never right the first time, and the way to fix one line of it is
+    not a thing to hide one click deeper than the node that sang it.
     """
     plain = {name for name, cls in node_classes()
              if cls.CATEGORY == constants.CATEGORY}
     advanced = {name for name, cls in node_classes()
                 if cls.CATEGORY == constants.ADVANCED_CATEGORY}
     assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe", "YuE2LoadMidi",
-                     "YuE2VocalsOnly", "YuE2LoRA"}
+                     "YuE2VocalsOnly", "YuE2LoRA", "YuE2EditTrack"}
     assert advanced == set(nodes.STAGED_CLASSES)
 
 

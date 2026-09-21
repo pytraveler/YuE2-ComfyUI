@@ -78,7 +78,8 @@ class Stages:
     shares are the ones the stand measured on a 100-second song.
     """
 
-    PERFORM = (0.0, 35.0, "Singing the new part")
+    NATURAL = (0.0, 3.0, "Scoring the song's own join")
+    PERFORM = (3.0, 35.0, "Singing the new part")
     JOIN = (35.0, 45.0, "Choosing the join")
     ACOUSTIC = (45.0, 92.0, "Drawing the audio around the edit")
     DECODE = (92.0, 100.0, "Decoding the new part")
@@ -111,7 +112,9 @@ class Take:
     given the new part, the score the join was chosen by: None when there was
     no choosing, for a cut or for an edit that reaches the end of the song.
     ``joins`` holds that score for every count the search tried. ``ended`` says
-    that the model ended the song itself.
+    that the model ended the song itself. ``natural`` is the same score for the
+    old song at the same place, the one this take has to stand against; it is
+    None unless it was asked for.
     """
 
     seed: int
@@ -122,6 +125,7 @@ class Take:
     joins: dict
     ended: bool
     timing: dict
+    natural: float | None = None
 
 
 def best(takes) -> int:
@@ -642,7 +646,7 @@ def _made(song, waveform, prefix, negative, codec, noise, latents, lyrics=None, 
 
 
 def retakes(models, song, waveform, region, seeds, settings, progress=None, cancelled=None,
-            noise_seeds=None) -> list:
+            noise_seeds=None, natural: bool = False) -> list:
     """The stretch ``region`` of ``song`` sung again, once for every seed: one Take each, in seed order.
 
     ``waveform`` is the song's sound, which the new part is laid into.
@@ -653,6 +657,12 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
     Every take is sung and joined first, while the AR half is on the card, and
     then drawn and decoded, so a card that holds one half at a time swaps twice
     rather than twice a take.
+
+    With ``natural`` the old song's own join is scored at the same place too,
+    one pass before the singing, and every take carries it. A join score means
+    nothing on its own -- it is the model's opinion of the words that follow,
+    which differs from song to song and place to place -- so the number to
+    compare a take with is what the song itself scored there.
     """
     from ..vendor.yue2.protocol import CODEC_OFFSET
 
@@ -672,6 +682,10 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
 
     sung = []
     with _singing(models, settings):
+        own = None
+        if natural and not at_end and suffix:
+            own = joins(models, context, ids[region.start:region.stop], region.length,
+                        region.length, suffix, progress, Stages.NATURAL, cancelled)[region.length]
         for index, seed in enumerate(seeds):
             timing = {}
             began = time.perf_counter()
@@ -719,7 +733,8 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
                  "the model's own end" if ended else "none" if not scores
                  else "{:.3f}".format(scores[chosen]), sum(timing.values()))
         takes.append(Take(seed=seed, waveform=sound, song=edited, count=chosen,
-                          join=scores.get(chosen), joins=scores, ended=ended, timing=timing))
+                          join=scores.get(chosen), joins=scores, ended=ended, timing=timing,
+                          natural=own))
     return takes
 
 

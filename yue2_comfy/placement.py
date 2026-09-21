@@ -32,6 +32,16 @@ trying again. On Windows the NVIDIA driver can put an allocation that does not
 fit into shared system memory instead of failing it, and a run that is out of
 VRAM then does not stop, it crawls. The retry in ``guarded`` is for the drivers
 that do raise.
+
+The allocator itself is left alone. Upstream calls
+``torch.cuda.set_per_process_memory_fraction`` to hold itself inside a share of
+the card; this pack deliberately does not, because the fraction belongs to the
+process and the process is ComfyUI -- a cap taken for one song would also cap
+the video model queued behind it, and every node that ran afterwards would pay
+for a number chosen here. The plan above is what keeps a stage inside the card
+instead. If a report ever shows a prefill or a decode overrunning on a loaded
+card, the cap is one line inside ``guarded``, set for the stage and dropped
+with it; until then there is nothing to fix.
 """
 
 from __future__ import annotations

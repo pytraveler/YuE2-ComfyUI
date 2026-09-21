@@ -7,6 +7,77 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.8.4 - 2026-09-21
+
+### Added
+
+- **Each part of the score editor picks its own sound.** The window played one
+  sampled piano for everything, which is no way to hear whether a drum line
+  works: on a piano a kit is a row of tuned thuds. Beside each of the `voice`,
+  `instrument` and `chords` boxes there is now a small list -- piano, synth,
+  bass, pluck, pad, and `drums` for the instrument part. Everything but the
+  piano is made in the browser, so the pack downloads nothing new. With `drums`
+  chosen and the instrument part being edited, the keyboard stops naming notes
+  and names the kit instead -- Kick, Snare, Hat, three toms, Clap, Stick,
+  Crash, Ride, Shaker -- one kit to an octave, repeating, so a pattern can be
+  aimed at a row rather than counted out. The choice is remembered in the
+  browser and is not part of the score: nothing is written to the node, and a
+  saved workflow does not change by a byte.
+
+  Worth saying plainly, because the window could imply otherwise: **the sound
+  is for your ear here only.** YuE2 is handed the score and the style line and
+  is never told an instrument, so writing a drum line on the instrument part
+  and hearing drums does not make the song play drums. The style line is what
+  picks the arrangement. The tooltip on each list says the same.
+- **A double click plays the song.** The Play button is in the corner of the
+  window and the work is in the middle of it, so two left clicks now start and
+  stop the sound, as Space already did. On the bar strip the song starts from
+  the bar clicked. On the roll the first click of the pair has already drawn a
+  note, and that note is taken back before the sound starts: the score is left
+  exactly as it was, Undo stays grey, and a Redo that was waiting survives.
+  Held with Shift, Ctrl or Alt the clicks mean what they meant before.
+- **A run on the processor says so as it starts.** `device` = `cpu` works and
+  takes about an hour for a song, which the tooltip has always said, but `auto`
+  resolves to the processor as well on a machine whose CUDA is missing or
+  broken, and that said nothing at all: the run simply crawled. Every node that
+  sings now puts a notice on the node and a line in the log. None of them
+  refuses the run -- upstream supports the processor, and a mode somebody chose
+  on purpose should run.
+- **`YuE2 Render Plan` logs what the performance cost**, the way
+  `YuE2 Generate Song` has since 0.7.0: the semantic tokens and their rate, the
+  execution mode, the attention backend, and underneath them where the time
+  went stage by stage with the loading counted apart. A report from a workflow
+  built out of `YuE2 Plan` and `YuE2 Render Plan` used to arrive without the
+  three numbers that say whether it was the card, the graph or the kernel.
+
+### Fixed
+
+- **A beat lost where one window hands over to the next no longer breaks the
+  bars around it.** A window that spends its tokens stops before the end of the
+  span it answers for and the next one takes over from there, and the beat
+  neither of them placed was simply gone. Every bar of this dialect has to be
+  exactly as long as its meter says, so the bar that lost it could only be
+  written as a meter change there and another one back -- four `M:` lines
+  around one hole, in both voices. The beat is now put back at the time it
+  would have had, and only when the clock and the numbering agree that it is
+  missing: the gap holds room for whole beats at the local period, and the
+  numbering steps over exactly that many. Measured on the eight recordings
+  `listen` was measured on, heard a minute at a time: seven holes, and with
+  them filled two scores come out with no meter change left at all (9 to 1 and
+  5 to 1) while four more lose the pair each hole cost (49 to 45, 45 to 41, 29
+  to 25, 19 to 15). Not one beat is added to any of the same recordings heard
+  whole, whose seams are a hundred seconds apart, so a score that comes out
+  well today comes out byte for byte the same.
+
+  The one-beat bars that are left are not seams and are not a fault: the model
+  re-counts the bar inside a window and starts the count again. Measured
+  against the harmony the same pass wrote, those downbeats are right -- 87 to
+  99 percent of the chord changes of a recording with a tune land on them,
+  against 48 to 76 percent when one bar phase is forced on the whole song --
+  so they stay where the model put them.
+- The editor's line under the roll counted one rewritten bar as "Bars 2"; it
+  says "Bar 2" now.
+
 ## 0.8.3 - 2026-09-21
 
 ### Added

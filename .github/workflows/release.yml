@@ -132,6 +132,7 @@ jobs:
                         web/js/yue2_editor.js web/js/yue2_sheet.js \
                         web/js/yue2_controls.js web/js/yue2_score.js \
                         web/js/yue2_roll.js web/js/yue2_notices.js \
+                        web/js/yue2_sounds.js web/js/yue2_piano.js \
                         web/js/yue2_midi.js \
                         web/js/vendor/abcjs-basic-min.cjs \
                         web/js/vendor/abcjs-LICENSE.md \

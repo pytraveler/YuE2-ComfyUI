@@ -95,6 +95,16 @@ export function modifiersOf(event) {
     return { alt, ctrl: Boolean(event.ctrlKey || event.metaKey) && !alt, shift: Boolean(event.shiftKey) };
 }
 
+export const DOUBLE_CLICK_MS = 400;
+export const DOUBLE_CLICK_PX = 5;
+
+export function isDoubleClick(last, at, px, py) {
+    if (!last) return false;
+    return at - last.at <= DOUBLE_CLICK_MS
+        && Math.abs(px - last.px) <= DOUBLE_CLICK_PX
+        && Math.abs(py - last.py) <= DOUBLE_CLICK_PX;
+}
+
 export const TEMPO_LOW = 40;
 export const TEMPO_HIGH = 200;
 
@@ -486,7 +496,9 @@ export class History {
     push(state) {
         this.done.push(state);
         if (this.done.length > this.limit) this.done.shift();
+        const dropped = this.undone;
         this.undone = [];
+        return dropped;
     }
 
     undo(current) {
@@ -499,6 +511,12 @@ export class History {
         if (!this.undone.length) return null;
         this.done.push(current);
         return this.undone.pop();
+    }
+
+    take(undone = null) {
+        if (!this.done.length) return null;
+        if (undone) this.undone = undone;
+        return this.done.pop();
     }
 
     get canUndo() {

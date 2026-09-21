@@ -265,12 +265,15 @@ a summary of the score they will sing. The button opens a window over the
 canvas with three views of one score, and nothing is written to the node until
 Apply.
 
-<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key F, 4/4, 78 BPM, 86 bars, 4:24 and, in orange, sung up to 0:30. Under them Play and From start, the voice and instrument boxes ticked and chords not, a Tempo slider with 78 in the box beside it, the Instrument part list, an Eighth notes grid with zoom buttons, Whole song, Undo and a greyed-out Redo. The roll shows bars 1 to 8 of the section intro, the chords Dm, Dm, Bb, F, C, Dm, Bb and F in the lane under the bar numbers, green notes with their names on them -- F5, E5, C5, D5, A4 and G4 -- and one picked note in salmon. The keyboard names only the Cs, C1 to C6, in bold, and A4 on the highlighted row the pointer rests on. Under the roll the line No changes. This is the score as it came in. Only its first 0:30 is sung: max_seconds ends the song at the dashed line, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Cancel and Apply on the right">
+<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key Fm, 4/4, 98 BPM, 92 bars, 3:45. Under them Play and From start, then the voice box ticked with synth beside it, instrument ticked with piano, chords unticked with pluck, and a Tempo slider with 98 in the box next to it. On the row below, the Voice part list, an Eighth notes grid, Add bars..., the zoom buttons and Whole song, with greyed-out Undo and Redo under them. The roll shows bars 1 to 8, a section lane naming intro over the bar numbers, and the chord Fm in the lane under them from the third bar on. The voice has nothing to sing in the intro, so only the instrument part stands on the roll, drawn faintly. The keyboard names only the Cs, C2 to C6, in bold. Under the roll the line No changes. This is the score as it came in, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Cancel and Apply on the right">
 
 *The window on `YuE2 Generate Song`, on the score the node wrote on its last
-run: the tempo slider beside the play controls, the chords in the lane under
-the bar numbers, one picked note in salmon, and a keyboard that names its Cs
-and whichever row the pointer is on -- here A4.*
+run: a sound list beside each of the three boxes, the tempo slider next to the
+play controls, the section lane and the chords over the roll, and a keyboard
+that names its Cs. This is the intro, where the voice has nothing to sing yet
+and only the instrument part stands on the roll. Nothing has been edited here,
+so Undo and Redo are both grey and the line under the roll says the score is as
+it came in.*
 
 On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
 run, so run it once first. The next run sings the edit instead of writing a
@@ -304,7 +307,18 @@ its own only when it is one.
   Ctrl+wheel zooms and Ctrl+Z undoes. Play sounds the parts on a sampled
   grand piano that ships with the pack -- recorded every three semitones, so no
   note is stretched by more than one. It is a guide to the notes, not the song,
-  and nothing is fetched from the internet.
+  and nothing is fetched from the internet. Space starts and stops it, and so
+  does a double click: on the bar strip it plays from the bar you clicked, and
+  on the roll it takes back the note the first click of the pair drew.
+  The list beside each of `voice`, `instrument` and `chords` picks what that
+  part sounds like: piano, or one of a few voices the browser makes itself --
+  synth, bass, pluck, pad, and `drums` for the instrument part. With `drums`
+  chosen and the instrument part in hand, the keyboard names a kit instead of
+  the notes -- Kick, Snare, Hat and the rest, one kit to an octave -- because a
+  drum line played on a piano tells you nothing. The choice stays in your
+  browser and never reaches the node. **The sound is for your ear here only:**
+  YuE2 is given the score and the style line and is never told an instrument,
+  so the style line is what decides who plays.
 - **Notes** draws the score as sheet music, with the bars the edit rewrites in
   red.
 - **ABC** is the text the model reads. A score pasted here loads into the other

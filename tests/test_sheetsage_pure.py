@@ -126,6 +126,33 @@ def test_a_window_that_ran_out_of_tokens_hands_its_last_seconds_to_the_next_one(
     assert events.resume_point(window, beatless) == pytest.approx(120.125, abs=1e-3)
 
 
+def steady_rows(count: int = 12, step: float = 0.5) -> list:
+    """A plain 4/4 grid: every beat placed, every number in order."""
+    return [[round(step * i, 6), i % 4 + 1, 4, 4] for i in range(count)]
+
+
+def test_the_beat_a_window_seam_dropped_is_put_back():
+    """The bar is short by one beat and both the clock and the numbering say which."""
+    rows = [row for row in steady_rows() if row[0] != 3.0]
+    filled = events.filled_beats(rows)
+    assert len(filled) == 12
+    assert filled[6] == [3.0, 3, 4, 4]
+    assert [row[1] for row in filled] == [1, 2, 3, 4] * 3
+
+
+def test_a_gap_the_numbering_does_not_confirm_is_left_where_it_is():
+    """A pause in the beat is not a lost beat, and inventing one would move the bar line."""
+    rows = steady_rows(8)
+    rows[4][0] = 3.0
+    assert events.filled_beats(rows) == rows
+
+
+def test_a_grid_with_every_beat_on_it_is_handed_back_unchanged():
+    rows = steady_rows(16)
+    assert events.filled_beats(rows) == rows
+    assert events.filled_beats([]) == []
+
+
 def test_a_note_sounding_into_the_next_onset_is_cut_there():
     notes = [[0.0, 1.0, 60, 0], [0.5, 0.8, 62, 0], [0.2, 2.0, 50, 1]]
     assert events.notation_notes(notes) == [[0.0, 0.5, 60, 0], [0.2, 2.0, 50, 1], [0.5, 0.8, 62, 0]]

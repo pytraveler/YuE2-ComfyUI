@@ -112,6 +112,28 @@ def is_cpu(spec: str) -> bool:
     return (spec or AUTO).strip().lower() == CPU
 
 
+CPU_NOTICE = ("This run is on the CPU, which takes about an hour for a song. "
+              "Point 'device' at a CUDA card if this machine has one.")
+
+
+def cpu_notice(spec: str):
+    """What to say when a run is about to happen on the CPU, or None when it is not.
+
+    'auto' is the spelling that surprises people: on a machine whose CUDA is
+    missing or broken it resolves to the CPU, and the run then takes an hour
+    without ever saying why. Refusing instead would be worse -- upstream
+    supports the CPU, and a mode somebody deliberately chose should run -- so
+    the run goes ahead and says what it is doing. The tooltip carries the same
+    sentence, but a tooltip is read before the choice, not after it.
+    """
+    try:
+        device = resolve(spec)
+    except Exception:
+        log.debug("[yue2_comfy.devices.cpu_notice] device unreadable", exc_info=True)
+        return None
+    return CPU_NOTICE if getattr(device, "type", None) == CPU else None
+
+
 def validate(spec: str) -> str:
     """Return the spec, refusing one this machine cannot honour.
 

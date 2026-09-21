@@ -659,3 +659,47 @@ def test_a_song_stopped_by_the_length_limit_blames_the_limit_and_not_the_model()
 
 def test_a_score_nothing_can_read_ends_no_song_early():
     assert generate.ended_early("X:1\nK:C\nCDEF|\n", 1.0, 360) == ""
+
+
+def test_the_log_names_the_backend_the_performance_ran_on():
+    """The three numbers a bug report never carries on its own."""
+    line = staged.engine_line({"semantic": {"output_tokens": 4200, "output_tps": 31.25,
+                                            "execution": "graph", "attention": "flash"}})
+    assert line == "4200 semantic tokens at 31.2 tok/s | graph, flash attention"
+
+
+def test_a_run_with_no_performance_stage_has_no_engine_line():
+    assert staged.engine_line({"decode": {"seconds": 1.0}}) == ""
+
+
+def test_a_run_on_the_processor_says_so_before_it_starts(monkeypatch):
+    """'auto' on a machine with no CUDA is the case worth saying out loud."""
+    from yue2_comfy import devices
+
+    class Device:
+        type = "cpu"
+
+    monkeypatch.setattr(devices, "resolve", lambda spec: Device())
+    said = devices.cpu_notice("auto")
+    assert "about an hour" in said and "'device'" in said
+
+
+def test_a_run_on_a_card_says_nothing_about_the_processor(monkeypatch):
+    from yue2_comfy import devices
+
+    class Device:
+        type = "cuda"
+
+    monkeypatch.setattr(devices, "resolve", lambda spec: Device())
+    assert devices.cpu_notice("cuda:0") is None
+
+
+def test_a_device_that_cannot_be_read_says_nothing(monkeypatch):
+    """A notice is a courtesy; it never becomes the reason a run fails."""
+    from yue2_comfy import devices
+
+    def broken(spec):
+        raise RuntimeError("no torch here")
+
+    monkeypatch.setattr(devices, "resolve", broken)
+    assert devices.cpu_notice("auto") is None

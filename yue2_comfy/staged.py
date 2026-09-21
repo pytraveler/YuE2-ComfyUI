@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 
 from . import devices, edits, phrasing, songs
 from .constants import (
@@ -142,6 +143,41 @@ def adapters(settings, unique_id) -> None:
         announce(unique_id, found)
 
 
+def stage_times(timing: dict, wall: float) -> str:
+    """Where one song's time went, stage by stage, and what loading added.
+
+    The summary line above it counts from the first stage, so a log used to
+    show neither the load nor which stage was slow: a report of 2026-09-18 left
+    open whether its decode had spilled out of an 8 GB card, which this line
+    answers at a glance. A stage that did not run this time is left out.
+    """
+    parts = []
+    for key, name in (("abc", "score"), ("semantic", "performance"),
+                      ("acoustic", "acoustic"), ("decode", "decode")):
+        seconds = (timing.get(key) or {}).get("seconds")
+        if seconds is not None:
+            parts.append("{} {:.1f} s".format(name, seconds))
+    loading = max(0.0, wall - float(timing.get("total_seconds", 0.0)))
+    return "stages: " + ", ".join(parts) + " | loading and the rest {:.1f} s".format(loading)
+
+
+def engine_line(timing: dict) -> str:
+    """What the performance stage cost, in the numbers a bug report is always missing.
+
+    Empty when the stage did not run. Generate Song has printed this since
+    0.7.0 and the staged path did not, so a report from a workflow built out of
+    Plan and Render Plan arrived without the throughput, the execution mode or
+    the attention backend -- the three that say whether it was the card, the
+    graph or the kernel.
+    """
+    semantic = timing.get("semantic") or {}
+    if "output_tokens" not in semantic:
+        return ""
+    return "{:d} semantic tokens at {:.1f} tok/s | {}, {} attention".format(
+        int(semantic["output_tokens"]), float(semantic.get("output_tps", 0.0)),
+        semantic.get("execution", "unknown"), semantic.get("attention", "unknown"))
+
+
 @contextlib.contextmanager
 def session(settings, unique_id, progress):
     """The weights on disk and the model on the card, unloaded on the way out.
@@ -149,11 +185,19 @@ def session(settings, unique_id, progress):
     Every node in this pack that touches YuE2 needs the same steps first, in the
     same order, with the same three ways of failing. Written once here so that a
     fix reaches all of them rather than most of them.
+
+    The notice about a run on the CPU belongs here for that reason: it is the
+    one place every singing node passes through, and an hour of silence is not
+    a thing to learn from the log afterwards.
     """
     try:
         settings["device"] = devices.validate(settings["device"])
     except (ValueError, RuntimeError) as error:
         refuse(unique_id, str(error))
+    on_cpu = devices.cpu_notice(settings["device"])
+    if on_cpu:
+        log.info("[yue2_comfy] %s", on_cpu)
+        announce(unique_id, [("notice", on_cpu)])
 
     from . import download, loader
 
@@ -488,6 +532,7 @@ class YuE2RenderPlan:
         song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
 
         separator = separator_weights(settings, unique_id, song_progress) if voice else None
+        began = time.perf_counter()
         with session(settings, unique_id, song_progress) as models:
             latents, timing, performance = generate.sing(
                 models, plan["style"], plan["lyrics"], plan["seed"], settings,
@@ -504,10 +549,12 @@ class YuE2RenderPlan:
         songs.keep(audio, "YuE2 Render Plan", plan["style"], plan["lyrics"], plan["seed"],
                    settings, score, performance)
 
-        log.info("[yue2_comfy] %.1f s of audio from a %s score | seed %s",
+        engine = engine_line(timing)
+        log.info("[yue2_comfy] %.1f s of audio from a %s score | seed %s%s",
                  timing["seconds_of_audio"],
                  "moved" if semitones else "given" if ids is None else "written",
-                 plan["seed"])
+                 plan["seed"], " | " + engine if engine else "")
+        log.info("[yue2_comfy] %s", stage_times(timing, time.perf_counter() - began))
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
         return (audio, _latents(plan, settings, score, latents, timing, performance))
 

@@ -450,6 +450,108 @@ def test_the_player_strikes_the_piano_and_keeps_the_synth_for_a_bad_install():
     assert "PIANO.size" in source, "nothing chooses between the two"
 
 
+SOUNDS = WEB / "yue2_sounds.js"
+
+FAKE_AUDIO = """
+const made = { osc: 0, noise: 0, gain: 0, filter: 0, started: 0, stopped: 0 };
+function node(kind) {
+    return {
+        connect: (next) => next, start: () => { made.started += 1; }, stop: () => { made.stopped += 1; },
+        frequency: { value: 0, setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+        gain: { value: 0, setValueAtTime: () => {}, linearRampToValueAtTime: () => {},
+                exponentialRampToValueAtTime: () => {} },
+        detune: { value: 0 }, Q: { value: 0 }, type: "", loop: false, buffer: null, kind,
+    };
+}
+const context = {
+    sampleRate: 48000, currentTime: 0,
+    createOscillator: () => { made.osc += 1; return node("osc"); },
+    createBufferSource: () => { made.noise += 1; return node("noise"); },
+    createGain: () => { made.gain += 1; return node("gain"); },
+    createBiquadFilter: () => { made.filter += 1; return node("filter"); },
+    createBuffer: () => ({ getChannelData: () => new Float32Array(8) }),
+};
+"""
+"""Enough of a Web Audio context for the sounds to be built and counted in Node."""
+
+
+def run_sounds(script: str):
+    """Run ``script`` with the sounds imported as ``s`` and a fake audio context ready."""
+    program = "import * as s from {};\n{}\n{}".format(json.dumps(SOUNDS.as_uri()), FAKE_AUDIO, script)
+    done = subprocess.run([NODE, "--input-type=module", "-e", program],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def test_each_part_is_offered_the_piano_first_and_only_sounds_that_exist():
+    """The list in the window and the list the player can build are one list."""
+    offered = run_sounds("console.log(JSON.stringify(s.CHOICES));")
+    assert sorted(offered) == ["Ins", "Vocal", "chords"]
+    for part, choices in offered.items():
+        assert choices[0][0] == "piano", part + " does not start on the piano"
+        assert s_defaults()[part] == "piano"
+    assert [id for id, _ in offered["Ins"]].count("drums") == 1
+    assert "drums" not in [id for id, _ in offered["Vocal"] + offered["chords"]]
+
+
+def s_defaults():
+    return run_sounds("console.log(JSON.stringify(s.DEFAULTS));")
+
+
+def test_a_sound_a_part_does_not_offer_falls_back_to_the_piano():
+    """A remembered choice outlives the list it was picked from."""
+    assert run_sounds("console.log(JSON.stringify(["
+                      "s.known('Ins', 'drums'), s.known('Vocal', 'drums'),"
+                      "s.known('chords', 'pad'), s.known('Vocal', undefined)]));"
+                      ) == ["drums", "piano", "pad", "piano"]
+
+
+def test_the_kit_names_one_drum_for_every_row_and_repeats_each_octave():
+    kit = run_sounds("console.log(JSON.stringify(s.KIT));")
+    assert len(kit) == 12 and len(set(kit)) == 12
+    named = run_sounds("console.log(JSON.stringify([60, 62, 66, 72, 48, 61].map(s.drumName)));")
+    assert named == ["Kick", "Snare", "Hat", "Kick", "Kick", kit[1]]
+
+
+def test_every_sound_builds_and_stops_what_it_started():
+    """A voice that never stops leaves the note sounding after Stop."""
+    for kind in ("synth", "bass", "pluck", "pad", "drums"):
+        counted = run_sounds(
+            "const out = [];\n"
+            "for (const pitch of [36, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 84]) {\n"
+            "    out.push(...s.play(context, node('master'), 0, 0.5, pitch, "
+            + json.dumps(kind) + ", 0.1));\n}\n"
+            "console.log(JSON.stringify({ voices: out.length, made }));")
+        assert counted["voices"] >= 14, kind + " played nothing"
+        assert counted["made"]["started"] == counted["made"]["stopped"] == counted["voices"], kind
+
+
+def test_the_window_remembers_the_sounds_without_trusting_the_browser():
+    """Storage throws in a private window; the editor must open there anyway."""
+    source = SCORE.read_text(encoding="utf-8")
+    assert 'import * as sounds from "./yue2_sounds.js";' in source
+    kept = source.split("function rememberedSounds()")[1].split("\n}")[0]
+    assert "localStorage" in kept and "catch" in kept
+    assert "localStorage" in source.split("function rememberSounds(")[1].split("\n}")[0]
+    assert "widgets_values" not in source.split("rememberSounds(")[1][:400]
+
+
+def test_the_window_says_the_sound_is_not_what_yue2_hears():
+    """The one thing that would be a lie by omission: this picks no instrument for the song."""
+    source = SCORE.read_text(encoding="utf-8")
+    assert "never an instrument" in source
+    for part in ("Vocal:", "Ins:", "chords:"):
+        assert part in source.split("const SOUND_TITLE = {")[1].split("};")[0]
+
+
+def test_the_keyboard_names_the_kit_only_while_the_drums_are_the_part_being_edited():
+    source = SCORE.read_text(encoding="utf-8")
+    rows = source.split("drumRows() {")[1].split("\n    }")[0]
+    assert 'this.part === "Ins"' in rows and "sounds.DRUMS" in rows
+    assert "drawKit(c, top, rows)" in source and "sounds.drumName(pitch)" in source
+
+
 ROLL = WEB / "yue2_roll.js"
 
 ROLL_SCORE = ('X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\n'
@@ -716,6 +818,72 @@ def test_altgr_counts_as_alt_and_not_as_ctrl():
     assert [[x["alt"], x["ctrl"], x["shift"]] for x in got] == [
         [True, False, False], [False, True, False], [False, True, False], [True, False, False],
         [True, False, False], [False, True, True], [False, False, False]]
+
+
+@needs_node
+def test_a_second_press_counts_as_a_double_click_only_near_the_first_one_and_soon():
+    """The roll draws on the press, so the gesture is read before a note is down.
+
+    The browser's own dblclick arrives after both presses have already done
+    their work; by then the first one has drawn a note. The editor asks this
+    instead, while the press can still be turned into play or stop.
+    """
+    got = run_roll("""
+        const last = {at: 1000, px: 200, py: 300};
+        const tries = [[last, 1100, 200, 300], [last, 1399, 204, 296], [last, 1500, 200, 300],
+                       [last, 1100, 212, 300], [last, 1100, 200, 312], [null, 1100, 200, 300]];
+        console.log(JSON.stringify([r.DOUBLE_CLICK_MS, r.DOUBLE_CLICK_PX,
+                                    ...tries.map((one) => r.isDoubleClick(...one))]));
+    """)
+    assert got == [400, 5, True, True, False, False, False, False]
+
+
+@needs_node
+def test_the_history_hands_back_the_last_step_without_offering_it_as_a_redo():
+    """The double click undraws the note the first press drew, and that is not an undo.
+
+    A Redo button lit by a gesture meant to play the song would read as a bug,
+    so the step is taken off the stack instead of being undone. The draw wipes
+    whatever was waiting to be redone, as any edit does, so the step hands that
+    list back and the take-back puts it where it was.
+    """
+    got = run_roll("""
+        const past = new r.History();
+        past.push("first");
+        const back = past.undo("second");
+        const dropped = past.push("drawn");
+        const taken = past.take(dropped);
+        console.log(JSON.stringify({back, dropped, taken, canUndo: past.canUndo, canRedo: past.canRedo,
+                                    empty: new r.History().take()}));
+    """)
+    assert got == {"back": "first", "dropped": ["second"], "taken": "drawn",
+                   "canUndo": False, "canRedo": True, "empty": None}
+
+
+def test_a_double_click_plays_the_song_and_leaves_no_note_behind():
+    """Asked for by the user on 2026-09-21: two left clicks start and stop the sound.
+
+    The bar strip already moves the marker on a press, so there the second
+    press only toggles and the song starts from that bar. On the roll the
+    first press has drawn a note, so the second takes it back before playing.
+
+    The note is only taken back while it is still the last step on the stack,
+    which is why an undo or a redo in between forgets it: without that, a
+    Ctrl+Z between the two presses would have cost the step before it too.
+    """
+    source = SCORE.read_text(encoding="utf-8")
+    down = source.split("pointerDown(event) {")[1].split("\n    }")[0]
+    assert "roll.isDoubleClick(this.lastDown, at, px, py)" in down
+    assert "event.button === 0 && !keys.alt && !keys.ctrl && !keys.shift" in down
+    assert "if (again) this.togglePlay();\n            else this.movePlayhead(tick);" in down
+    assert "this.takeBackDraw();" in down
+    back = source.split("takeBackDraw() {")[1].split("\n    }")[0]
+    assert "this.history.take(redo)" in back and "roll.DOUBLE_CLICK_MS" in back
+    assert "if (kept && drag.drawn) this.drawn = { at: now(), redo: this.dropped };" in source
+    assert "this.dropped = this.history.push(previous);" in source
+    for step in ("undo() {", "redo() {"):
+        assert "this.drawn = null;" in source.split(step)[1].split("\n    }")[0], step
+    assert "this.drawn = null;" in source.split("commit(next, previous = this.model) {")[1].split("\n    }")[0]
 
 
 @needs_node

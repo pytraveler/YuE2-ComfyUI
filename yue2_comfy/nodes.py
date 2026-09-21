@@ -27,7 +27,8 @@ from .progress import (Band, NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 from .load_midi import MIDI_CLASSES, MIDI_NAMES
 from .lora.node import LORA_CLASSES, LORA_NAMES
-from .staged import (STAGED_CLASSES, STAGED_NAMES, adapters, resolve, session, words)
+from .staged import (STAGED_CLASSES, STAGED_NAMES, adapters, engine_line, resolve, session,
+                     stage_times, words)
 from .transcribe import TRANSCRIBE_CLASSES, TRANSCRIBE_NAMES
 from .vocals_only import VOCALS_CLASSES, VOCALS_NAMES, VOICE_SHARE, separator_weights, voice_of
 
@@ -340,24 +341,6 @@ EDITED_SCORE_TOOLTIP = (
 GENERATE_INSTEAD = "the model wrote a new score for these words"
 
 
-def stage_times(timing: dict, wall: float) -> str:
-    """Where one song's time went, stage by stage, and what loading added.
-
-    The summary line above it counts from the first stage, so a log used to
-    show neither the load nor which stage was slow: a report of 2026-09-18 left
-    open whether its decode had spilled out of an 8 GB card, which this line
-    answers at a glance. A stage that did not run this time is left out.
-    """
-    parts = []
-    for key, name in (("abc", "score"), ("semantic", "performance"),
-                      ("acoustic", "acoustic"), ("decode", "decode")):
-        seconds = (timing.get(key) or {}).get("seconds")
-        if seconds is not None:
-            parts.append("{} {:.1f} s".format(name, seconds))
-    loading = max(0.0, wall - float(timing.get("total_seconds", 0.0)))
-    return "stages: " + ", ".join(parts) + " | loading and the rest {:.1f} s".format(loading)
-
-
 class YuE2GenerateSong:
     """Style and lyrics in, a finished song out."""
 
@@ -446,13 +429,8 @@ class YuE2GenerateSong:
         audio = {"waveform": waveform, "sample_rate": SAMPLE_RATE}
         songs.keep(audio, "YuE2 Generate Song", style, lyrics, seed, settings, score, performance)
 
-        log.info(
-            "[yue2_comfy] %.1f s of audio in %.1f s | %d semantic tokens at %.1f tok/s "
-            "| %s, %s attention | seed %s",
-            timing["seconds_of_audio"], timing["total_seconds"],
-            timing["semantic"]["output_tokens"], timing["semantic"]["output_tps"],
-            timing["semantic"]["execution"], timing["semantic"]["attention"], seed,
-        )
+        log.info("[yue2_comfy] %.1f s of audio in %.1f s | %s | seed %s",
+                 timing["seconds_of_audio"], timing["total_seconds"], engine_line(timing), seed)
         log.info("[yue2_comfy] %s", stage_times(timing, time.perf_counter() - began))
         short = generate.ended_early(score, timing["seconds_of_audio"],
                                      generate.song_ceiling(settings["max_seconds"], lyrics, tune_seconds))

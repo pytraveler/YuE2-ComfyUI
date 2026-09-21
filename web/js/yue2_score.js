@@ -4,6 +4,7 @@ import {
     setWidgetValue, showWidget, sourceOf, widgetNamed,
 } from "./yue2_controls.js";
 import * as roll from "./yue2_roll.js";
+import * as sounds from "./yue2_sounds.js";
 import { PITCHES } from "./yue2_piano.js";
 
 const RENDER = "YuE2RenderPlan";
@@ -219,6 +220,10 @@ const SECTION_NOTICE =
     "empty the box and join it to the section before, and click anywhere else up there to start " +
     "a new one at that bar.";
 
+const DOUBLE_NOTICE =
+    " A double click starts and stops the sound, as Space does: on the bar strip it plays from " +
+    "the bar you clicked, and on the roll it leaves no note behind.";
+
 const FINER = "finer";
 const FINER_LABEL = "Thirty-second notes (rewrites the score)";
 
@@ -250,6 +255,9 @@ const SCORE_STYLE = `
 .yue2-s-facts .yue2-s-warn { cursor: help; }
 .yue2-s-check { font-size: 12px; display: inline-flex; gap: 4px; align-items: center;
     color: var(--descrip-text, #bbb); user-select: none; }
+.yue2-score select.yue2-s-sound { font-size: 11px; padding: 2px 4px; margin-left: -1px;
+    max-width: 96px; }
+.yue2-score select.yue2-s-part { max-width: 190px; }
 .yue2-s-tempo { font-size: 12px; display: inline-flex; gap: 6px; align-items: center;
     color: var(--descrip-text, #bbb); user-select: none; }
 .yue2-s-tempo input[type="range"] { width: 120px; margin: 0; accent-color: #3B7DD8; }
@@ -301,6 +309,10 @@ const TIMES_ASKED = new Set();
 
 function clamp(value, low, high) {
     return Math.min(high, Math.max(low, value));
+}
+
+function now() {
+    return typeof performance === "object" && performance ? performance.now() : Date.now();
 }
 
 function hashText(text) {
@@ -467,6 +479,38 @@ function graphNodes() {
     return app.graph?._nodes ?? app.graph?.nodes ?? [];
 }
 
+const SOUND_KEY = "yue2.score.sounds";
+
+const SOUND_TITLE = {
+    Vocal: "What the voice part sounds like in this window.",
+    Ins: "What the instrument part sounds like in this window. 'drums' plays the rows as a kit, "
+        + "and while this part is the one being edited the keyboard names them -- Kick, Snare, "
+        + "Hat -- instead of the notes. The kit repeats in every octave.",
+    chords: "What the chord lane sounds like in this window.",
+};
+
+const SOUND_NOTICE = " The sound is for your ear here only: YuE2 is given this score and the style "
+    + "line, never an instrument, so what plays the song is the style line.";
+
+function rememberedSounds() {
+    const kept = { ...sounds.DEFAULTS };
+    try {
+        const stored = JSON.parse(window.localStorage.getItem(SOUND_KEY) || "{}");
+        for (const part of Object.keys(kept)) kept[part] = sounds.known(part, stored[part]);
+    } catch (error) {
+        void error;
+    }
+    return kept;
+}
+
+function rememberSounds(chosen) {
+    try {
+        window.localStorage.setItem(SOUND_KEY, JSON.stringify(chosen));
+    } catch (error) {
+        void error;
+    }
+}
+
 function audioContext() {
     if (!AUDIO) AUDIO = new (window.AudioContext || window.webkitAudioContext)();
     if (AUDIO.state === "suspended") AUDIO.resume();
@@ -537,6 +581,7 @@ class Player {
         this.playing = false;
         this.started = 0;
         this.master = null;
+        this.sounds = { ...sounds.DEFAULTS };
     }
 
     play(list) {
@@ -549,15 +594,24 @@ class Player {
         const origin = context.currentTime + 0.06;
         this.started = origin;
         for (const item of list) {
-            this.voices.push(this.tone(context, master, origin + item.at, item.length, item.pitch, item.part));
+            this.voices.push(...this.tone(context, master, origin + item.at, item.length, item.pitch, item.part));
         }
         this.playing = true;
     }
 
+    soundOf(part) {
+        return sounds.known(part, this.sounds?.[part]);
+    }
+
     tone(context, master, start, length, pitch, part) {
-        return PIANO.size
+        const kind = this.soundOf(part);
+        if (kind !== "piano") {
+            return sounds.play(context, master, start, length, pitch, kind,
+                               WAVE_LEVEL[part] ?? WAVE_LEVEL.chords);
+        }
+        return [PIANO.size
             ? this.struck(context, master, start, length, pitch, part)
-            : this.wave(context, master, start, length, pitch, part);
+            : this.wave(context, master, start, length, pitch, part)];
     }
 
     struck(context, master, start, length, pitch, part) {
@@ -658,6 +712,8 @@ class ScoreEditor {
         this.limit = limitFor(node);
         this.baseWords = null;
         this.player = new Player();
+        this.sounds = rememberedSounds();
+        this.player.sounds = this.sounds;
         this.sequence = 0;
         this.writeSequence = 0;
         this.isClosed = false;
@@ -731,7 +787,10 @@ class ScoreEditor {
 
         const tools = element("div", "yue2-s-bar");
         this.playButton = element("button", "", "Play");
-        this.playButton.title = "Play from the marker (Space). A sampled piano, not YuE2: the song itself is made when the workflow runs.";
+        this.playButton.title = "Play from the marker (Space, or a double click on the roll). "
+            + "A sampled piano and a few synthesised "
+            + "voices, not YuE2: the song itself is made when the workflow runs, and the sound "
+            + "picked beside each part is for your ear here only.";
         this.playButton.addEventListener("click", () => this.togglePlay());
         const rewind = element("button", "", "From start");
         rewind.title = "Put the play marker back at the first bar.";
@@ -745,7 +804,10 @@ class ScoreEditor {
         this.hearVoice = checkControl("voice", true, "Play the voice part.");
         this.hearIns = checkControl("instrument", true, "Play the instrument part.");
         this.hearChords = checkControl("chords", false, "Play the chord symbols as soft held chords.");
-        tools.append(this.playButton, rewind, this.hearVoice.holder, this.hearIns.holder, this.hearChords.holder,
+        tools.append(this.playButton, rewind,
+            this.hearVoice.holder, this.soundControl("Vocal"),
+            this.hearIns.holder, this.soundControl("Ins"),
+            this.hearChords.holder, this.soundControl("chords"),
             element("span", "yue2-s-gap"), this.tempoControl(), element("span", "yue2-s-gap"));
 
         this.rollTools = element("span", "yue2-s-bar");
@@ -756,6 +818,7 @@ class ScoreEditor {
                 this.selection.clear();
                 this.draw();
             });
+        this.partSelect.className = "yue2-s-part";
         this.snapHolder = element("span");
         const zoomOut = element("button", "", "\u2212");
         zoomOut.title = "Zoom out (Ctrl + wheel).";
@@ -787,7 +850,7 @@ class ScoreEditor {
         this.rollBox = element("div", "yue2-s-roll");
         this.rollBox.tabIndex = 0;
         this.canvas = document.createElement("canvas");
-        this.canvas.title = SECTION_NOTICE;
+        this.canvas.title = SECTION_NOTICE + DOUBLE_NOTICE;
         this.rollBox.appendChild(this.canvas);
         this.scroller = document.createElement("input");
         this.scroller.type = "range";
@@ -979,6 +1042,27 @@ class ScoreEditor {
         this.refresh();
     }
 
+    soundControl(part) {
+        const pick = selectControl(sounds.CHOICES[part], this.sounds[part],
+            SOUND_TITLE[part] + SOUND_NOTICE, (value) => {
+                this.sounds[part] = sounds.known(part, value);
+                this.player.sounds = this.sounds;
+                rememberSounds(this.sounds);
+                this.stopPlaying();
+                this.draw();
+            });
+        pick.className = "yue2-s-sound";
+        return pick;
+    }
+
+    soundOf(part) {
+        return sounds.known(part, this.sounds[part]);
+    }
+
+    drumRows() {
+        return this.part === "Ins" && this.soundOf("Ins") === sounds.DRUMS;
+    }
+
     tempoControl() {
         const holder = element("span", "yue2-s-tempo");
         holder.title = TEMPO_TOOLTIP;
@@ -1079,7 +1163,8 @@ class ScoreEditor {
         }
         const late = this.lateBars(this.changed);
         return retimed
-            + "Bars " + barList(this.changed) + " will be written again; every other bar stays exactly as it was."
+            + (this.changed.length === 1 ? "Bar " : "Bars ") + barList(this.changed)
+            + " will be written again; every other bar stays exactly as it was."
             + (late.length ? " Bars " + barList(late) + " come after " + roll.clock(this.limit.seconds) + ", where "
                 + limitReason(this.limit) + " ends the song: they will not be heard " + limitRemedy(this.limit) + "."
                 : "");
@@ -1522,6 +1607,10 @@ class ScoreEditor {
     }
 
     drawKeys(c, top, rows) {
+        if (this.drumRows()) {
+            this.drawKit(c, top, rows);
+            return;
+        }
         const blackW = Math.round(KEYS_W * 0.6);
         c.fillStyle = SKIN.keyWhite;
         c.fillRect(0, top, KEYS_W, rows * ROW_H);
@@ -1555,6 +1644,24 @@ class ScoreEditor {
         }
     }
 
+    drawKit(c, top, rows) {
+        c.fillStyle = SKIN.keyWhite;
+        c.fillRect(0, top, KEYS_W, rows * ROW_H);
+        c.font = "9px system-ui, sans-serif";
+        for (let r = 0; r < rows; r++) {
+            const pitch = this.pitchTop - r;
+            const rowY = top + r * ROW_H;
+            if (pitch === this.hoverPitch) {
+                c.fillStyle = SKIN.keyUnder;
+                c.fillRect(0, rowY + 1, KEYS_W, ROW_H - 2);
+            }
+            c.fillStyle = SKIN.keyEdge;
+            c.fillRect(0, rowY + ROW_H - 1, KEYS_W, 1);
+            c.fillStyle = ((pitch % 12) + 12) % 12 === 0 ? SKIN.keyTextC : SKIN.keyText;
+            c.fillText(sounds.drumName(pitch), 4, rowY + ROW_H - 3);
+        }
+    }
+
     drawPart(c, model, part, ghost, first, lastTick) {
         const px = this.pxPerTick;
         const top = RULER_H + CHORD_H;
@@ -1579,7 +1686,9 @@ class ScoreEditor {
                 c.fillRect(noteX + 1.5, noteY + 2, width - 4, 1);
             }
             const bar = this.sheet.bars[roll.barAt(this.sheet, note.start)];
-            const label = roll.noteName(note.pitch, roll.flatsIn(this.sheet, bar.key));
+            const label = part === "Ins" && this.soundOf("Ins") === sounds.DRUMS
+                ? sounds.drumName(note.pitch)
+                : roll.noteName(note.pitch, roll.flatsIn(this.sheet, bar.key));
             if (c.measureText(label).width + 6 <= width) {
                 c.fillStyle = picked ? SKIN.pickedText : SKIN.noteText;
                 c.fillText(label, noteX + 3, noteY + ROW_H - 4);
@@ -1647,6 +1756,10 @@ class ScoreEditor {
         const { px, py } = this.local(event);
         const top = RULER_H + CHORD_H;
         const tick = this.tickAt(px);
+        const at = now();
+        const again = event.button === 0 && !keys.alt && !keys.ctrl && !keys.shift
+            && roll.isDoubleClick(this.lastDown, at, px, py);
+        this.lastDown = { at, px, py };
         if (px < KEYS_W) {
             if (py >= top) this.blip(this.pitchAt(py));
             return;
@@ -1656,12 +1769,18 @@ class ScoreEditor {
             return;
         }
         if (py < RULER_H) {
-            this.movePlayhead(tick);
+            if (again) this.togglePlay();
+            else this.movePlayhead(tick);
             return;
         }
         if (py < top) {
             if (event.button === 2) this.dropChord(px);
             else this.chordAt(tick, px);
+            return;
+        }
+        if (again) {
+            this.takeBackDraw();
+            this.togglePlay();
             return;
         }
         const pitch = this.pitchAt(py);
@@ -1714,8 +1833,23 @@ class ScoreEditor {
         this.selection = new Set([placed.id]);
         this.blip(pitch);
         this.working = placed.model;
-        this.drag = { mode: "move", ids: [placed.id], from: this.model, base: placed.model, tick: start, pitch, sounded: pitch };
+        this.drag = { mode: "move", drawn: true, ids: [placed.id], from: this.model, base: placed.model,
+                      tick: start, pitch, sounded: pitch };
         this.draw();
+    }
+
+    takeBackDraw() {
+        if (!this.drawn || now() - this.drawn.at > roll.DOUBLE_CLICK_MS) return;
+        const redo = this.drawn.redo;
+        this.drawn = null;
+        const before = this.history.take(redo);
+        if (!before) return;
+        this.notice = null;
+        this.model = before;
+        this.selection.clear();
+        this.localChanged = roll.changedBars(this.sheet, this.model);
+        this.draw();
+        this.scheduleWrite();
     }
 
     movePlayhead(tick) {
@@ -1900,7 +2034,8 @@ class ScoreEditor {
                 const lead = result.notes[this.part].find((n) => n.id === drag.ids[0]);
                 if (lead && !this.lastLength) this.lastLength = lead.length;
             }
-            this.commit(result, drag.from);
+            const kept = this.commit(result, drag.from);
+            if (kept && drag.drawn) this.drawn = { at: now(), redo: this.dropped };
             return;
         }
         this.draw();
@@ -2097,13 +2232,14 @@ class ScoreEditor {
 
     commit(next, previous = this.model) {
         this.notice = null;
+        this.drawn = null;
         if (!next) {
             this.setStatus("That does not fit: each part sings one note at a time, inside the song.", true);
             this.draw();
             return false;
         }
         if (next === previous) return false;
-        this.history.push(previous);
+        this.dropped = this.history.push(previous);
         this.model = next;
         this.localChanged = roll.changedBars(this.sheet, this.model);
         this.draw();
@@ -2116,6 +2252,7 @@ class ScoreEditor {
         const previous = this.history.undo(this.model);
         if (!previous) return;
         this.notice = null;
+        this.drawn = null;
         this.model = previous;
         this.selection.clear();
         this.localChanged = roll.changedBars(this.sheet, this.model);
@@ -2128,6 +2265,7 @@ class ScoreEditor {
         const next = this.history.redo(this.model);
         if (!next) return;
         this.notice = null;
+        this.drawn = null;
         this.model = next;
         this.selection.clear();
         this.localChanged = roll.changedBars(this.sheet, this.model);
@@ -2241,10 +2379,14 @@ class ScoreEditor {
         else this.startPlaying();
     }
 
+    needsPiano() {
+        return Object.keys(sounds.DEFAULTS).some((part) => this.soundOf(part) === "piano");
+    }
+
     startPlaying() {
         if (!this.sheet || this.pianoWait) return;
         audioContext();
-        if (PIANO.size) {
+        if (PIANO.size || !this.needsPiano()) {
             this.playNow();
             return;
         }

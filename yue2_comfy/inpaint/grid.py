@@ -405,7 +405,9 @@ def layout(sheet, clock: Grid, frames: int) -> dict:
     A section carries the second its singing begins as well as its first bar
     line, because that is where an edit of it opens, and the two are not the
     same wherever the words come in before the downbeat. A section that sings
-    nothing before its end carries None there. After an edit a bar is as long
+    nothing before its end carries None there. ``notes`` is how many vocal
+    notes start inside the section, which is what tells a sung section from
+    an instrumental one when the words are laid on the score by count. After an edit a bar is as long
     as its lines say, and its beats and pickups are measured by that length.
     """
     marks = seams(sheet)
@@ -414,16 +416,20 @@ def layout(sheet, clock: Grid, frames: int) -> dict:
         span = _span(sheet, clock, index)
         for beat in range(max(1, int(round(bar["length"] / sheet["per_quarter"])))):
             beats.append(round(clock.at(index) + beat * sheet["per_quarter"] * span, 3))
+    onsets = [note["start"] for note in sheet.get("notes", {}).get("Vocal", [])]
     sections = []
     for section in sheet["sections"]:
         stop = section["bar"] + section["bars"]
         pickup = marks[section["bar"]].pickup
         sung = clock.at(section["bar"]) - pickup * _span(
             sheet, clock, section["bar"] - 1 if pickup > 0 else section["bar"])
+        low = sheet["bars"][section["bar"]]["start"]
+        high = sheet["bars"][stop - 1]["start"] + sheet["bars"][stop - 1]["length"]
         sections.append({"name": section["name"], "bar": section["bar"], "bars": section["bars"],
                          "start": round(clock.at(section["bar"]), 3),
                          "end": round(clock.at(stop), 3),
-                         "sung": None if sung >= clock.at(stop) else round(sung, 3)})
+                         "sung": None if sung >= clock.at(stop) else round(sung, 3),
+                         "notes": sum(1 for tick in onsets if low <= tick < high)})
     return {"seconds": round(frames * FRAME_SECONDS, 3), "offset": round(clock.offset, 3),
             "rate": round(clock.rate, 6), "by_voice": bool(clock.by_voice),
             "bars": [round(clock.at(bar), 3) for bar in range(len(clock.starts))],

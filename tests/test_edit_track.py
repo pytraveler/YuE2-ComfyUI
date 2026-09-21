@@ -284,6 +284,14 @@ def test_a_cut_takes_the_words_of_the_section_it_empties(stand):
     assert drawn["takes"][0]["seconds"] == 0.0
 
 
+def test_the_track_carries_the_words_the_song_sings_now(stand):
+    """The window draws the words beside the track, so a cut has to change them there too."""
+    assert payload(run(stand))["lyrics"] == LYRICS
+    after = payload(run(stand, '[{"op": "cut", "bars": [2, 4]}]'))
+    assert after["dropped"] == ["Verse"]
+    assert "one two three" not in after["lyrics"] and "[Chorus]" in after["lyrics"]
+
+
 def test_the_edited_song_is_remembered_so_it_can_be_edited_again(stand):
     answer = run(stand, '[{"op": "cut", "bars": [2, 4]}]')
     made = payload(answer)["song"]
@@ -354,19 +362,89 @@ def test_an_entry_grown_in_place_is_measured_again_when_it_is_put_back():
     assert held.size() == 0 and not edit_track.is_loaded()
 
 
-def test_an_excerpt_is_written_again_every_time(stand, a_temp_folder_of_its_own):
-    """The name of an excerpt says nothing about the decoder or the card the take came out of, so
-    a file left from an earlier run must not stand in for a take sung again."""
+def test_a_take_is_written_whole_and_written_again_every_time(stand, a_temp_folder_of_its_own):
+    """Its name says nothing about the decoder or the card the take came out of, so a file left
+    from an earlier run must not stand in for a take sung again."""
     run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40}]')
     place = a_temp_folder_of_its_own / "yue2_edit"
-    before = {path.name: path.stat().st_mtime_ns for path in place.iterdir()}
+    before = {path.name: path.read_bytes() for path in place.iterdir()}
     for path in place.iterdir():
         path.write_bytes(b"stale")
     edit_track.RESULTS.clear()
     run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40}]')
-    for path in place.iterdir():
-        assert path.stat().st_size > 5, path.name
-    assert set(path.name for path in place.iterdir()) == set(before)
+    assert {path.name: path.read_bytes() for path in place.iterdir()} == before
+
+
+def test_every_take_is_a_whole_song_the_window_can_draw_and_play(stand, a_temp_folder_of_its_own,
+                                                                  monkeypatch, torch):
+    """Switching takes has to change the track under the cursor without the node running again,
+    so each take carries the song it makes: its length, its wave, its own grid and a file of the
+    whole thing. Two takes of one edit come out different lengths, and the one not kept moves
+    every bar after the edit by the difference, so its grid is not the song's."""
+    import wave
+
+    from yue2_comfy.inpaint import core
+
+    shorter = 5
+
+    def retakes(models, old, waveform, region, seeds, settings, progress=None, cancelled=None,
+                noise_seeds=None, natural=False):
+        made = []
+        for index, seed in enumerate(seeds):
+            count = region.length - shorter * index
+            frames = old.frames - region.removed + count
+            made.append(core.Take(seed=seed, waveform=a_wave(torch, frames, 0.1 * (index + 1)),
+                                  song=a_song(frames), count=count, join=-4.0 - index, joins={},
+                                  ended=False, timing={}, natural=None))
+        return made
+
+    monkeypatch.setattr(core, "retakes", retakes)
+    drawn = payload(run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40, "takes": 2}]'))
+    kept, other = drawn["takes"][drawn["chosen"]], drawn["takes"][1 - drawn["chosen"]]
+    assert drawn["chosen"] == 0 and kept["kept"] and not other["kept"]
+    assert kept["total"] == pytest.approx(drawn["seconds"])
+    assert other["total"] == pytest.approx(drawn["seconds"] - shorter * SAMPLES_A_FRAME / RATE)
+    assert kept["grid"]["bars"] == drawn["grid"]["bars"]
+    moved = shorter * SAMPLES_A_FRAME / RATE
+    assert other["grid"]["bars"][0] == drawn["grid"]["bars"][0]
+    assert other["grid"]["bars"][-1] == pytest.approx(drawn["grid"]["bars"][-1] - moved, abs=0.002)
+    assert other["grid"]["seconds"] == pytest.approx(other["total"], abs=0.002)
+    for take in drawn["takes"]:
+        assert take["seconds"] < take["total"]
+        assert len(take["peaks"]) == len(take["rms"]) <= edit_track.PEAKS
+        sound = a_temp_folder_of_its_own / "yue2_edit" / take["audio"]["filename"]
+        with wave.open(str(sound), "rb") as handle:
+            assert handle.getnchannels() == 2 and handle.getframerate() == RATE
+            assert handle.getnframes() / RATE == pytest.approx(take["total"], abs=0.001), (
+                "a take is written whole, not as an excerpt")
+
+
+def test_the_wave_reads_any_sound_the_node_can_be_handed(torch):
+    """Stereo is measured over both channels, not over the louder one; a sample that is not a
+    number draws as silence rather than breaking the JSON; and a song shorter than the slices
+    asked for never gives back more slices than that."""
+    one_sided = torch.zeros((1, 2, 6400))
+    one_sided[0, 0] = 1.0
+    wave = edit_track._wave(one_sided, count=4)
+    assert wave["peaks"] == [1.0] * 4
+    assert wave["rms"] == pytest.approx([0.7071] * 4, abs=0.0002)
+    broken = torch.full((1, 2, 4800), float("nan"))
+    assert edit_track._wave(broken, count=2) == {"peaks": [0.0, 0.0], "rms": [0.0, 0.0]}
+    short = torch.rand((1, 1, 2399))
+    drawn = edit_track._wave(short, count=1200)
+    assert len(drawn["peaks"]) == len(drawn["rms"]) <= 1200
+    assert edit_track._wave(torch.zeros((1, 2, 0))) == {"peaks": [], "rms": []}
+
+
+def test_the_wave_carries_both_the_peaks_and_the_body_of_the_sound(torch):
+    """A mastered song is a solid block drawn from its peaks alone; the root mean square of the
+    same slice is what tells a verse from a chorus."""
+    loud = torch.zeros((1, 2, FRAMES * SAMPLES_A_FRAME))
+    loud[..., ::64] = 1.0
+    wave = edit_track._wave(loud, count=10)
+    assert wave["peaks"] == [1.0] * 10
+    assert all(0.1 < value < 0.2 for value in wave["rms"]), wave["rms"]
+    assert edit_track._wave(torch.zeros((1, 2, 0))) == {"peaks": [], "rms": []}
 
 
 def test_bars_the_score_does_not_have_are_refused_before_the_voice_is_separated(stand, monkeypatch):
@@ -462,10 +540,15 @@ def test_a_take_without_a_join_shows_no_join_of_the_song_either(stand, monkeypat
     would read as a comparison."""
     from yue2_comfy.inpaint import core
 
+    from yue2_comfy.inpaint import track
+
     take = core.Take(0, a_wave(pytest.importorskip("torch"), 10), None, 5, None, {}, True, {},
                      natural=-3.4)
-    facts = edit_track._take_facts(take, 0, 0, "x" * 64, RATE, 0)
+    prior = track.opened(a_song(score_text=""), None)
+    step = track.plan(prior, track.read('[{"op": "retake", "seconds": [0.5, 1.0]}]')[0])
+    facts = edit_track._take_facts(take, 0, 0, "x" * 64, RATE, prior, step)
     assert facts["join"] is None and facts["natural"] is None and facts["ended"]
+    assert facts["grid"] is None, "no score, so no grid of its own"
 
 
 def test_the_run_decides_the_card_and_the_song_decides_the_singing():

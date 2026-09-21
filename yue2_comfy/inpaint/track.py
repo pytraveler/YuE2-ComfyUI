@@ -107,8 +107,19 @@ class Step:
     notices: tuple
 
 
+SEED_LIMIT = 2 ** 53
+
+SEED_RANGE = ("{}: the seed is not between 0 and 2**53 - 1, the numbers the track window can write "
+              "back without changing them.")
+
+
 def _whole(value, what: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    """``value`` as an int when it is a whole number, however JSON spelled it: 4 and 4.0 alike."""
+    if isinstance(value, bool):
+        raise ValueError("{} is not a whole number.".format(what))
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if not isinstance(value, int):
         raise ValueError("{} is not a whole number.".format(what))
     return value
 
@@ -154,7 +165,10 @@ def _edit(item, index: int, takes: int) -> Edit:
     bars, seconds = _range(item, index)
     if op == "cut":
         return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None)
-    seed = normalize_seed(_whole(item.get("seed", 0), "{}: the seed".format(where)))
+    seed = _whole(item.get("seed", 0), "{}: the seed".format(where))
+    if not 0 <= seed < SEED_LIMIT:
+        raise ValueError(SEED_RANGE.format(where))
+    seed = normalize_seed(seed)
     wanted = _whole(item.get("takes", takes), "{}: the number of takes".format(where))
     if not 1 <= wanted <= MAX_TAKES:
         raise ValueError("{} asks for {} takes; between 1 and {} can be sung.".format(
@@ -177,7 +191,7 @@ def read(text, takes: int = 1) -> tuple:
         return ()
     if not isinstance(text, str):
         raise ValueError(NOT_A_LIST)
-    body = text.strip()
+    body = text.lstrip("\ufeff").strip()
     if not body:
         return ()
     try:

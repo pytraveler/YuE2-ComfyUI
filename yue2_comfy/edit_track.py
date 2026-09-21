@@ -40,8 +40,13 @@ ORIGIN = "YuE2 Edit Track"
 PEAKS = 1200
 """How many peaks the wave is drawn from: one for every pixel of a window a thousand wide, and some over."""
 
-EXCERPT_SECONDS = 3.0
-"""How much of the song on each side of an edit an excerpt of a take holds, so a join can be heard in place."""
+TAKE_FILES = """A take is written whole, not as an excerpt around its edit.
+
+The window draws the song a take makes and plays it from anywhere on the
+track, which is how a take that runs a minute is listened to at all. That
+costs the temp folder a WAV per take -- 21 MB a minute of stereo -- until
+ComfyUI clears it at startup, and buys the ear the whole song around the
+join."""
 
 GRID_SHARE = 0.12
 """The share of the bar that laying the score over the song takes: the separator and a tenth of a second of arithmetic."""
@@ -172,7 +177,7 @@ def unload() -> None:
 
 
 def _temp_folder():
-    """ComfyUI's temp folder, where excerpts and the preview go; None outside ComfyUI."""
+    """ComfyUI's temp folder, where the takes and the preview go; None outside ComfyUI."""
     from . import paths
 
     folder_paths = paths._folder_paths()
@@ -194,7 +199,7 @@ def _pcm(waveform):
 
 
 def _write_wave(waveform, rate: int, name: str):
-    """One stretch of sound in ComfyUI's temp folder, as the browser asks for it back from /view."""
+    """One stretch of sound in ComfyUI's temp folder, served back to the window by ``routes.send_sound``."""
     import wave
 
     folder = _temp_folder()
@@ -211,36 +216,40 @@ def _write_wave(waveform, rate: int, name: str):
             handle.setsampwidth(2)
             handle.setframerate(int(rate))
             handle.writeframes(_pcm(waveform))
-    except OSError:
+    except Exception:
         log.warning("[yue2_comfy.edit_track] this take could not be written for listening",
                     exc_info=True)
         return None
     return entry
 
 
-def _peaks(waveform, count: int = PEAKS) -> list:
-    """The loudest sample of each of ``count`` slices of the song, for the wave the window draws."""
-    samples = waveform.detach()
+def _wave(waveform, count: int = PEAKS) -> dict:
+    """The song drawn as at most ``count`` slices: the loudest sample of each, and how loud it is.
+
+    The peaks alone draw a mastered song as a solid block, because nearly
+    every tenth of a second of one touches the ceiling. The root mean square
+    of the slice, over every channel, is the body of the sound, and drawn
+    inside the peaks it is what makes a verse look different from a chorus.
+    A sample that is not a number draws as silence rather than breaking the
+    JSON the browser reads.
+    """
+    samples = waveform.detach().float()
     if samples.dim() == 3:
         samples = samples[0]
-    mono = samples.abs().amax(dim=0) if samples.dim() == 2 else samples.abs()
-    total = int(mono.numel())
-    if total < 1:
-        return []
-    step = max(1, total // max(1, count))
+    if samples.dim() == 1:
+        samples = samples.unsqueeze(0)
+    samples = samples.nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
+    total = int(samples.shape[-1])
+    if total < 1 or samples.shape[0] < 1:
+        return {"peaks": [], "rms": []}
+    step = max(1, -(-total // max(1, count)))
     usable = (total // step) * step
-    blocks = mono[:usable].reshape(-1, step).amax(dim=1)
-    return [round(float(value), 4) for value in blocks.tolist()]
-
-
-def _excerpt(waveform, rate: int, start: int, stop: int):
-    """The sound around an edit, three seconds either side, so its joins can be heard in place."""
-    room = int(EXCERPT_SECONDS * rate)
-    low = max(0, int(start * FRAME_SECONDS * rate) - room)
-    high = min(int(waveform.shape[-1]), int(stop * FRAME_SECONDS * rate) + room)
-    if high <= low:
-        return waveform
-    return waveform[..., low:high]
+    if usable < 1:
+        return {"peaks": [], "rms": []}
+    loudest = samples.abs().amax(dim=0)[:usable].reshape(-1, step).amax(dim=1)
+    body = samples.pow(2).mean(dim=0)[:usable].reshape(-1, step).mean(dim=1).sqrt()
+    return {"peaks": [round(float(value), 4) for value in loudest.tolist()],
+            "rms": [round(float(value), 4) for value in body.tolist()]}
 
 
 def _settings(song, options, unique_id) -> dict:
@@ -342,12 +351,30 @@ def _flagged(take) -> bool:
             and take.join < take.natural - JOIN_SLACK)
 
 
-def _take_facts(take, index: int, chosen: int, name: str, rate: int, start: int) -> dict:
-    """One take as the window shows it: how it scored, how long it came out, and where to hear it."""
-    sound = _excerpt(take.waveform, rate, start, start + take.count)
-    entry = _write_wave(sound, rate, "{}_{}.wav".format(name[:16], take.seed))
+def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step) -> dict:
+    """One take as the window shows it: how it scored, how long it came out, and the song it makes.
+
+    ``seconds`` is the take itself and ``total`` the song with it in, which is
+    what the window draws and plays; ``peaks`` and ``rms`` are that song's
+    wave, and ``grid`` its own layout of the score, because a take that came
+    out longer or shorter than the one kept moves every bar after the edit --
+    so switching takes swaps the track, its bars and its sound under the
+    cursor without the node running again. ``prior`` is the song's state
+    before this edit and ``step`` the edit's plan. See ``TAKE_FILES`` for
+    what the files cost.
+    """
+    from .inpaint import grid, track
+
+    entry = _write_wave(take.waveform, rate, "{}_{}.wav".format(name[:16], take.seed))
+    drawn = _wave(take.waveform)
+    own = track.after(prior, step, take.count)
+    laid = None
+    if own.sheet is not None and own.clock is not None:
+        laid = grid.layout(own.sheet, own.clock, own.frames)
     return {"seed": int(take.seed), "index": index, "kept": index == chosen,
             "seconds": round(take.count * FRAME_SECONDS, 3),
+            "total": round(int(take.waveform.shape[-1]) / float(rate), 3),
+            "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": laid,
             "join": None if take.join is None else round(take.join, 4),
             "natural": None if take.join is None or take.natural is None else round(take.natural, 4),
             "ended": bool(take.ended), "flagged": _flagged(take), "audio": entry}
@@ -461,9 +488,10 @@ class YuE2EditTrack:
                     kept = ordered[pick]
                     history.append((edit, kept.seed))
                     picks.append(pick)
+                    prior = state
                     state = track.after(state, step, kept.count)
                     current, sound = kept.song, kept.waveform
-                    shown = (step, ordered, pick, made)
+                    shown = (step, ordered, pick, made, prior)
         except InterruptedError:
             translate_interrupt()
             raise
@@ -527,23 +555,29 @@ class YuE2EditTrack:
 
         ``song`` is the key the result is remembered under, empty when it could
         not be remembered, and ``was`` the key of the song that came in.
-        ``seconds`` is the length of the result; ``peaks`` its wave, ``PEAKS``
-        values from 0 to 1; ``grid`` is ``grid.layout`` of the score on the
-        result, None for a song without one; ``edits`` the list as it was read,
-        with the take kept written into every retake. After at least one edit
-        there are also ``kind``, ``at`` (the seconds the last edit took in
-        hand), ``dropped`` (the section tags a cut took out), ``chosen`` and
-        ``takes``: an entry a take, with seed, index, kept, seconds, join,
-        natural, ended, flagged and ``audio``, the temp file of the excerpt
-        around the edit, None when it could not be written.
+        ``seconds`` is the length of the result; ``peaks`` and ``rms`` its wave,
+        at most ``PEAKS`` values from 0 to 1 each; ``grid`` is ``grid.layout`` of the score on
+        the result, None for a song without one; ``lyrics`` the words it sings now,
+        which the window shows beside the track and a cut takes sections out
+        of; ``edits`` the list as it was read, with the take kept written into
+        every retake. After at least one edit there are also ``kind``, ``at``
+        (the seconds the last edit took in hand, on the song as it was before
+        it), ``dropped`` (the section tags a cut took out), ``chosen`` and
+        ``takes``: an entry a take, with seed, index, kept, seconds, total,
+        peaks, rms, grid (that take's own layout, since its length moves the
+        bars after the edit), join, natural, ended, flagged and ``audio``, the
+        temp file of the whole song that take makes, None when it could not be
+        written.
         """
         import dataclasses
 
         from .inpaint import grid
 
+        drawn = _wave(sound)
         payload = {"song": keyed, "was": name,
                    "seconds": round(state.frames * FRAME_SECONDS, 3), "sample_rate": rate,
-                   "peaks": _peaks(sound), "grid": None, "takes": [], "chosen": None,
+                   "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": None,
+                   "lyrics": state.lyrics, "takes": [], "chosen": None,
                    "edits": track.written(
                        [dataclasses.replace(edit, take=pick)
                         for edit, pick in zip(wanted, picks)])}
@@ -551,12 +585,12 @@ class YuE2EditTrack:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
         if shown is None:
             return payload
-        step, ordered, pick, made = shown
+        step, ordered, pick, made, prior = shown
         payload["chosen"] = pick
         payload["kind"] = step.kind
         payload["at"] = [round(step.start * FRAME_SECONDS, 3), round(step.stop * FRAME_SECONDS, 3)]
         payload["dropped"] = list(step.dropped)
-        payload["takes"] = [_take_facts(take, index, pick, made, rate, step.start)
+        payload["takes"] = [_take_facts(take, index, pick, made, rate, prior, step)
                             for index, take in enumerate(ordered)]
         return payload
 

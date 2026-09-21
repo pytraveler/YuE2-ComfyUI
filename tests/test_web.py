@@ -1173,3 +1173,406 @@ def test_a_widget_the_editors_write_is_recorded_as_a_change_to_the_workflow():
             stripped = line.strip()
             if stripped.startswith("widget.value =") or stripped.startswith("widget.value="):
                 assert "graphChanged" in source, name + " sets a widget without recording it"
+
+
+EDITLIST = WEB / "yue2_editlist.js"
+TRACK = WEB / "yue2_track.js"
+
+EDIT_LISTS = [
+    "",
+    "   ",
+    "[]",
+    '[{"op": "retake", "bars": [12, 16], "seed": 5, "takes": 2, "take": 1}]',
+    '[{"op": "cut", "bars": [0, 4]}]',
+    '[{"op": "retake", "seconds": [1.5, 9.25], "seed": 7}]',
+    '[{"op": "retake", "bars": [12, 16]}, {"op": "cut", "bars": [2, 3]}]',
+    '[{"op": "cut", "bars": [2, 4], "seed": 42, "take": 0, "takes": 3}]',
+    '[{"op": "retake", "bars": [1, 2], "take": null}]',
+    "not json",
+    "{}",
+    '"[]"',
+    '[{"op": "reverse", "bars": [1, 2]}]',
+    '[{"op": "retake"}]',
+    '[{"op": "retake", "bars": [1, 2], "seconds": [1.0, 2.0]}]',
+    '[{"op": "cut", "bars": [4, 4]}]',
+    '[{"op": "cut", "bars": [-1, 4]}]',
+    '[{"op": "cut", "bars": [1.5, 4]}]',
+    '[{"op": "cut", "bars": [true, 2]}]',
+    '[{"op": "cut", "bars": true}]',
+    '[{"op": "cut", "bars": [1, 2, 3]}]',
+    '[{"op": "retake", "seconds": [1.0, Infinity]}]',
+    '[{"op": "retake", "seconds": [NaN, 1.0]}]',
+    '[{"op": "retake", "seconds": [5.0, 1.0]}]',
+    '[{"op": "retake", "bars": [1, 2], "takes": 9}]',
+    '[{"op": "retake", "bars": [1, 2], "takes": 2, "take": 2}]',
+    '[{"op": "retake", "bars": [1, 2], "seed": "x"}]',
+    '[{"op": "retake", "bars": [1, 2], "seed": null}]',
+    '[{"op": "retake", "bars": [1, 2], "seed": -3}]',
+    '["retake"]',
+    "[null]",
+]
+
+TRACK_GRID = {
+    "seconds": 20.0, "offset": 0.5, "rate": 1.0, "by_voice": True,
+    "bars": [0.5, 2.5, 4.5, 6.5, 8.5, 10.5],
+    "beats": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0,
+              8.5, 9.0, 9.5, 10.0],
+    "sections": [{"name": "verse", "bar": 0, "bars": 2, "start": 0.5, "end": 4.5, "sung": 0.2},
+                 {"name": "chorus", "bar": 2, "bars": 3, "start": 4.5, "end": 10.5, "sung": 4.1}],
+}
+
+
+def run_edits(script: str):
+    """Run ``script`` with the edit list imported as ``e``; it must print one JSON value."""
+    program = "import * as e from {};\n{}".format(json.dumps(EDITLIST.as_uri()), script)
+    done = subprocess.run([NODE, "--input-type=module", "-e", program],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def spelled(edit):
+    """One of the node's edits in the shape the window holds it in."""
+    return {"op": edit.op, "bars": None if edit.bars is None else list(edit.bars),
+            "seconds": None if edit.seconds is None else list(edit.seconds),
+            "seed": edit.seed, "takes": edit.takes, "take": edit.take}
+
+
+@needs_node
+@pytest.mark.parametrize("text", EDIT_LISTS, ids=[str(n) for n in range(len(EDIT_LISTS))])
+def test_the_window_reads_an_edit_list_exactly_as_the_node_does(text):
+    """Both sides read the field the window writes, so a list one takes and the other refuses is
+    either an edit made in the window that the node will not sing, or a track that will not draw.
+
+    Seeds are compared as they are: both sides take 0 to 2**53 - 1 and refuse the rest, so the
+    list the node answers with is always one the window can read back. A whole number written
+    as 2.0 is a whole number on both sides too.
+    """
+    from yue2_comfy.inpaint import track
+
+    made = run_edits("console.log(JSON.stringify(e.readEdits({}, 2)));".format(json.dumps(text)))
+    try:
+        wanted = track.read(text, 2)
+    except ValueError:
+        assert made["error"], "the window takes a list the node refuses: " + text
+        return
+    assert not made["error"], "the window refuses a list the node takes: " + text
+    assert made["edits"] == [spelled(edit) for edit in wanted]
+
+
+@needs_node
+def test_what_the_window_writes_is_what_the_node_sings():
+    from yue2_comfy.inpaint import track
+
+    written = run_edits("""
+        const made = [
+            e.editFor({from: 24.0, to: 32.0, first: 12, stop: 16}, "retake", 3, 831001),
+            e.editFor({from: 40.0, to: 48.0, first: 20, stop: 24}, "cut", 2, 5),
+            e.editFor({from: 4.5, to: 9.25, first: null, stop: null}, "retake", 9, 7),
+        ];
+        const kept = e.withTake(made, 0, 2);
+        console.log(JSON.stringify([e.writeEdits(kept), e.writeEdits(e.dropLast(kept)),
+            e.writeEdits(e.withTakes(kept, 0, 2))]));
+    """)
+    edits = track.read(written[0], 1)
+    assert [spelled(edit) for edit in edits] == [
+        {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3, "take": 2},
+        {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None},
+        {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
+         "take": None},
+    ]
+    assert json.loads(track.written(edits)) == json.loads(written[0])
+    assert len(track.read(written[1], 1)) == 2
+    assert track.read(written[2], 1)[0].take is None, "a take kept that is no longer sung"
+
+
+@needs_node
+@pytest.mark.parametrize("seed", [9007199254740993, -3, -9223372036854775808])
+def test_a_seed_the_window_cannot_write_back_is_refused_on_both_sides(seed):
+    """A browser cannot hold a number past 2**53 without changing it, and a seed that changes
+    is every take after it sung again; a negative seed the node used to fold landed past 2**53
+    every time, so the list it answered with was one the window could not read back and the
+    takes never came home. Both sides now refuse the same seeds with the same reason."""
+    from yue2_comfy.inpaint import track
+
+    text = '[{{"op": "retake", "bars": [1, 2], "seed": {}}}]'.format(seed)
+    made = run_edits("console.log(JSON.stringify(e.readEdits({}, 1)));".format(json.dumps(text)))
+    assert "2**53" in made["error"]
+    with pytest.raises(ValueError, match="2\\*\\*53"):
+        track.read(text, 1)
+
+
+@needs_node
+def test_a_drag_snaps_to_bars_and_with_alt_to_beats():
+    """Bars are what a cut takes, so a drag lands on them; Alt is the way to a stretch that is
+    not whole bars, and a cut of one of those is refused here as the node refuses it."""
+    got = run_edits("""
+        const grid = {grid};
+        const bars = e.selectionBetween(grid, 2.9, 6.1, false);
+        const beats = e.selectionBetween(grid, 2.9, 6.1, true);
+        const tiny = e.selectionBetween(grid, 2.6, 2.7, false);
+        const section = e.selectBars(grid, 2, 5);
+        console.log(JSON.stringify({{
+            bars: bars, beats: beats, tiny: tiny, section: section,
+            said: e.describeSelection(bars), saidBeats: e.describeSelection(beats),
+            cutBars: e.whyNotCut(bars, true), cutBeats: e.whyNotCut(beats, true),
+            cutFree: e.whyNotCut(beats, false), late: e.whyNotEdit(bars, 2.0),
+            barAt: [e.barAt(grid, 0.0), e.barAt(grid, 5.0), e.barAt(grid, 99.0)],
+            here: e.sectionAt(grid, 5.0).name, count: e.barCount(grid),
+            said1: e.describeEdit(e.editFor(bars, "cut", 1, 0), 0),
+        }}));
+    """.format(grid=json.dumps(TRACK_GRID)))
+    assert got["bars"] == {"from": 2.5, "to": 6.5, "first": 1, "stop": 3}
+    assert got["beats"] == {"from": 3.0, "to": 6.0, "first": None, "stop": None}
+    assert got["tiny"] == {"from": 2.5, "to": 4.5, "first": 1, "stop": 2}
+    assert got["section"] == {"from": 4.5, "to": 10.5, "first": 2, "stop": 5}
+    assert got["said"] == "bars 2-3, 0:02-0:06"
+    assert got["saidBeats"] == "0:03-0:06"
+    assert got["cutBars"] == "" and "select bars" in got["cutBeats"].lower()
+    assert got["cutFree"] == "" and "stops before" in got["late"]
+    assert got["barAt"] == [0, 2, 4] and got["here"] == "chorus" and got["count"] == 5
+    assert got["said1"] == "1. Cut of bars 2-3"
+
+
+@needs_node
+def test_the_window_writes_a_seed_the_node_takes_as_it_is():
+    from yue2_comfy.constants import normalize_seed
+
+    seeds = run_edits("""
+        const made = [];
+        for (let i = 0; i < 200; i += 1) made.push(e.newSeed());
+        console.log(JSON.stringify([Math.min(...made), Math.max(...made), e.SEED_CEILING]));
+    """)
+    assert seeds[0] >= 0 and seeds[1] < seeds[2] <= 2 ** 31
+    assert normalize_seed(seeds[1]) == seeds[1]
+
+
+def test_the_two_sides_offer_the_same_number_of_takes():
+    from yue2_comfy import edit_track
+    from yue2_comfy.inpaint import track
+
+    source = EDITLIST.read_text(encoding="utf-8")
+    assert "export const MAX_TAKES = {};".format(track.MAX_TAKES) in source
+    assert edit_track.YuE2EditTrack.INPUT_TYPES()["required"]["takes"][1]["max"] == track.MAX_TAKES
+
+
+def test_the_track_window_names_the_node_its_widgets_and_its_ui_key_the_same_way():
+    """The window finds the node and everything it hands over by name; the names live in Python."""
+    from yue2_comfy import edit_track, edits
+
+    source = TRACK.read_text(encoding="utf-8")
+    assert 'const NODE = "{}";'.format(next(iter(edit_track.EDIT_CLASSES))) in source
+    assert 'const TRACK_UI = "{}";'.format(edits.EDIT_TRACK_UI) in source
+    shape = edit_track.YuE2EditTrack.INPUT_TYPES()
+    for constant, widget in (("EDITS", "edits"), ("TAKES", "takes")):
+        assert 'const {} = "{}";'.format(constant, widget) in source
+        assert widget in shape["required"] or widget in shape["optional"]
+    assert "queueNodeIds: [String(this.node.id)]" in source, "Render must run this node alone"
+    doc = edit_track.YuE2EditTrack._payload.__doc__
+    for key in ("peaks", "rms", "grid", "lyrics", "takes", "chosen", "dropped", "at", "kind",
+                "edits", "seconds", "total", "song"):
+        assert re.search(r"\b(?:payload|take|drawn|entry)\??\." + key + r"\b", source), (
+            key + " is written but never drawn")
+        assert re.search(r"\b" + key + r"\b", doc), key + " is drawn but not written down"
+
+
+def test_the_window_keeps_one_player_for_each_song_it_plays():
+    """A player per file, made and kept in one place, and an interrupted play is no fault.
+
+    The song the user edits is 3:44, which is 43 MB of WAV a take. The window
+    used to make a new Audio every time anything was played, and each of them
+    went on pulling its 43 MB down a connection nothing ever closed; swapping
+    takes under the needle then ended in a live Stop button, a playhead that
+    stood still and silence. Now each song has one player, kept so a take
+    already fetched plays the moment it is chosen, and the oldest is let go of
+    when there are more than the window needs. Changing the source of a
+    playing element rejects its play promise with AbortError, which is not a
+    fault to report either.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    assert source.count("new Audio(") == 1, "players are made in one place"
+    made = source.index("new Audio(")
+    assert source.index("    sounder(url) {") < made < source.index("    release(sound) {"), (
+        "the player is made where it is kept, not afresh in playSong")
+    assert "const sound = this.sounder(url);" in source, "playSong asks for the player of that url"
+    assert 'removeAttribute("src")' in source, "the fetch of a song no longer wanted is let go"
+    assert '"AbortError"' in source, "a play we interrupted ourselves is not a failure"
+    play = source.index("    playSong(")
+    assert source.index("this.follow(sound, mine);", play) < source.index("sound.play()", play), (
+        "the playhead must follow before the browser answers, or a song that never starts looks "
+        "exactly like one that plays")
+
+
+def test_the_end_of_a_selection_is_watched_by_more_than_the_animation_frame():
+    """A window off screen gets no frames, and Play selected ran on past its end.
+
+    So the end of a selection is armed as a timer when playing starts, and the
+    element's own timeupdate -- which keeps coming when nothing is drawn --
+    checks it too.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    arming = source[source.index("    armStop() {"):source.index("    disarmStop() {")]
+    assert "this.timer = setTimeout(" in arming and "clearTimeout(" in source
+    assert "this.stopAtEnd()" in arming
+    ticking = source[source.index("    ticked(sound) {"):source.index("    stopAtEnd() {")]
+    assert "this.stopAtEnd()" in ticking, "the element's own clock watches for the end too"
+    for event in ('"timeupdate"', '"playing"', '"loadedmetadata"', '"ended"', '"error"'):
+        assert "addEventListener({}".format(event) in source, event
+
+
+def test_escape_leaves_the_sound_the_message_and_the_selection_before_the_window():
+    """Escape unwinds one thing at a time: it used to close the window over a red message."""
+    source = TRACK.read_text(encoding="utf-8")
+    ladder = source[source.index("handle.onEscape = () => {"):]
+    ladder = ladder[:ladder.index("\n        };")]
+    steps = ["this.stopSound();", "this.hushSound();", "this.clearPick();", "this.close();"]
+    for step in steps:
+        assert step in ladder, step + " is not on the way out"
+    where = [ladder.index(step) for step in steps]
+    assert where == sorted(where), "the sound, then the message, then the selection, then out"
+
+
+SECTION_TAGS_READ = ["Verse", "verse 2", "CHORUS", "Hook", "refrain", "Pre_Chorus", "pre chorus",
+                     "post chorus", "Bridge 3", "Outro:", "Intro #1", "interlude", "instrumental",
+                     "solo", "fade-out", "rap", "wobble", "", "   ", "Verse-", "theme", "silence",
+                     "loop", "PRE-CHORUS 2", "post-chorus", u"Chorus\u0662", u"chorus\uff12",
+                     "chorus\x1c", "\x1fverse\x1f", u"\u041f\u0440\u0438\u043f\u0435\u0432"]
+
+PAIRINGS = [
+    ((["intro", "verse", "chorus", "verse", "chorus", "bridge", "chorus", "interlude", "verse",
+       "chorus", "outro"], [3, 20, 24, 20, 24, 12, 24, 2, 20, 12, 4]),
+     ["verse", "chorus", "verse", "chorus", "verse", "chorus", "bridge", "outro"]),
+    ((["verse", "chorus"], [10, 10]), ["verse", "chorus"]),
+    ((["intro", "verse", "chorus", "outro"], [0, 10, 10, 0]), ["verse", "chorus"]),
+    ((["intro", "verse", "chorus", "outro"], [2, 10, 10, 1]), ["verse", "chorus"]),
+    ((["intro", "verse", "chorus", "verse", "chorus", "outro"], [0, 9, 9, 9, 9, 0]),
+     ["verse", "chorus", "verse", "chorus"]),
+    ((["verse", "verse", "chorus"], [9, 9, 9]), ["verse", "chorus"]),
+    ((["chorus", "verse"], [9, 9]), ["verse", "chorus"]),
+    ((["intro", "verse", "chorus"], [1, 1, 0]), ["verse", "bridge"]),
+    ((["intro", "verse", "chorus"], [0, 1, 0]), ["verse", "bridge"]),
+    ((["intro", "verse", "outro"], [0, 5, 3]), ["verse", "chorus"]),
+    (([], []), ["verse"]),
+    ((["verse"], [1]), []),
+    ((["intro"], [1]), ["verse"]),
+    ((["intro"], [0]), ["verse"]),
+]
+
+
+@needs_node
+def test_a_section_tag_is_read_the_same_way_on_both_sides():
+    """A tag has to become the same section name here as it does there.
+
+    The window lights the words under the play mark by laying the blocks of
+    the lyrics on the sections of the score, which are named by the model, and
+    the node lays them the same way to know which words a cut takes out. Two
+    readings of '[Hook]' would light one block and drop another.
+    """
+    from yue2_comfy import phrasing
+
+    got = run_edits("console.log(JSON.stringify({}.map(e.labelOf)));".format(
+        json.dumps(SECTION_TAGS_READ)))
+    assert got == [phrasing.label_of(tag) for tag in SECTION_TAGS_READ]
+
+
+@needs_node
+@pytest.mark.parametrize("scored,labels", PAIRINGS,
+                         ids=[str(n) for n in range(len(PAIRINGS))])
+def test_the_window_lays_the_words_on_the_score_as_the_node_does(scored, labels):
+    """Wherever the node can pair the two, the window pairs them the same.
+
+    The node goes by name first and by the count of sections with vocal notes
+    second, and the grid now carries that count, so the window can go the same
+    way; it is the node's answer whenever the node has one. The node gives up
+    where neither lines up; the window then keeps guessing, because all it
+    does with the answer is light a block of words, while the node would be
+    deciding which words a cut throws away, and only the shape of that guess
+    is checked here.
+    """
+    from yue2_comfy.inpaint import ops
+
+    names, notes = scored
+    theirs = ops._paired(labels, [(name, count, 0) for name, count in zip(names, notes)])
+    ours = run_edits("console.log(JSON.stringify(e.pairSections({}, {}, {})));".format(
+        json.dumps(names), json.dumps(labels), json.dumps(notes)))
+    if theirs is not None:
+        assert ours == theirs
+        return
+    assert ours is None or (len(ours) <= len(labels) and sorted(set(ours)) == ours
+                            and all(0 <= at < len(names) for at in ours))
+
+
+@needs_node
+def test_the_window_counts_a_block_as_sung_the_way_the_node_does():
+    """A block whose lines have no letter in them is not a sung block on either side."""
+    from yue2_comfy.inpaint import ops
+
+    lyrics = "[Verse]\nla la\n[Instrumental]\n---\n[Chorus]\nsing sing\n[Verse 2]\n1 2 3 4\n"
+    theirs = [ops.phrasing.label_of(block["tag"]) if block["tag"] else "verse"
+              for block in ops._blocks(lyrics) if block["lines"]]
+    ours = run_sheet("""
+        const blocks = s.parseLyrics({});
+        console.log(JSON.stringify(blocks.filter((b) => b.lines.some((l) => /\\p{{L}}/u.test(l)))
+            .map((b) => b.tag)));
+    """.format(json.dumps(lyrics)))
+    assert [tag.lower() for tag in ours] == theirs
+
+
+@needs_node
+def test_a_byte_order_mark_and_a_whole_number_spelled_as_a_float_read_alike():
+    """Pasted text can start with U+FEFF and a saved workflow can spell 4 as 4.0."""
+    from yue2_comfy.inpaint import track
+
+    for text in ('\ufeff[{"op": "cut", "bars": [0, 4]}]',
+                 '[{"op": "retake", "bars": [0.0, 4.0], "seed": 3.0, "takes": 2.0}]'):
+        made = run_edits("console.log(JSON.stringify(e.readEdits({}, 2)));".format(
+            json.dumps(text)))
+        theirs = track.read(text, 2)
+        assert not made["error"] and made["edits"] == [spelled(edit) for edit in theirs]
+
+
+def test_the_window_plays_through_the_packs_own_route_and_falls_back_once():
+    """The players ask /yue2/sound for a sound the node wrote, and /view only when that route is not there.
+
+    /view sends a file through sendfile, and on client editions of Windows one
+    take held open by a browser starves every other file body the server has
+    to send; measured on the user's own server on 2026-09-22. The pack's route
+    writes plain chunks. A page newer than its server gets a 404 from the route
+    and must still play, so the players drop to /view once and say nothing.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    assert 'const SOUND_ROUTE = "/yue2/sound";' in source
+    assert 'const SOUND_SUBFOLDER = "yue2_edit";' in source, "the folder the node writes into"
+    assert source.count("soundUrl(") == 3, "one builder, asked by the song and by the warmed takes"
+    assert "viewUrl(" not in source, "nothing goes to /view first"
+    url = source[source.index("function soundUrl("):source.index("function takeFacts(")]
+    assert "entry.subfolder === SOUND_SUBFOLDER" in url, "only the node's own files take the route"
+    assert 'route = "/view?"' in url, "everything else, and the fallback, goes to /view"
+    failed = source[source.index("    soundFailed(sound) {"):source.index("    playPick() {")]
+    assert "this.viaView = true;" in failed and "this.dropSound();" in failed, (
+        "on a missing route every player is let go and the song asked for again through /view")
+    assert "(code === 2 || code === 4)" in failed, "a network or unsupported-source fault, not a decode one"
+    assert "this.playSong(at, until);" in failed, "from the same place, with the same end"
+
+
+def test_play_starts_at_the_mark_and_a_stalled_player_is_nudged_once():
+    """A click on the wave puts the mark there and Play starts at it, selection or not; the end starts over.
+
+    The user clicked outside the selection, pressed Play and heard the
+    selection's start: the selection came first. Play selected is the button
+    for the selection. And a player whose time stands still is seeked in place
+    once, which makes the browser ask for the bytes again, before the red line.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    start = source[source.index("    startAt() {"):source.index("    sounder(url) {")]
+    mark = start.index("this.playhead > 0.05")
+    assert mark < start.index("if (this.selection) return this.selection.from;"), (
+        "the mark comes before the selection")
+    assert "this.playhead < this.total() - 0.1" in start, "a mark at the end starts over"
+    follow = source[source.index("    follow(sound, mine) {"):source.index("    whyNotMore(")]
+    assert "let nudged = false;" in follow
+    assert "this.seekTo(now);" in follow, "the nudge is a seek to where it stands"
+    assert follow.index("this.seekTo(now);") < follow.index("this.saySound(STUCK_SAID, true);"), (
+        "the nudge comes before the red line")
+    assert "nudged = false;" in follow[follow.index("if (now !== last) {"):follow.index("} else if")], (
+        "a player that moved again may be nudged again later")

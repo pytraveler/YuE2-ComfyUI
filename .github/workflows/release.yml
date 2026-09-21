@@ -137,6 +137,8 @@ jobs:
                         web/js/yue2_roll.js web/js/yue2_notices.js \
                         web/js/yue2_sounds.js web/js/yue2_piano.js \
                         web/js/yue2_midi.js \
+                        web/js/yue2_track.js web/js/yue2_editlist.js \
+                        web/js/yue2_styles.js web/js/piano/60.ogg \
                         web/js/vendor/abcjs-basic-min.cjs \
                         web/js/vendor/abcjs-LICENSE.md \
                         yue2_comfy/vendor/yue2/protocol.py \

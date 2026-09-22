@@ -1208,6 +1208,16 @@ EDIT_LISTS = [
     '[{"op": "retake", "bars": [1, 2], "seed": "x"}]',
     '[{"op": "retake", "bars": [1, 2], "seed": null}]',
     '[{"op": "retake", "bars": [1, 2], "seed": -3}]',
+    '[{"op": "words", "lines": [7, 8], "text": "and the night comes down"}]',
+    '[{"op": "words", "lines": [7, 8], "text": "new", "bars": [12, 16], "seed": 5, "takes": 2, "take": 1}]',
+    '[{"op": "words", "lines": [7, 8], "text": "new", "seconds": [1.5, 9.25]}]',
+    '[{"op": "words", "lines": [7, 8]}]',
+    '[{"op": "words", "text": "new"}]',
+    '[{"op": "words", "lines": [8, 7], "text": "new"}]',
+    '[{"op": "words", "lines": [7, 8], "text": 5}]',
+    '[{"op": "words", "lines": [1.5, 8], "text": "new"}]',
+    '[{"op": "words", "lines": [7, 8], "text": "new", "bars": [1, 2], "seconds": [1.0, 2.0]}]',
+    '[{"op": "retake", "lines": [7, 8], "text": "new", "bars": [1, 2]}]',
     '["retake"]',
     "[null]",
 ]
@@ -1236,7 +1246,8 @@ def spelled(edit):
     return {"op": edit.op, "bars": None if edit.bars is None else list(edit.bars),
             "seconds": None if edit.seconds is None else list(edit.seconds),
             "seed": edit.seed, "takes": edit.takes, "take": edit.take,
-            "vary": edit.vary, "guide": edit.guide, "fade": edit.fade}
+            "vary": edit.vary, "guide": edit.guide, "fade": edit.fade,
+            "lines": None if edit.lines is None else list(edit.lines), "text": edit.text}
 
 
 @needs_node
@@ -1278,11 +1289,13 @@ def test_what_the_window_writes_is_what_the_node_sings():
     edits = track.read(written[0], 1)
     assert [spelled(edit) for edit in edits] == [
         {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3,
-         "take": 2, "vary": None, "guide": None, "fade": None},
+         "take": 2, "vary": None, "guide": None, "fade": None, "lines": None,
+         "text": None},
         {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None,
-         "vary": None, "guide": None, "fade": None},
+         "vary": None, "guide": None, "fade": None, "lines": None, "text": None},
         {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
-         "take": None, "vary": None, "guide": None, "fade": None},
+         "take": None, "vary": None, "guide": None, "fade": None, "lines": None,
+         "text": None},
     ]
     assert json.loads(track.written(edits)) == json.loads(written[0])
     assert len(track.read(written[1], 1)) == 2
@@ -1643,7 +1656,9 @@ def test_the_window_carries_the_knobs_the_next_edit_will_be_made_with():
         assert 'this.knob(knobs, "' + name + '"' in made, name + " has a knob of its own"
     assert "this.knobs.seed = list.newSeed();" in made, "and another seed is a button away"
     paint = source[source.index("    paintKnobs() {"):source.index("    paintButtons() {")]
-    assert "this.seedKnob.hidden = !canRetake;" in paint
+    assert "this.seedKnob.hidden = !sings;" in paint
+    assert "Boolean(this.editing)" in paint, (
+        "a change of words is sung by these knobs too, so they are there before it is")
     assert "this.fadeKnob.box.hidden = !canFade;" in paint
     assert "Boolean(edge)" in paint, "the fade is offered where the cut leaves an edge bare"
     assert "AS_SUNG" in paint, "and a knob nobody moved says it is the song's own"
@@ -1955,3 +1970,109 @@ def test_choosing_another_saved_song_clears_the_track_it_replaces():
     assert "writeList(node, []);" in choose
     assert "node.__yue2TrackDrawn = null;" in choose, "the old song's takes must not stay on screen"
     assert "arrived();" in choose, "and the window redraws from nothing"
+@needs_node
+def test_the_window_writes_a_change_of_words_the_node_can_sing():
+    """The words half of the list: the box writes the lines and the text, the node sings them.
+
+    A change of words may name no bars at all -- the node then hears the song
+    to find where that line is -- so the window has to be able to write an
+    edit with neither bars nor seconds, and the node to read one.
+    """
+    from yue2_comfy.inpaint import track
+
+    written = run_edits("""
+        const made = [
+            e.wordsFor([3, 4], "one two four", 2, 831001),
+            e.wordsFor([7, 9], "seven nine", 1, 42, {from: 24.0, to: 32.0, first: 12, stop: 16}),
+        ];
+        console.log(JSON.stringify([e.writeEdits(made), e.describeEdit(made[0], 0),
+            e.describeEdit(made[1], 1)]));
+    """)
+    edits = track.read(written[0], 1)
+    assert [(edit.op, edit.lines, edit.text, edit.bars, edit.takes) for edit in edits] == [
+        ("words", (3, 4), "one two four", None, 2),
+        ("words", (7, 9), "seven nine", (12, 16), 1),
+    ]
+    assert json.loads(track.written(edits)) == json.loads(written[0])
+    assert written[1] == "1. New words for line 4"
+    assert written[2] == "2. New words for bars 13-16"
+
+
+@needs_node
+def test_the_track_window_offers_a_line_of_the_words_to_rewrite():
+    """Clicking a line is the whole way in, so the pieces it needs have to be in the file."""
+    source = TRACK.read_text(encoding="utf-8")
+    for wanted in ("pickLine(number, event)", "list.wordsFor(", "this.editing", "wordBox()",
+                   "singWords()", "stopEditing()"):
+        assert wanted in source, wanted
+    assert "if (this.stopEditing()) {" in source, (
+        "Escape has to put the box away before it stops the sound or closes the window")
+    assert source.count("this.editing = null;") >= 4, (
+        "a new payload, a cancel, a sung edit and the second click all put the box away")
+
+
+@needs_node
+def test_typing_in_the_track_window_is_not_the_play_key():
+    """Space is Play in the window and a space between words inside the box."""
+    source = TRACK.read_text(encoding="utf-8")
+    where = source.index('event.key !== " " && event.code !== "Space"')
+    guarded = source[where:where + 400]
+    assert "typing(event.target)" in guarded.split("togglePlay")[0], (
+        "the play key has to let a box holding words keep the space")
+    assert 'tag === "TEXTAREA"' in source and "isContentEditable" in source
+
+
+def test_the_picker_tells_a_change_of_words_from_a_retake():
+    """Two edits of the same seconds look alike on a row; only the words say which was which."""
+    source = SONGS.read_text(encoding="utf-8")
+    what = source[source.index("function what(row) {"):source.index("function swapSaid(")]
+    assert 'mark.op === "words" ? "new words " : "retake "' in what
+    mark = source[source.index("function badges(row, chosen) {"):source.index("function matches(")]
+    assert 'mark.op === "words" && (mark.was || mark.now)' in mark
+    assert "NEW_WORDS" in mark and "swapSaid" in mark, (
+        "the badge is there to be pointed at, and what it holds is both texts")
+    said = source[source.index("function swapSaid(mark) {"):source.index("function matches(")]
+    assert "WAS_SUNG" in said and "IS_SUNG" in said
+    hay = source[source.index("function matches(row, wanted) {"):source.index("function iconButton(")]
+    assert "mark.was" in hay and "mark.now" in hay, "and the words are searched like the rest"
+
+
+def test_the_box_for_new_words_is_the_size_of_what_is_in_it():
+    """A panel-wide rule gives every textarea 320px, which is most of the words beside the track."""
+    source = TRACK.read_text(encoding="utf-8")
+    assert ".yue2-panel textarea.yue2-t-wordarea" in source, (
+        "the box has to out-rank the panel's own textarea rule to be smaller than 320px")
+    rule = source[source.index(".yue2-panel textarea.yue2-t-wordarea"):
+                  source.index(".yue2-t-wordwhy")]
+    assert "min-height: 0;" in rule and "resize: none;" in rule, (
+        "it grows with the words instead, so there is no handle to drag")
+    fit = source[source.index("    fitArea() {"):source.index("    wordBox() {")]
+    assert "area.style.height = \"auto\";" in fit and "area.scrollHeight" in fit
+    assert "WORDS_TALL" in fit and "WORDS_SHORT" in fit, "and it stops growing somewhere"
+    assert "this.fitArea();" in source[source.index("    paintWords() {"):
+                                       source.index("    overWords(")], (
+        "a box painted again is sized again, or it opens at one row")
+    assert ".yue2-t-wordwhy" in source and "yue2-t-wordbox" in source, (
+        "the note under the buttons is inside the box, not loose among the lyrics")
+
+
+def test_a_line_under_the_pointer_is_shown_on_the_track():
+    """The window already lights a line up while the song plays; this is that the other way round."""
+    source = TRACK.read_text(encoding="utf-8")
+    span = source[source.index("    lineSpan(block, line) {"):source.index("    whereLine(")]
+    at = source[source.index("    wordAt(second) {"):source.index("    markWords() {")]
+    for shared in ("section.sung", "stop <= from", "sections[index + 1]"):
+        assert shared in span and shared in at, (
+            "the line's place and the place's line have to be the same guess: " + shared)
+    assert "this.paired.indexOf(block)" in span
+    over = source[source.index("    overWords(block, line) {"):source.index("    lineSpan(")]
+    assert "this.draw();" in over, "the track is drawn again, or nothing is seen"
+    drawn = source[source.index("    drawSaid(c, top, tall) {"):source.index("    drawPick(")]
+    assert "SKIN.said" in drawn and "SKIN.saidEdge" in drawn
+    assert "said: " in source and "saidEdge: " in source, "a colour of its own, not the selection's"
+    said = source[source.index("    saidSpan() {"):source.index("    keepWordSeen(")
+                  if source.index("    keepWordSeen(") > source.index("    saidSpan() {")
+                  else source.index("    saidSpan() {") + 1200]
+    assert "this.editing" in said, (
+        "an open box shows where it will sing without the pointer being anywhere")
+

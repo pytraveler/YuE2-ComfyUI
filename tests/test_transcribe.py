@@ -260,6 +260,7 @@ def test_the_asr_runtime_reuses_words_for_the_same_recording_and_sections(monkey
         recognise=lambda net, tokenizer, audio, language="", cancelled=None, progress=None:
             heard.append(language) or {"language": "English", "text": "la la"})
     monkeypatch.setitem(sys.modules, "yue2_comfy.asr.model", fake_model)
+    monkeypatch.setattr(sys.modules["yue2_comfy.asr"], "model", fake_model, raising=False)
     monkeypatch.setattr(asr_runtime, "acquire", lambda folder, device, progress=None: ("net", "tokenizer"))
     monkeypatch.setattr(asr_runtime, "_RESULTS", asr_runtime.collections.OrderedDict())
     timed = [{"start": 0.0, "end": 30.0, "notes": 12}]

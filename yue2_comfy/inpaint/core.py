@@ -651,7 +651,7 @@ def _made(song, waveform, prefix, negative, codec, noise, latents, lyrics=None, 
 
 
 def retakes(models, song, waveform, region, seeds, settings, progress=None, cancelled=None,
-            noise_seeds=None, natural: bool = False) -> list:
+            noise_seeds=None, natural: bool = False, lyrics=None, score=None) -> list:
     """The stretch ``region`` of ``song`` sung again, once for every seed: one Take each, in seed order.
 
     ``waveform`` is the song's sound, which the new part is laid into.
@@ -667,7 +667,15 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
     one pass before the singing, and every take carries it. A join score means
     nothing on its own -- it is the model's opinion of the words that follow,
     which differs from song to song and place to place -- so the number to
-    compare a take with is what the song itself scored there.
+    compare a take with is what the song itself scored there. That pass is
+    made under the song's own prompt whatever this edit sings, because the
+    song as it was is what a take is held against.
+
+    ``lyrics`` and ``score`` change the words this stretch is sung to: given
+    either, the prompt is built again from them and the takes are sung, drawn
+    and remembered under it, which is what a change of words is. The frames
+    before the edit are the song's own either way -- they are what the model
+    hears itself having sung.
     """
     from ..vendor.yue2.protocol import CODEC_OFFSET
 
@@ -676,8 +684,10 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
     seeds = [normalize_seed(seed) for seed in seeds]
     noise_seeds = seeds if noise_seeds is None else [normalize_seed(seed) for seed in noise_seeds]
     ids = [int(value) + CODEC_OFFSET for value in song.codec]
-    context = list(song.prefix) + ids[:region.start]
-    negative = None if song.negative is None else list(song.negative) + ids[:region.start]
+    prefix, unconditional = (song.prefix, song.negative) if lyrics is None and score is None         else _prompts(models, song, song.lyrics if lyrics is None else lyrics,
+                      song.score if score is None else score, settings)
+    context = list(prefix) + ids[:region.start]
+    negative = None if unconditional is None else list(unconditional) + ids[:region.start]
     window = _sampling(settings, 1, 1).penalty_window
     history = ids[max(0, region.start - window):region.start]
     at_end = region.stop >= song.frames
@@ -689,7 +699,8 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
     with _singing(models, settings):
         own = None
         if natural and not at_end and suffix:
-            own = joins(models, context, ids[region.start:region.stop], region.length,
+            heard = list(song.prefix) + ids[:region.start]
+            own = joins(models, heard, ids[region.start:region.stop], region.length,
                         region.length, suffix, progress, Stages.NATURAL, cancelled)[region.length]
         for index, seed in enumerate(seeds):
             timing = {}
@@ -718,7 +729,7 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
             runs = ops.edited_noise(song.noise, region, noise_seeds[index], chosen)
             known, held = _held(song, region, chosen)
             began = time.perf_counter()
-            latents = repaint(models, song.prefix, codec, noise_of(runs), known, held,
+            latents = repaint(models, prefix, codec, noise_of(runs), known, held,
                               int(settings["ode_steps"]), progress,
                               _part(Stages.ACOUSTIC, index, len(seeds)), cancelled)
             timing["acoustic"] = time.perf_counter() - began
@@ -731,7 +742,7 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
         sound, _spent = splice(models, old, latents, region, chosen, progress,
                                _part(Stages.DECODE, index, len(seeds)), cancelled)
         timing["decode"] = time.perf_counter() - began
-        edited = _made(song, sound, song.prefix, song.negative, codec, runs, latents)
+        edited = _made(song, sound, prefix, unconditional, codec, runs, latents, lyrics, score)
         log.info("[yue2_comfy.inpaint] take %d of %d, seed %d: frames %d-%d sung again as %d "
                  "for %d, join %s, in %.1f s", index + 1, len(sung), seed, region.start,
                  region.stop, chosen, region.length,

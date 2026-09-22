@@ -99,15 +99,17 @@ def stand(torch, monkeypatch):
     monkeypatch.setattr(edit_track, "_grid_of", lambda *args, **kwargs: a_clock())
     monkeypatch.setattr("yue2_comfy.staged.session", _no_models)
     calls = []
+    words = []
 
     def retakes(models, old, waveform, region, seeds, settings, progress=None, cancelled=None,
-                noise_seeds=None, natural=False):
+                noise_seeds=None, natural=False, lyrics=None, score=None):
         calls.append(("retake", region.start, region.stop, tuple(seeds)))
+        words.append(lyrics)
         made = []
         for index, seed in enumerate(seeds):
             frames = old.frames - region.removed + region.length
             made.append(core.Take(seed=seed, waveform=a_wave(torch, frames, 0.1 * (index + 1)),
-                                  song=a_song(frames), count=region.length,
+                                  song=a_song(frames, lyrics=lyrics or LYRICS), count=region.length,
                                   join=-4.0 + index, joins={}, ended=False, timing={},
                                   natural=-3.0 if natural else None))
         return made
@@ -122,7 +124,7 @@ def stand(torch, monkeypatch):
 
     monkeypatch.setattr(core, "retakes", retakes)
     monkeypatch.setattr(core, "cut", cut)
-    return types.SimpleNamespace(song=song, wave=wave, name=name, calls=calls,
+    return types.SimpleNamespace(song=song, wave=wave, name=name, calls=calls, words=words,
                                  audio={"waveform": wave, "sample_rate": RATE})
 
 
@@ -550,7 +552,7 @@ def test_an_edit_writes_down_what_it_was_made_from_and_what_it_did(stand, tmp_pa
     assert child.created == pytest.approx(time.time(), abs=60)
     assert 0 < len(child.peaks) <= songs.STRIP and len(child.body) == len(child.peaks)
     assert child.edit == [{"op": "retake", "at": [drawn["at"][0], drawn["at"][1]],
-                           "bars": [4, 8], "seed": 41,
+                           "bars": [4, 8], "seed": 41, "was": "", "now": "",
                            "took": pytest.approx(drawn["at"][1] - drawn["at"][0])}]
 
 
@@ -754,7 +756,7 @@ def test_every_take_is_a_whole_song_the_window_can_draw_and_play(stand, a_temp_f
     shorter = 5
 
     def retakes(models, old, waveform, region, seeds, settings, progress=None, cancelled=None,
-                noise_seeds=None, natural=False):
+                noise_seeds=None, natural=False, lyrics=None, score=None):
         made = []
         for index, seed in enumerate(seeds):
             count = region.length - shorter * index
@@ -944,3 +946,73 @@ def test_the_takes_kept_are_dropped_oldest_first_when_the_memory_fills():
     assert held.size() == 80
     assert held.get("b") is None
     assert held.get("a") is not None and held.get("c") is not None
+
+
+def test_a_words_edit_sings_the_stretch_selected_with_the_new_words(stand):
+    """The cheap path: the bars say where, so nothing is heard and no other model is loaded."""
+    answer = run(stand, '[{"op": "words", "bars": [4, 8], "lines": [3, 4], '
+                        '"text": "one two four", "seed": 40}]')
+    assert stand.calls == [("retake", 192, 414, (40, 41))]
+    assert stand.words and "one two four" in stand.words[0], (
+        "the new words have to reach the model, or the old ones are sung again")
+    assert "one two three" not in stand.words[0]
+    assert "one two four" in payload(answer)["lyrics"]
+
+
+def test_a_words_edit_with_no_bars_is_placed_by_hearing_the_song(stand, monkeypatch):
+    """The precise path: the aligner is given the words and says where that line is sung.
+
+    The line chosen is the song's first, so it opens where it does and closes
+    a step before the next line's first word: 1.5 s less 80 ms, which is frame
+    36.
+    """
+    from yue2_comfy import download
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    asked = {}
+
+    def word_times(folder, reader, device, waveform, rate, text, key, progress=None,
+                   cancelled=None):
+        asked.update(folder=folder, reader=reader, text=text, key=key)
+        found, at = [], 0.0
+        for word in text.split():
+            found.append((word, at, at + 0.4))
+            at += 0.5
+        return found
+
+    monkeypatch.setattr(download, "ensure_aligner", lambda settings, progress=None: "aligner")
+    monkeypatch.setattr(download, "aligner_tokenizer",
+                        lambda folder, settings, progress=None: "tokenizer")
+    monkeypatch.setattr(asr_runtime, "word_times", word_times)
+    run(stand, '[{"op": "words", "lines": [3, 4], "text": "one two four", "seed": 40}]')
+    assert asked["text"].splitlines() == ["one two three", "four five six", "seven eight"], (
+        "the aligner is given the words as they are sung, tags and blank lines left out")
+    assert stand.calls == [("retake", 0, 36, (40, 41))]
+    assert "one two four" in stand.words[0]
+
+
+def test_a_words_edit_says_what_it_needs_when_the_aligner_is_not_there(stand, monkeypatch):
+    """Downloading off and no weights on the machine: the refusal names the file and the way round it."""
+    from yue2_comfy import download
+
+    def missing(settings, progress=None):
+        raise FileNotFoundError("Qwen3-ForcedAligner-0.6B is not on this machine yet.")
+
+    monkeypatch.setattr(download, "ensure_aligner", missing)
+    with pytest.raises(ValueError, match="ForcedAligner"):
+        run(stand, '[{"op": "words", "lines": [3, 4], "text": "one two four"}]')
+
+
+def test_word_times_wait_beside_their_song_until_the_words_change(tmp_path, monkeypatch):
+    """Hearing a song is a download and a pass over all of it; the second line rewritten pays neither."""
+    monkeypatch.setattr(songs, "_store", songs.Store(str(tmp_path)))
+    key = "{:064x}".format(5)
+    edit_track._times_keep(key, "one two", [("one", 0.0, 0.4), ("two", 0.5, 0.9)])
+    assert edit_track._times_read(key, "one two") == [("one", 0.0, 0.4), ("two", 0.5, 0.9)]
+    assert edit_track._times_read(key, "one three") is None, (
+        "times measured on other words would place every line wrong"
+    )
+    assert edit_track._times_read("not a key", "one two") is None
+    assert edit_track._words_file("not a key") is None
+    (tmp_path / (key + edit_track.WORDS_SUFFIX)).write_text("half a file", encoding="utf-8")
+    assert edit_track._times_read(key, "one two") is None

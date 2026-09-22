@@ -191,3 +191,27 @@ def test_the_release_guard_names_only_files_that_are_here():
     gone = [word for word in named if not (ROOT / word).exists()]
     assert not gone, "release.yml requires files this tree does not have: " + "; ".join(gone)
     assert len(named) > 40, "the guard list looks truncated: {} names".format(len(named))
+
+
+def test_the_release_guard_names_every_file_the_browser_loads():
+    """The .js half of that list has to be whole, which the .py half need not be.
+
+    A module left out of the archive fails an import the moment a node is
+    registered, so the Python side names a spine and trusts the crash. A browser
+    file fails quietly instead: ComfyUI serves what is there, and the only sign
+    of a missing one is a button that does nothing on somebody else's machine.
+    So every file under web/js belongs in the list, and it is cheaper to find a
+    new one missing here than to hear about it after a tag. Vendored code and the
+    piano sounds keep one sentinel apiece and are not folders this walks.
+    """
+    if not GUARD.is_file():
+        return
+    text = GUARD.read_text(encoding="utf-8")
+    start = text.find("for needed in")
+    assert start > 0, "release.yml no longer lists the files an archive must hold"
+    block = text[start:text.find("done", start)]
+    named = {word.strip(';"') for word in block.replace(chr(92), " ").split()}
+    missing = sorted(path.name for path in sorted((ROOT / "web" / "js").glob("*.js"))
+                     if "web/js/" + path.name not in named)
+    assert not missing, ("release.yml does not name what the browser loads: "
+                         + "; ".join(missing))

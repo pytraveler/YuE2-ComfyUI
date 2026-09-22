@@ -110,6 +110,7 @@ jobs:
                         yue2_comfy/inpaint/__init__.py yue2_comfy/inpaint/ops.py \
                         yue2_comfy/inpaint/core.py yue2_comfy/inpaint/grid.py \
                         yue2_comfy/inpaint/track.py yue2_comfy/edit_track.py \
+                        yue2_comfy/inpaint/lines.py yue2_comfy/asr/aligner.py \
                         yue2_comfy/asr/__init__.py yue2_comfy/asr/align.py \
                         yue2_comfy/asr/decode.py yue2_comfy/asr/layout.py \
                         yue2_comfy/asr/model.py yue2_comfy/asr/network.py \
@@ -138,6 +139,7 @@ jobs:
                         web/js/yue2_sounds.js web/js/yue2_piano.js \
                         web/js/yue2_midi.js \
                         web/js/yue2_track.js web/js/yue2_editlist.js \
+                        web/js/yue2_songs.js \
                         web/js/yue2_styles.js web/js/piano/60.ogg \
                         web/js/vendor/abcjs-basic-min.cjs \
                         web/js/vendor/abcjs-LICENSE.md \

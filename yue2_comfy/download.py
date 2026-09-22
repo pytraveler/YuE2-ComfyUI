@@ -584,6 +584,69 @@ def ensure_asr(settings: dict, progress=None) -> str:
     return folder
 
 
+def aligner_wanted() -> dict:
+    """The forced aligner's two files, into their own folder under models/YuE2."""
+    from .constants import ALIGNER_DIRNAME, ALIGNER_FILES
+
+    folder = os.path.join(paths.models_root(), ALIGNER_DIRNAME)
+    return {name: os.path.join(folder, name) for name in ALIGNER_FILES}
+
+
+def fetch_aligner(progress=None) -> str:
+    """Qwen's release of the forced aligner, whatever 'download' names; the folder it landed in."""
+    from .constants import ALIGNER_BYTES, ALIGNER_REPO
+
+    wanted = aligner_wanted()
+    fetch(ALIGNER_REPO, wanted, "Downloading Qwen3-ForcedAligner-0.6B ({})".format(
+        human_size(ALIGNER_BYTES)), progress)
+    return os.path.dirname(list(wanted.values())[0])
+
+
+def ensure_aligner(settings: dict, progress=None) -> str:
+    """The aligner's folder, fetched first when the machine has not got it and downloading is on."""
+    from . import discovery
+
+    found = discovery.find_aligner()
+    if found:
+        return found
+    if settings.get("download", "auto") == "off":
+        raise FileNotFoundError(
+            discovery.aligner_missing_message(paths.asr_roots())
+            + "\n\nOr set 'download' in YuE2 Options to 'auto', and the node will fetch it itself.")
+    folder = fetch_aligner(progress)
+    if progress is not None:
+        progress.text("Download finished")
+    return folder
+
+
+def aligner_tokenizer(folder: str, settings: dict, progress=None) -> str:
+    """The file the aligner reads words with: its own, the speech model's, or a copy fetched beside it.
+
+    Qwen ships the aligner with a vocabulary and a merge list instead of the
+    one file the ``tokenizers`` library reads here. The speech model's file is
+    the same tokenizer -- the same entries and the same merges, compared --
+    and whoever edits the words of a song may well have it already.
+    """
+    from . import discovery
+    from .constants import ASR_REPO, ASR_TOKENIZER_NAME
+
+    here = os.path.join(folder, ASR_TOKENIZER_NAME)
+    if os.path.isfile(here):
+        return here
+    speech = discovery.find_asr()
+    if speech:
+        beside = os.path.join(speech, ASR_TOKENIZER_NAME)
+        if os.path.isfile(beside):
+            return beside
+    if settings.get("download", "auto") == "off":
+        raise FileNotFoundError(
+            discovery.aligner_tokenizer_message(here)
+            + "\n\nOr set 'download' in YuE2 Options to 'auto', and the node will fetch it itself.")
+    fetch(ASR_REPO, {ASR_TOKENIZER_NAME: here},
+          "Downloading the tokenizer the words are read with", progress)
+    return here
+
+
 def vocals_wanted() -> dict:
     """The voice separator's one file, into models/YuE2."""
     from .constants import VOCALS_NAME

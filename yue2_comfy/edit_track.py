@@ -62,6 +62,13 @@ Measured 2026-09-19 on a 5090: 1.1 to 1.7 seconds for a four-minute song,
 against minutes to sing one, so it is a sliver of any run that also edits."""
 
 GRID_SHARE = 0.12
+
+TIMES_SHARE = 0.10
+"""The share of one edit's bar that goes on finding when its words are sung.
+
+Only an edit that rewrites a line takes it: the aligner reads the whole song
+in a single pass, and the answer is kept beside the song, so the second line
+rewritten pays nothing at all."""
 """The share of the bar that laying the score over the song takes: the separator and a tenth of a second of arithmetic."""
 
 CACHE_BYTES = 1 << 30
@@ -215,6 +222,18 @@ grid comes from the score. A file left behind by a song the store dropped is
 a hundred bytes, and still right if that song ever comes back."""
 
 _GRID_KEEP = 8
+
+WORDS_SUFFIX = ".words.json"
+"""Where the word times of a song wait for the next session, beside the song they were measured on.
+
+Timing a song reads 1.84 GB of weights and makes one pass over the whole
+recording; the answer never changes, a song being remembered under the key of
+its own samples, and what it is worth is exactly the second and third line
+somebody rewrites. The words they were measured on are written with them, so a
+song whose words an edit has changed is timed again rather than read wrong."""
+
+NO_WORDS = ("Nothing is sung in this song's words, so there is no line to rewrite. Select the "
+            "bars to sing instead.")
 
 
 def is_loaded() -> bool:
@@ -499,6 +518,54 @@ def _grid_of(name: str, song, waveform, rate: int, settings, unique_id, progress
     return clock
 
 
+def _words_file(name: str):
+    """The path the word times for *name* are kept at, or None when there is nowhere to keep them."""
+    folder = songs.store().folder
+    if not folder or not name or not songs.is_key(name):
+        return None
+    return os.path.join(folder, name + WORDS_SUFFIX)
+
+
+def _said(text: str) -> str:
+    """The words the times were measured on, short enough to write beside them."""
+    import hashlib
+
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _times_read(name: str, text: str):
+    """The word times measured for this song in some other session, or None. Never fatal."""
+    path = _words_file(name)
+    if path is None:
+        return None
+    try:
+        with io.open(path, encoding="utf-8") as handle:
+            kept = json.load(handle)
+        if kept.get("words") != _said(text):
+            return None
+        return [(str(word), float(start), float(stop)) for word, start, stop in kept["times"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        log.debug("[yue2_comfy.edit_track] %s cannot be read and the words are timed again", path,
+                  exc_info=True)
+        return None
+
+
+def _times_keep(name: str, text: str, times) -> None:
+    """Write the word times beside their song. Never fatal: they only save time."""
+    path = _words_file(name)
+    if path is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump({"words": _said(text),
+                       "times": [[word, round(float(start), 3), round(float(stop), 3)]
+                                 for word, start, stop in times]}, handle)
+    except OSError:
+        log.debug("[yue2_comfy.edit_track] the word times could not be written to %s", path,
+                  exc_info=True)
+
+
 def _flagged(take) -> bool:
     """Whether a take's join is enough worse than the song's own there to be worth saying so."""
     return (take.natural is not None and take.join is not None
@@ -595,7 +662,8 @@ def _stamped(edited, waveform, parent: str, before, marks):
         edit=[{"op": mark["op"],
                "at": [round(mark["start"] * FRAME_SECONDS, 3),
                       round((mark["start"] + mark["count"]) * FRAME_SECONDS, 3)],
-               "bars": mark["bars"], "seed": mark["seed"], "took": mark["took"]}
+               "bars": mark["bars"], "seed": mark["seed"], "took": mark["took"],
+               "was": mark["was"], "now": mark["now"]}
               for mark in marks])
 
 
@@ -810,10 +878,19 @@ class YuE2EditTrack:
                 for index, edit in enumerate(wanted):
                     if interrupted():
                         raise InterruptedError("Cancelled between edits")
-                    band = Band(progress, low + (1.0 - low) * index / len(wanted),
-                                low + (1.0 - low) * (index + 1) / len(wanted))
+                    opens = low + (1.0 - low) * index / len(wanted)
+                    closes = low + (1.0 - low) * (index + 1) / len(wanted)
+                    span = None
+                    if track.needs_times(edit):
+                        timed = opens + (closes - opens) * TIMES_SHARE
+                        span = self._span(state, edit, sound, rate, settings, index,
+                                          track.sound_name(name, history),
+                                          name if not history else "",
+                                          Band(progress, opens, timed))
+                        opens = timed
+                    band = Band(progress, opens, closes)
                     try:
-                        step = track.plan(state, edit)
+                        step = track.plan(state, edit, span)
                     except ValueError as error:
                         raise _Refused("Edit {}: {}".format(index + 1, error))
                     notices.extend(step.notices)
@@ -836,7 +913,8 @@ class YuE2EditTrack:
                     marks.append({"op": step.kind, "start": step.start, "count": kept.count,
                                   "bars": list(edit.bars) if edit.bars else None,
                                   "seed": None if step.kind == "cut" else int(kept.seed),
-                                  "took": round((step.stop - step.start) * FRAME_SECONDS, 3)})
+                                  "took": round((step.stop - step.start) * FRAME_SECONDS, 3),
+                                  "was": "\n".join(step.was), "now": "\n".join(step.now)})
                     shown = (step, ordered, pick, made, prior, seeds, earlier)
         except InterruptedError:
             translate_interrupt()
@@ -870,6 +948,47 @@ class YuE2EditTrack:
             ui["audio"] = [preview]
         return {"ui": ui, "result": (out,)}
 
+    def _span(self, state, edit, waveform, rate: int, settings, index: int, sound: str,
+              saved: str, progress):
+        """The frames the lines one edit rewrites are sung over, from the song's own word times.
+
+        The score knows a note for every syllable but not which line the
+        singer was on, and the grid's sections are whole verses, so a line is
+        placed by hearing it: the forced aligner is given the words and says
+        when each is sung. It reads the song once, the answer is kept beside
+        the song, and the region opens at the last word of the line before --
+        the model sings that word again and runs into the new line, which is
+        what the stand measured as the difference between every word sung and
+        a line that starts late.
+        """
+        from . import devices, download
+        from .asr import runtime as asr_runtime
+        from .inpaint import lines
+
+        where = "Edit {}".format(index + 1)
+        text = lines.heard_text(state.lyrics)
+        if not text.strip():
+            raise _Refused("{}: {}".format(where, NO_WORDS))
+        times = _times_read(saved, text)
+        if times is None:
+            try:
+                folder = download.ensure_aligner(settings, progress)
+                reader = download.aligner_tokenizer(folder, settings, progress)
+            except FileNotFoundError as error:
+                raise _Refused(str(error))
+            began = time.perf_counter()
+            times = asr_runtime.word_times(folder, reader, devices.resolve(settings["device"]),
+                                           waveform, rate, text, sound, progress, interrupted)
+            log.info("[yue2_comfy.edit_track] %d words timed in %.1f s", len(times),
+                     time.perf_counter() - began)
+            _times_keep(saved, text, times)
+        try:
+            start, stop = lines.region(state.lyrics, times, edit.lines[0], edit.lines[1])
+        except ValueError as error:
+            raise _Refused("{}: {}".format(where, error))
+        return (int(round(start / FRAME_SECONDS)),
+                state.frames if stop is None else int(round(stop / FRAME_SECONDS)))
+
     def _sung(self, loaded, song, waveform, state, step, edit, name, settings, band):
         """The takes of one edit: the ones already sung under this name, and the ones still missing.
 
@@ -902,7 +1021,8 @@ class YuE2EditTrack:
             else:
                 region = ops.retake(step.start, step.stop, state.frames, len(song.prefix))
                 fresh = core.retakes(loaded(), song, waveform, region, missing, settings, band,
-                                     interrupted, natural=entry["natural"] is None)
+                                     interrupted, natural=entry["natural"] is None,
+                                     lyrics=step.lyrics if step.kind == "words" else None)
                 for take in fresh:
                     entry["takes"][take.seed] = take
                 if fresh and fresh[0].natural is not None:

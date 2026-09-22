@@ -42,7 +42,8 @@ from typing import NamedTuple
 
 from . import paths
 from .constants import (
-    ASR_BYTES, ASR_DIRNAME, ASR_FILES, ASR_MARKER, ASR_MARKER_SHAPE, ASR_REPO, ASR_TOKENIZER_NAME,
+    ALIGNER_BYTES, ALIGNER_DIRNAME, ALIGNER_FILES, ALIGNER_KIND, ALIGNER_REPO,
+    ASR_BYTES, ASR_DIRNAME, ASR_FILES, ASR_MARKER, ASR_MARKER_SHAPE, ASR_REPO, ASR_TOKENIZER_NAME, CONFIG_NAME,
     LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
     REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
     SHEETSAGE_BYTES, SHEETSAGE_MARKERS, SHEETSAGE_NAME, SHEETSAGE_PATH,
@@ -588,6 +589,73 @@ def asr_missing_message(roots: list) -> str:
         lines += ["There was nowhere to look: no ComfyUI model folders were found."]
     lines += ["", "Its weights are licensed Apache-2.0."]
     return "\n".join(lines)
+
+
+def is_aligner_folder(folder: str) -> bool:
+    """A folder holding Qwen3-ForcedAligner's weights, known by what its config calls itself.
+
+    The speech model and the aligner are the same files under the same names,
+    and the aligner is the smaller of the two, so a size is no marker on its
+    own; the config is six kilobytes and says which of them it is.
+    """
+    weights = os.path.join(folder, WEIGHTS_NAME)
+    config = os.path.join(folder, CONFIG_NAME)
+    if not (os.path.isfile(weights) and os.path.isfile(config)):
+        return False
+    try:
+        with open(config, "r", encoding="utf-8") as handle:
+            inner = json.load(handle).get("thinker_config") or {}
+    except Exception:
+        log.debug("[yue2_comfy.discovery] cannot read %s", config, exc_info=True)
+        return False
+    return isinstance(inner, dict) and inner.get("model_type") == ALIGNER_KIND
+
+
+def find_aligner(roots=None) -> str:
+    """The folder of the forced aligner's weights, or "".
+
+    It is looked for where the speech model is looked for: whoever has one
+    tends to have the other, downloaded as a collection.
+    """
+    roots = paths.asr_roots() if roots is None else roots
+    for root in roots:
+        for home in _homes(root):
+            if is_aligner_folder(home):
+                return home
+    return ""
+
+
+def aligner_missing_message(roots: list) -> str:
+    """Where the aligner goes and the links to it, for somebody who turned downloading off."""
+    lines = [
+        "Qwen3-ForcedAligner-0.6B, which says when each word of a song is sung, is not on this "
+        "machine yet.",
+        "",
+        "It is two files from Qwen's own release, {:.2f} GB of them, kept in one folder:".format(
+            ALIGNER_BYTES / 1024 ** 3),
+        "",
+    ]
+    lines += ["  " + _link(ALIGNER_REPO, name) for name in ALIGNER_FILES]
+    lines += ["  -> " + os.path.join(_expected_root(), ALIGNER_DIRNAME), ""]
+    if roots:
+        where = "1 place" if len(roots) == 1 else str(len(roots)) + " places"
+        lines += ["Looked in " + where + ", including:", ""]
+        lines += ["  " + path for path in roots[:6]]
+    else:
+        lines += ["There was nowhere to look: no ComfyUI model folders were found."]
+    lines += ["", "Its weights are licensed Apache-2.0.",
+              "Only a line of words needs it: select the bars to sing instead, and nothing is."]
+    return "\n".join(lines)
+
+
+def aligner_tokenizer_message(dest: str) -> str:
+    """Where the tokenizer the aligner reads words with comes from, and where it goes."""
+    return "\n".join([
+        "The words are read with the speech model's own tokenizer, and it is not on this machine:",
+        "",
+        "  " + _link(ASR_REPO, ASR_TOKENIZER_NAME),
+        "  -> " + dest,
+    ])
 
 
 def find_vocals(roots=None) -> str:

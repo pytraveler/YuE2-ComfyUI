@@ -116,6 +116,7 @@ keeper("YuE2", ".loader")
 keeper("writer", ".llm")
 keeper("SheetSage2", ".sheetsage.runtime")
 keeper("Qwen3-ASR", ".asr.runtime")
+keeper("Qwen3-ForcedAligner", ".asr.aligner")
 keeper("Mel-Band RoFormer", ".vocals.runtime")
 keeper("edited takes", ".edit_track")
 

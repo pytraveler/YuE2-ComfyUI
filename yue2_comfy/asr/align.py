@@ -135,3 +135,22 @@ def split(whole: str, sections: list, shortest: int = 2) -> list:
     for token, owner in zip(tokens, labels):
         texts[owner if owner is not None else first].append(token)
     return move_pickups([" ".join(words) for words in texts])
+
+
+def words_of(text: str) -> list:
+    """The words of ``text`` as the aligner counts them: whitespace apart, letters, digits and apostrophes kept.
+
+    Qwen's own processor cleans a word this way before asking for its times,
+    for every language written with spaces, and the answer comes back one pair
+    of times a word -- so a caller that counts words differently reads the
+    wrong times for every word after the first difference.
+    """
+    import unicodedata
+
+    found = []
+    for segment in str(text or "").split():
+        kept = "".join(character for character in segment
+                       if character == "'" or unicodedata.category(character)[0] in "LN")
+        if kept:
+            found.append(kept)
+    return found

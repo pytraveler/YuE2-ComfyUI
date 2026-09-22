@@ -11,6 +11,11 @@ hears them best. Each section with a voice in it is then heard once more on its
 own, and those rougher texts only guide where the whole song's words are cut
 (see ``align``).
 
+The forced aligner is kept here as well, in a second slot: a different model
+on the same network, asked by 'YuE2 Edit Track' when each word of a song is
+sung. Its answer is kept by the song and the words it was measured on, so
+rewriting a second line of a song costs nothing.
+
 The model is kept only when 'keep_model_loaded' asks for it, and the Unload
 Models button lets it go (see ``memory``).
 """
@@ -31,10 +36,15 @@ ROOM_BYTES = 6 * 1024 ** 3
 SHORTEST_PIECE = 1600
 """A section shorter than a tenth of a second at 16 kHz is not worth hearing on its own."""
 
+ALIGNER_ROOM_BYTES = 3 * 1024 ** 3
+"""Free VRAM wanted before the aligner is loaded: 1.2 GB of weights, one pass over a long song, and a margin."""
+
 _LOCK = threading.RLock()
 _STATE = {"key": None, "net": None, "tokenizer": None}
+_ALIGNER = {"key": None, "held": None}
 _RESULTS = collections.OrderedDict()
 _LAYOUTS = collections.OrderedDict()
+_TIMES = collections.OrderedDict()
 
 
 def stamp(folder: str) -> tuple:
@@ -83,7 +93,7 @@ def _free_bytes(device) -> int:
         return 1 << 62
 
 
-def _make_room(device) -> None:
+def _make_room(device, room: int = ROOM_BYTES) -> None:
     """Room on the card for the model, taken only when it is short: first ComfyUI's models, then this pack's other kept ones.
 
     A card with room to spare keeps everything where it is, so a run that
@@ -91,7 +101,7 @@ def _make_room(device) -> None:
     """
     if getattr(device, "type", "cpu") != "cuda":
         return
-    if _free_bytes(device) >= ROOM_BYTES:
+    if _free_bytes(device) >= room:
         return
     try:
         import comfy.model_management as mm
@@ -107,7 +117,7 @@ def _make_room(device) -> None:
 
         for name, keeper in (("SheetSage2", sheetsage_runtime), ("Mel-Band RoFormer", vocals_runtime),
                              ("YuE2", loader)):
-            if _free_bytes(device) >= ROOM_BYTES:
+            if _free_bytes(device) >= room:
                 break
             if keeper.is_loaded():
                 log.info("[yue2_comfy.asr] unloading the kept %s model to make room", name)
@@ -134,6 +144,76 @@ def acquire(folder: str, device, progress=None) -> tuple:
         _STATE.update(key=key, net=net, tokenizer=tokenizer)
         log.info("[yue2_comfy.asr] loaded %s on %s", os.path.basename(folder), device)
         return net, tokenizer
+
+
+def aligner_loaded() -> bool:
+    """Whether the forced aligner is on a device, for the report Unload Models writes."""
+    return _ALIGNER["held"] is not None
+
+
+def unload_aligner() -> None:
+    """Let go of the forced aligner and give its memory back; the times it measured stay."""
+    with _LOCK:
+        held = _ALIGNER["held"]
+        _ALIGNER.update(key=None, held=None)
+    if held is None:
+        return
+    del held
+    gc.collect()
+    try:
+        import comfy.model_management as mm
+
+        mm.soft_empty_cache()
+    except Exception:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            log.debug("[yue2_comfy.asr] no cache to empty", exc_info=True)
+
+
+def acquire_aligner(folder: str, tokenizer_path: str, device, progress=None):
+    """The forced aligner for this folder on this device, loaded when it is not already held."""
+    key = (stamp(folder), os.path.normcase(os.path.abspath(tokenizer_path)), str(device))
+    with _LOCK:
+        if _ALIGNER["key"] == key and _ALIGNER["held"] is not None:
+            return _ALIGNER["held"]
+        unload_aligner()
+        _make_room(device, ALIGNER_ROOM_BYTES)
+        if progress is not None:
+            progress.text("Loading the word aligner", force=True)
+        from . import aligner as aligner_module
+
+        held = aligner_module.load(folder, tokenizer_path, device)
+        _ALIGNER.update(key=key, held=held)
+        log.info("[yue2_comfy.asr] loaded %s on %s", os.path.basename(folder), device)
+        return held
+
+
+def word_times(folder: str, tokenizer_path: str, device, waveform, rate: int, text: str, key,
+               progress=None, cancelled=None) -> list:
+    """``[(word, start, stop)]`` for ``text`` sung in ``waveform``, measured once and kept.
+
+    ``key`` names the sound the times belong to -- the song's key, or whatever
+    stands for the sound an edit has made -- and the words go into the same
+    name, because other words are other times.
+    """
+    import hashlib
+
+    said = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
+    full_key = (stamp(folder), str(key), said)
+    found = _get(_TIMES, full_key)
+    if found is not None:
+        return found
+    from . import aligner as aligner_module, model
+
+    held = acquire_aligner(folder, tokenizer_path, device, progress)
+    audio = model.mono_16k(waveform, rate)
+    times = aligner_module.align(held, audio, text, cancelled=cancelled, progress=progress)
+    _put(_TIMES, full_key, times)
+    return times
 
 
 def _get(store, key):

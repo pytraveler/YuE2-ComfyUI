@@ -128,6 +128,20 @@ ASR_MARKER_SHAPE = [2048, 1024]
 models/YuE2 under its size's name. The projector into a 2048-wide language
 model is what tells the 1.7B build from the 0.6B one, which has the same files."""
 
+ALIGNER_REPO = "Qwen/Qwen3-ForcedAligner-0.6B"
+ALIGNER_DIRNAME = "Qwen3-ForcedAligner-0.6B"
+ALIGNER_FILES = (WEIGHTS_NAME, CONFIG_NAME)
+ALIGNER_BYTES = 1835544544
+ALIGNER_KIND = "qwen3_forced_aligner"
+"""Qwen's forced aligner, the 0.6B one: given the words, it says when each of them is sung.
+
+'YuE2 Edit Track' asks it where a single line of a song is, so that line can
+be rewritten without re-singing the verse around it. It is released without
+the one tokenizer file this pack reads, and the speech model's file is the
+same tokenizer, so that one is fetched beside it; ALIGNER_KIND is what its
+own config calls it, the speech model of the same shape calling itself
+something else."""
+
 VOCALS_REPO = "KimberleyJSN/melbandroformer"
 VOCALS_REVISION = "ac9b0614ab3cd7f77219e18ba494dfd93956c348"
 VOCALS_NAME = "MelBandRoformer.ckpt"

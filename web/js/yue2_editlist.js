@@ -4,7 +4,7 @@ export const MAX_TAKES = 4;
 
 export const SEED_CEILING = 2147483648;
 
-export const OPS = ["retake", "cut"];
+export const OPS = ["retake", "cut", "words"];
 
 export const NOT_A_LIST =
     "The edits field does not hold a JSON list. 'Reset track' on the node clears it.";
@@ -53,9 +53,12 @@ function asked(item, name, fallback) {
     return Object.prototype.hasOwnProperty.call(item, name) ? item[name] : fallback;
 }
 
-function rangeOf(item, where) {
+function rangeOf(item, where, op) {
     const bars = given(item, "bars");
     const seconds = given(item, "seconds");
+    if (op === "words" && bars === null && seconds === null) {
+        return { bars: null, seconds: null };
+    }
     if ((bars === null) === (seconds === null)) {
         throw new Error(where + " selects neither bars nor seconds, or both at once. It takes one "
             + "of them.");
@@ -95,12 +98,12 @@ function editOf(item, index, takes) {
     const op = given(item, "op");
     if (!OPS.includes(op)) {
         throw new Error(where + " asks for '" + op + "', which is not something an edit does. It "
-            + "is 'retake' or 'cut'.");
+            + "is 'retake', 'cut' or 'words'.");
     }
-    const span = rangeOf(item, where);
+    const span = rangeOf(item, where, op);
     if (op === "cut") {
         return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
-                 vary: null, guide: null,
+                 vary: null, guide: null, lines: null, text: null,
                  fade: measure(item, "fade", where, "the fade", FADE) };
     }
     const seed = asked(item, "seed", 0);
@@ -121,9 +124,30 @@ function editOf(item, index, takes) {
             throw new Error(where + " keeps take " + (take + 1) + " of " + wanted + ".");
         }
     }
+    let lines = null;
+    let said = null;
+    if (op === "words") {
+        const chosen = given(item, "lines");
+        if (!pair(chosen)) {
+            throw new Error(where + " does not say which lines of the words it rewrites.");
+        }
+        if (!whole(chosen[0])) throw new Error(where + ": the first line is not a whole number.");
+        if (!whole(chosen[1])) throw new Error(where + ": the last line is not a whole number.");
+        if (!(chosen[0] >= 0 && chosen[0] < chosen[1])) {
+            throw new Error(where + " rewrites lines " + (chosen[0] + 1) + " to " + chosen[1]
+                + ", which is not a stretch of words.");
+        }
+        const words = given(item, "text");
+        if (typeof words !== "string") {
+            throw new Error(where + " holds no new words to sing.");
+        }
+        lines = [chosen[0], chosen[1]];
+        said = words;
+    }
     return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
              vary: measure(item, "vary", where, "the variety", VARY),
-             guide: measure(item, "guide", where, "the guide", GUIDE), fade: null };
+             guide: measure(item, "guide", where, "the guide", GUIDE), fade: null,
+             lines, text: said };
 }
 
 export function readEdits(text, takes = 1) {
@@ -153,8 +177,12 @@ export function writeEdits(edits) {
     return JSON.stringify((edits || []).map((edit) => {
         const item = { op: edit.op };
         if (edit.bars) item.bars = [edit.bars[0], edit.bars[1]];
-        else item.seconds = [edit.seconds[0], edit.seconds[1]];
-        if (edit.op === "retake") {
+        else if (edit.seconds) item.seconds = [edit.seconds[0], edit.seconds[1]];
+        if (edit.op === "words") {
+            item.lines = [edit.lines[0], edit.lines[1]];
+            item.text = edit.text;
+        }
+        if (edit.op === "retake" || edit.op === "words") {
             item.seed = edit.seed;
             item.takes = edit.takes;
             if (edit.take !== null && edit.take !== undefined) item.take = edit.take;
@@ -266,23 +294,46 @@ export function describeSelection(selection) {
     return barsText(selection.first, selection.stop) + ", " + when;
 }
 
+export function linesText(first, stop) {
+    return stop - first === 1 ? "line " + (first + 1) : "lines " + (first + 1) + "-" + stop;
+}
+
 export function describeEdit(edit, index) {
-    const what = edit.op === "cut" ? "Cut" : "Retake";
-    const where = edit.bars ? barsText(edit.bars[0], edit.bars[1])
-        : spanText(edit.seconds[0], edit.seconds[1]);
-    const kept = edit.op === "retake" && edit.take !== null && edit.take !== undefined
+    const named = { cut: "Cut", words: "New words", retake: "Retake" };
+    const what = named[edit.op] || "Retake";
+    let where = "";
+    if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
+    else if (edit.seconds) where = spanText(edit.seconds[0], edit.seconds[1]);
+    else where = linesText(edit.lines[0], edit.lines[1]);
+    const joiner = edit.op === "words" ? " for " : " of ";
+    const kept = edit.op !== "cut" && edit.take !== null && edit.take !== undefined
         ? ", take " + (edit.take + 1) + " of " + edit.takes : "";
     const extra = [];
     if (typeof edit.vary === "number") extra.push("variety " + edit.vary.toFixed(2));
     if (typeof edit.guide === "number") extra.push("guide " + edit.guide.toFixed(1));
     if (typeof edit.fade === "number") extra.push("fade " + edit.fade.toFixed(1) + " s");
-    return (index + 1) + ". " + what + " of " + where + kept
+    return (index + 1) + ". " + what + joiner + where + kept
         + (extra.length ? ", " + extra.join(", ") : "");
+}
+
+export function wordsFor(lines, said, takes, seed, selection = null, knobs = {}) {
+    const edit = { op: "words", bars: null, seconds: null, seed,
+                   takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
+                   vary: null, guide: null, fade: null,
+                   lines: [lines[0], lines[1]], text: String(said) };
+    if (selection && selection.first !== null && selection.first !== undefined) {
+        edit.bars = [selection.first, selection.stop];
+    } else if (selection) {
+        edit.seconds = [Number(selection.from.toFixed(3)), Number(selection.to.toFixed(3))];
+    }
+    if (typeof knobs.vary === "number") edit.vary = knobs.vary;
+    if (typeof knobs.guide === "number") edit.guide = knobs.guide;
+    return edit;
 }
 
 export function editFor(selection, op, takes, seed, knobs = {}) {
     const edit = { op, bars: null, seconds: null, seed: 0, takes: 1, take: null,
-                   vary: null, guide: null, fade: null };
+                   vary: null, guide: null, fade: null, lines: null, text: null };
     if (selection.first === null) {
         edit.seconds = [Number(selection.from.toFixed(3)), Number(selection.to.toFixed(3))];
     } else {

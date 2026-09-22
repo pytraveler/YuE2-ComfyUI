@@ -157,7 +157,7 @@ def test_the_picture_and_the_line_travel_with_the_song(tmp_path):
     made = dataclasses.replace(a_song(), peaks=bytes([1, 2, 3]), body=bytes([4, 5, 6]),
                                parent=name(7), root=name(5), created=1000.5,
                                edit=[{"op": "retake", "at": [1.0, 2.0], "bars": [3, 4],
-                                      "seed": 40, "took": 1.0}])
+                                      "seed": 40, "took": 1.0, "was": "", "now": ""}])
     songs.Store(str(tmp_path)).put(name(1), made)
     back = songs.Store(str(tmp_path)).get(name(1))
     assert back == made
@@ -182,12 +182,21 @@ def test_what_an_edit_did_is_written_down_plainly_or_not_at_all(tmp_path):
     store.put(name(1), dataclasses.replace(a_song(), edit=[
         {"op": "cut", "at": [1.0, 1.0], "bars": None, "seed": None, "took": 2.0},
         {"op": "retake", "at": (3, 4), "bars": (5, 6), "seed": 7.0, "took": 1},
+        {"op": "words", "at": (3, 4), "bars": None, "seed": 8, "took": 1,
+         "was": "a" * (songs.SAID + 10), "now": None},
         "not an edit at all",
         {"at": "nowhere"}]))
-    assert store.listing()[0]["edit"] == [
-        {"op": "cut", "at": [1.0, 1.0], "bars": None, "seed": None, "took": 2.0},
-        {"op": "retake", "at": [3.0, 4.0], "bars": [5, 6], "seed": 7, "took": 1.0},
-        {"op": "", "at": [0.0, 0.0], "bars": None, "seed": None, "took": 0.0}]
+    kept = store.listing()[0]["edit"]
+    assert kept[:2] == [
+        {"op": "cut", "at": [1.0, 1.0], "bars": None, "seed": None, "took": 2.0,
+         "was": "", "now": ""},
+        {"op": "retake", "at": [3.0, 4.0], "bars": [5, 6], "seed": 7, "took": 1.0,
+         "was": "", "now": ""}]
+    assert kept[3] == {"op": "", "at": [0.0, 0.0], "bars": None, "seed": None, "took": 0.0,
+                       "was": "", "now": ""}
+    assert len(kept[2]["was"]) == songs.SAID and kept[2]["was"].endswith("\u2026"), (
+        "a line of words is kept, but a file read to draw a row does not hold a whole song")
+    assert kept[2]["now"] == "", "nothing written is nothing, not the word None"
 
 
 def test_a_picture_with_a_body_and_no_peaks_is_not_a_picture():

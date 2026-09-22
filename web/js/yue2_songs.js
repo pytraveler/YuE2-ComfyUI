@@ -46,6 +46,12 @@ const ON_THE_NODE = "on this node now";
 const FOLDED = "The edits made of this song, oldest first. The bar is the song, and the stretch "
     + "the edit changed is marked on it.";
 
+const NEW_WORDS = "text replace";
+
+const WAS_SUNG = "These words were sung here:";
+
+const IS_SUNG = "and these were put in their place:";
+
 const OPEN_IT = "Show the edits made of this song";
 const SHUT_IT = "Fold the edits away";
 
@@ -127,8 +133,14 @@ function what(row) {
     return marks.map((mark) => {
         const at = Array.isArray(mark.at) ? mark.at : [0, 0];
         if (mark.op === "cut") return "cut " + where(mark) + DOT + "-" + roll.clock(mark.took || 0);
-        return "retake " + where(mark) + DOT + roll.clock(Math.max(0, at[1] - at[0]));
+        const did = mark.op === "words" ? "new words " : "retake ";
+        return did + where(mark) + DOT + roll.clock(Math.max(0, at[1] - at[0]));
     }).join(", ");
+}
+
+function swapSaid(mark) {
+    return [WAS_SUNG, String(mark.was || "").trim() || "nothing",
+            IS_SUNG, String(mark.now || "").trim() || "nothing"].join("\n");
 }
 
 function shape(tag, cls) {
@@ -211,6 +223,11 @@ function picture(row) {
 
 function badges(row, chosen) {
     const said = [];
+    const swap = (Array.isArray(row.edit) ? row.edit : [])
+        .filter((mark) => mark.op === "words" && (mark.was || mark.now));
+    if (swap.length) {
+        said.push([NEW_WORDS, "yue2-s-swap-mark", swap.map(swapSaid).join("\n\n")]);
+    }
     if (row.key === chosen) said.push([ON_THE_NODE, "yue2-s-mark", ""]);
     if (row.voice) said.push([VOICE_ONLY, "yue2-s-warn-mark", VOICE_WHY]);
     else if (!row.bars) said.push([NO_BARS, "yue2-s-mark", NO_BARS_WHY]);
@@ -223,7 +240,9 @@ function badges(row, chosen) {
 
 function matches(row, wanted) {
     if (!wanted) return true;
-    const hay = [row.style, row.lyrics, row.origin, String(row.seed), row.note, what(row)]
+    const swaps = (Array.isArray(row.edit) ? row.edit : [])
+        .map((mark) => [mark.was || "", mark.now || ""].join(" ")).join(" ");
+    const hay = [row.style, row.lyrics, row.origin, String(row.seed), row.note, what(row), swaps]
         .join(" ").toLowerCase();
     return wanted.split(/\s+/).every((word) => hay.includes(word));
 }
@@ -679,6 +698,8 @@ const STYLE = `
 .yue2-s-mark, .yue2-s-count { flex: 0 0 auto; font-size: 11px;
     color: var(--descrip-text, #999); border: 1px solid var(--border-color, #4e4e4e);
     border-radius: 5px; padding: 0 5px; }
+.yue2-s-swap-mark { flex: 0 0 auto; font-size: 11px; color: #A9D3F0; border: 1px solid #3B7DD8;
+    border-radius: 5px; padding: 0 5px; background: rgba(59, 125, 216, 0.12); cursor: help; }
 .yue2-s-warn-mark { flex: 0 0 auto; font-size: 11px; color: #E0A33E; border: 1px solid #E0A33E;
     border-radius: 5px; padding: 0 5px; }
 .yue2-s-said-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;

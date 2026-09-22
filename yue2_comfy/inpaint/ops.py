@@ -261,3 +261,83 @@ def cut_words(lyrics: str, score: str, start: int, stop: int) -> Words:
     text = "".join("".join(block["raw"]) for index, block in enumerate(blocks)
                    if index not in dropped)
     return Words(text.strip(), tuple(blocks[index]["tag"] for index in dropped), True)
+
+
+@dataclasses.dataclass(frozen=True)
+class Rewrite:
+    """The lyrics a change of words leaves, and what it changed.
+
+    ``before`` and ``after`` are the lines as they were and as they are now,
+    without their line endings; ``tag`` names the section they sit in, empty
+    for lines written before the first tag. ``syllables`` counts both, because
+    a line that does not fit the tune it is sung on is the one thing the score
+    will not bend to: the notes stay as they were, and only the words change.
+    """
+
+    text: str
+    before: tuple
+    after: tuple
+    tag: str
+    syllables: tuple
+
+
+def tagged(line: str) -> bool:
+    """Whether a line of lyrics is a section tag rather than something sung."""
+    stripped = line.strip()
+    return bool(stripped) and phrasing.TAG.fullmatch(stripped) is not None
+
+
+def change_words(lyrics: str, first: int, stop: int, text: str) -> Rewrite:
+    """Lines ``first`` to ``stop`` of ``lyrics`` rewritten as ``text``, ``stop`` not included.
+
+    Lines count from 0 over the lyrics as they are written, blank lines and
+    tags included, which is how a window points at the line a person clicked:
+    a rule for which lines count would have to be kept in step in two
+    languages, while a line number needs no rule at all. A tag is not a line
+    to rewrite -- a section is what a cut takes out, not what a change of
+    words touches -- and neither is a stretch with nothing sung in it.
+
+    The lines that stay are the text as it was, to the character, and the new
+    ones take the line ending the old ones had.
+    """
+    plain = str(lyrics or "").splitlines()
+    raw = str(lyrics or "").splitlines(keepends=True)
+    for value in (first, stop):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("The lines of an edit are whole numbers.")
+    if not 0 <= first < stop <= len(plain):
+        raise ValueError("Lines {} to {} are not lines of these words, which have {}.".format(
+            first + 1, stop, len(plain)))
+    chosen = plain[first:stop]
+    if any(tagged(line) for line in chosen):
+        raise ValueError("A section tag is not a line to rewrite. Choose the lines that are sung "
+                         "in it.")
+    if not any(phrasing.syllables(line) for line in chosen):
+        raise ValueError("Nothing is sung in the lines chosen, so there are no words to change.")
+    fresh = [line.rstrip() for line in str(text or "").splitlines()]
+    while fresh and not fresh[0]:
+        fresh.pop(0)
+    while fresh and not fresh[-1]:
+        fresh.pop()
+    if any(tagged(line) for line in fresh):
+        raise ValueError("New words cannot name a section: a tag among them would start one.")
+    if not any(phrasing.syllables(line) for line in fresh):
+        raise ValueError("The new words say nothing. A stretch of a song is taken out with a cut, "
+                         "not with silence.")
+    ending = chr(10)
+    for line, whole in zip(chosen, raw[first:stop]):
+        if whole[len(line):]:
+            ending = whole[len(line):]
+            break
+    tail = raw[stop - 1][len(plain[stop - 1]):]
+    written = [line + (tail if index == len(fresh) - 1 else ending)
+               for index, line in enumerate(fresh)]
+    tag = ""
+    for line in plain[:first]:
+        found = phrasing.TAG.fullmatch(line.strip()) if line.strip() else None
+        if found:
+            tag = found.group(1)
+    return Rewrite(text="".join(raw[:first]) + "".join(written) + "".join(raw[stop:]),
+                   before=tuple(chosen), after=tuple(fresh), tag=tag,
+                   syllables=(sum(phrasing.syllables(line) for line in chosen),
+                              sum(phrasing.syllables(line) for line in fresh)))

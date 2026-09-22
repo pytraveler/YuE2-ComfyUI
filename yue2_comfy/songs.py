@@ -276,14 +276,27 @@ def key(waveform, sample_rate) -> str:
     return digest.hexdigest()
 
 
+SAID = 400
+"""How much of a swapped line a mark keeps, in characters, the rest being an ellipsis."""
+
+
+def _said(text) -> str:
+    """One side of a change of words, short enough to sit in a file read for a row."""
+    said = "" if text is None else str(text)
+    return said if len(said) <= SAID else said[:SAID - 1] + "\u2026"
+
+
 def _marks(edits) -> list:
     """What an edit did, as plain JSON, one entry an edit in the order they were made.
 
-    ``op`` is 'retake' or 'cut'; ``at`` is where it sits in this song, in
-    seconds, start and stop, the same second twice for a cut; ``bars`` the
-    bars asked for, when they were bars; ``seed`` the take that was kept;
-    ``took`` how many seconds the edit took in hand. Anything else in the file
-    is left out, so a picker never reads more than it was promised.
+    ``op`` is 'retake', 'cut' or 'words'; ``at`` is where it sits in this
+    song, in seconds, start and stop, the same second twice for a cut;
+    ``bars`` the bars asked for, when they were bars; ``seed`` the take that
+    was kept; ``took`` how many seconds the edit took in hand. ``was`` and
+    ``now`` are the lines a change of words swapped, kept short because this
+    file is read to draw a row, not to hold a song's text twice. Anything else
+    in the file is left out, so a picker never reads more than it was
+    promised.
     """
     kept = []
     for mark in edits or []:
@@ -298,7 +311,8 @@ def _marks(edits) -> list:
                      "at": [round(float(at[0]), 3), round(float(at[1]), 3)],
                      "bars": None if bars is None else [int(bars[0]), int(bars[1])],
                      "seed": None if seed is None else normalize_seed(seed),
-                     "took": round(float(mark.get("took") or 0.0), 3)})
+                     "took": round(float(mark.get("took") or 0.0), 3),
+                     "was": _said(mark.get("was")), "now": _said(mark.get("now"))})
     return kept
 
 

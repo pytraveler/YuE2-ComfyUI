@@ -82,6 +82,8 @@ const SKIN = {
     swappedEdge: "#A88CDC",
     playhead: "#F5A623",
     sung: "rgba(255, 255, 255, 0.35)",
+    said: "rgba(126, 211, 148, 0.20)",
+    saidEdge: "#7ED394",
 };
 
 const WAITING = "Press Render to hear it.";
@@ -107,6 +109,11 @@ const DROP_WHY =
     + "one on the track.";
 
 const NEXT_RETAKE = "Sing it";
+const WORDS_SHORT = 26;
+
+const WORDS_TALL = 190;
+
+const NEXT_WORDS = "Sing these words";
 const NEXT_CUT = "Cut it";
 const NEXT_CHOOSE = "Keep this take";
 const NEXT_CATCHUP = "Catch up";
@@ -129,6 +136,38 @@ const KEPT_ELSEWHERE =
     + "kept. Keeping it costs no singing -- the take is already sung.";
 
 const SUNG_ONCE = "Takes already sung in this session come back without being sung again.";
+
+const WORDS_HOW =
+    "Click a line to write other words for it; shift-click another to take them both. The tune "
+    + "does not change -- the model sings it with these words instead.";
+
+const WORDS_HEARD =
+    "Where that line is sung is found by hearing the song once, and the model runs into it from "
+    + "the last word of the line before, as a singer would.";
+
+const WORDS_PICKED =
+    "The stretch selected on the track is what is sung again, and these are the words it sings.";
+
+function typing(target) {
+    const tag = target && target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"
+        || Boolean(target && target.isContentEditable);
+}
+
+const WORDS_WHERE =
+    "The stretch in green is where the song's own bars put this line. It is the same guess that "
+    + "lights a line up while the song plays, not a measurement, and what is sung is found by "
+    + "hearing the song.";
+
+const WORDS_KNOBS =
+    "Seed, Variety and Guide under the track are this edit's own, so set them before singing.";
+
+const WORDS_APART =
+    "Those lines are in different sections. One box rewrites the lines of one section, because "
+    + "a section tag is not something a change of words moves.";
+
+const WORDS_EMPTY =
+    "There are no words in the box. A stretch of a song is taken out with Cut, not with silence.";
 
 const CUT_MOVES =
     "The node moves both ends to the same place in the singing, so what goes can differ from "
@@ -438,6 +477,9 @@ class TrackWindow {
         this.songFile = node.__yue2TrackSong || null;
         this.stamp = node.__yue2TrackStamp || 0;
         this.selection = null;
+        this.editing = null;
+        this.wordArea = null;
+        this.overSaid = null;
         this.playhead = 0;
         this.drag = null;
         this.view = null;
@@ -646,10 +688,14 @@ class TrackWindow {
         this.canvas.addEventListener("wheel", (event) => this.wheeled(event), { passive: false });
         panel.addEventListener("keydown", (event) => {
             if (event.key !== " " && event.code !== "Space") return;
+            if (typing(event.target)) return;
             event.preventDefault();
             this.togglePlay();
         });
         handle.onEscape = () => {
+            if (this.stopEditing()) {
+                return;
+            }
             if (this.sound) {
                 this.stopSound();
                 return;
@@ -747,6 +793,8 @@ class TrackWindow {
         this.view = null;
         this.take = null;
         this.selection = null;
+        this.editing = null;
+        this.wordArea = null;
         this.setWorking(false);
         this.adoptTakes();
         this.box.title = this.payload && !this.hasScore() ? NO_SCORE_HERE : "";
@@ -851,7 +899,9 @@ class TrackWindow {
         const here = mine.edits[mine.edits.length - 1];
         return here.op === there.op && here.seed === there.seed
             && JSON.stringify(here.bars) === JSON.stringify(there.bars)
-            && JSON.stringify(here.seconds) === JSON.stringify(there.seconds);
+            && JSON.stringify(here.seconds) === JSON.stringify(there.seconds)
+            && JSON.stringify(here.lines) === JSON.stringify(there.lines)
+            && here.text === there.text;
     }
 
     clearPick() {
@@ -925,10 +975,11 @@ class TrackWindow {
         const edge = this.cutEdge();
         const canRetake = Boolean(this.payload) && !this.retakeButton.disabled;
         const canFade = Boolean(this.payload) && !this.cutButton.disabled && Boolean(edge);
-        this.knobsRow.hidden = !canRetake && !canFade;
-        this.seedKnob.hidden = !canRetake;
-        this.varyKnob.box.hidden = !canRetake;
-        this.guideKnob.box.hidden = !canRetake;
+        const sings = canRetake || (Boolean(this.editing) && !this.working);
+        this.knobsRow.hidden = !sings && !canFade;
+        this.seedKnob.hidden = !sings;
+        this.varyKnob.box.hidden = !sings;
+        this.guideKnob.box.hidden = !sings;
         this.fadeKnob.box.hidden = !canFade;
         this.seedBox.value = String(this.knobs.seed);
         const vary = this.knobs.vary === null ? Number(sung.vary) || 1 : this.knobs.vary;
@@ -1008,19 +1059,31 @@ class TrackWindow {
         if (edit.op === "cut") {
             return { head: head, facts: this.cutFacts(edit), label: NEXT_CUT, why: RUN_WHY };
         }
+        if (edit.op === "words") {
+            const said = [this.spanFact(edit) || WORDS_HEARD];
+            const written = String(edit.text || "").split(/\r?\n/).filter((line) => line.trim());
+            if (written.length) said.push("Sings: " + written.join(" / "));
+            said.push(this.takeFact(edit));
+            said.push(SUNG_ONCE);
+            return { head: head, facts: said, label: NEXT_WORDS, why: RUN_WHY };
+        }
         const facts = [this.spanFact(edit)];
-        facts.push(edit.take === null || edit.take === undefined
-            ? "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
-                + ", and keeps the take whose join the model likes best."
-            : "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.");
+        facts.push(this.takeFact(edit));
         facts.push(SUNG_ONCE);
         return { head: head, facts: facts.filter(Boolean), label: NEXT_RETAKE, why: RUN_WHY };
+    }
+
+    takeFact(edit) {
+        return edit.take === null || edit.take === undefined
+            ? "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
+                + ", and keeps the take whose join the model likes best."
+            : "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.";
     }
 
     editSpan(edit) {
         if (edit.seconds) return [edit.seconds[0], edit.seconds[1]];
         const grid = this.grid();
-        if (!list.barCount(grid)) return null;
+        if (!edit.bars || !list.barCount(grid)) return null;
         return [list.lineAt(grid, edit.bars[0]), list.lineAt(grid, edit.bars[1])];
     }
 
@@ -1230,16 +1293,36 @@ class TrackWindow {
         }
         this.words.hidden = false;
         this.words.appendChild(element("div", "yue2-t-wordhead", "Words"));
+        const raw = this.rawLines();
+        let at = 0;
+        this.wordArea = null;
         for (const block of parseLyrics(text)) {
-            const row = { block, tag: null, lines: [] };
+            const row = { block, tag: null, lines: [], numbers: [] };
             if (block.tag) {
                 row.tag = element("div", "yue2-t-tag",
                     "[" + block.tag + (block.number ? " " + block.number : "") + "]");
                 this.words.appendChild(row.tag);
             }
             for (const line of block.lines) {
+                while (at < raw.length && raw[at].trim() !== line) at += 1;
+                const number = at < raw.length ? at : -1;
+                at += 1;
                 const said = element("div", "yue2-t-word", line || " ");
+                if (number >= 0 && /\p{L}|\p{N}/u.test(line)) {
+                    const at = row.lines.length;
+                    const block = this.blocks.length;
+                    said.classList.add("yue2-t-writable");
+                    said.title = WORDS_HOW + "\n\n" + WORDS_WHERE;
+                    said.addEventListener("click", (event) => this.pickLine(number, event));
+                    said.addEventListener("pointerenter", () => this.overWords(block, at));
+                    said.addEventListener("pointerleave", () => this.overWords(null, null));
+                }
+                if (this.editing && number >= this.editing.first && number < this.editing.stop) {
+                    if (number === this.editing.first) this.words.appendChild(this.wordBox());
+                    said.hidden = true;
+                }
                 row.lines.push(said);
+                row.numbers.push(number);
                 this.words.appendChild(said);
             }
             this.blocks.push(row);
@@ -1248,6 +1331,182 @@ class TrackWindow {
         this.words.title = !(this.grid()?.sections || []).length ? WORDS_NO_SCORE
             : (WORDS_SAID[this.pairedBy] || WORDS_UNPAIRED);
         this.markWords();
+        this.fitArea();
+        if (this.knobsRow) this.paintKnobs();
+    }
+
+    overWords(block, line) {
+        const over = block === null ? null : { block, line };
+        const was = this.overSaid;
+        if ((was === null) === (over === null)
+            && (over === null || (was.block === over.block && was.line === over.line))) return;
+        this.overSaid = over;
+        this.draw();
+    }
+
+    lineSpan(block, line) {
+        const sections = this.grid()?.sections || [];
+        const row = this.blocks[block];
+        const index = this.paired.indexOf(block);
+        if (!sections.length || !row || index < 0) return null;
+        const section = sections[index];
+        const stop = sections[index + 1] ? sections[index + 1].start
+            : Math.max(section.end, this.total());
+        const from = typeof section.sung === "number" && section.sung > section.start
+            ? section.sung : section.start;
+        if (!row.lines.length || stop <= from) return null;
+        if (line < 0) return [from, stop];
+        const step = (stop - from) / row.lines.length;
+        return [from + step * line, from + step * (line + 1)];
+    }
+
+    whereLine(number) {
+        for (let block = 0; block < this.blocks.length; block += 1) {
+            const at = this.blocks[block].numbers.indexOf(number);
+            if (at >= 0) return { block, line: at };
+        }
+        return null;
+    }
+
+    saidSpan() {
+        let over = this.overSaid;
+        if (!over && this.editing) {
+            const first = this.whereLine(this.editing.first);
+            const last = this.whereLine(this.editing.stop - 1);
+            if (first && last) {
+                const a = this.lineSpan(first.block, first.line);
+                const b = this.lineSpan(last.block, last.line);
+                if (a && b) return [Math.min(a[0], b[0]), Math.max(a[1], b[1])];
+            }
+            return null;
+        }
+        return over ? this.lineSpan(over.block, over.line) : null;
+    }
+
+    rawLines() {
+        return String(this.payload?.lyrics || "").replace(/\r\n?/g, "\n").split("\n");
+    }
+
+    linesText(first, stop) {
+        return this.rawLines().slice(first, stop).map((line) => line.trim()).join("\n");
+    }
+
+    tagLine(line) {
+        const said = String(line === null || line === undefined ? "" : line).trim();
+        return Boolean(said) && /^\[[^\]]*\]$/.test(said);
+    }
+
+    pickLine(number, event) {
+        if (this.working) return;
+        const held = this.editing;
+        if (event && event.shiftKey && held) {
+            const first = Math.min(held.first, number);
+            const stop = Math.max(held.stop, number + 1);
+            if (this.rawLines().slice(first, stop).some((line) => this.tagLine(line))) {
+                this.setStatus(WORDS_APART, true);
+                return;
+            }
+            if (number >= held.stop) {
+                this.editing = { first: held.first, stop: number + 1,
+                                 text: [held.text, this.linesText(held.stop, number + 1)]
+                                     .filter((part) => part !== "").join("\n") };
+            } else if (number < held.first) {
+                this.editing = { first: number, stop: held.stop,
+                                 text: [this.linesText(number, held.first), held.text]
+                                     .filter((part) => part !== "").join("\n") };
+            }
+        } else if (held && held.first === number && held.stop === number + 1) {
+            this.editing = null;
+        } else {
+            this.editing = { first: number, stop: number + 1,
+                             text: this.linesText(number, number + 1) };
+        }
+        this.paintWords();
+        if (this.wordArea) {
+            this.wordArea.focus();
+            const end = this.wordArea.value.length;
+            this.wordArea.setSelectionRange(end, end);
+        }
+    }
+
+    fitArea() {
+        const area = this.wordArea;
+        if (!area) return;
+        area.style.height = "auto";
+        area.style.height = Math.min(WORDS_TALL, Math.max(WORDS_SHORT, area.scrollHeight + 2))
+            + "px";
+    }
+
+    wordBox() {
+        const box = element("div", "yue2-t-wordbox");
+        const area = document.createElement("textarea");
+        area.className = "yue2-t-wordarea";
+        area.rows = 1;
+        area.value = this.editing.text;
+        area.spellcheck = false;
+        area.addEventListener("input", () => {
+            if (this.editing) this.editing.text = area.value;
+            this.fitArea();
+        });
+        area.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                this.stopEditing();
+            } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                this.singWords();
+            }
+        });
+        box.appendChild(area);
+        this.wordArea = area;
+        const row = element("div", "yue2-t-wordrow");
+        const go = element("button", "yue2-t-go", NEXT_WORDS);
+        go.title = this.selection ? WORDS_PICKED : WORDS_HEARD;
+        go.disabled = this.working;
+        go.addEventListener("click", () => this.singWords());
+        row.appendChild(go);
+        const stop = element("button", "", "Cancel");
+        stop.addEventListener("click", () => this.stopEditing());
+        row.appendChild(stop);
+        box.appendChild(row);
+        const why = element("div", "yue2-t-wordwhy",
+                            this.selection ? WORDS_PICKED : WORDS_HEARD);
+        why.appendChild(element("div", "yue2-t-wordknobs", WORDS_KNOBS));
+        box.appendChild(why);
+        return box;
+    }
+
+    stopEditing() {
+        if (!this.editing) return false;
+        this.editing = null;
+        this.wordArea = null;
+        this.paintWords();
+        return true;
+    }
+
+    singWords() {
+        if (!this.editing || this.working) return;
+        const said = String(this.editing.text || "");
+        if (!/\p{L}|\p{N}/u.test(said)) {
+            this.setStatus(WORDS_EMPTY, true);
+            return;
+        }
+        const { edits, error } = nodeList(this.node);
+        if (error) {
+            this.setStatus(error, true);
+            return;
+        }
+        const made = list.wordsFor([this.editing.first, this.editing.stop], said,
+            nodeTakes(this.node), this.knobs.seed, this.selection,
+            { vary: this.knobs.vary, guide: this.knobs.guide });
+        writeList(this.node, [...edits, made]);
+        paintSummary(this.node);
+        this.editing = null;
+        this.wordArea = null;
+        this.selection = null;
+        this.refresh();
+        this.setStatus(list.describeEdit(made, edits.length).slice(3) + " is on the list. "
+            + BY_ITSELF);
     }
 
     pairWords() {
@@ -1492,6 +1751,7 @@ class TrackWindow {
         this.drawWave(c, top, tall);
         this.drawLines(c, top, tall);
         this.drawMade(c, top, tall);
+        this.drawSaid(c, top, tall);
         this.drawPick(c, top, tall);
         this.drawStrip(c);
         this.drawNumbers(c, top);
@@ -1611,6 +1871,18 @@ class TrackWindow {
         c.fillStyle = edge;
         c.fillRect(Math.round(x0), top, 1, tall);
         if (x1 > x0) c.fillRect(Math.round(x1), top, 1, tall);
+    }
+
+    drawSaid(c, top, tall) {
+        const said = this.saidSpan();
+        if (!said) return;
+        const x0 = this.xOf(said[0]);
+        const x1 = this.xOf(said[1]);
+        c.fillStyle = SKIN.said;
+        c.fillRect(x0, top, Math.max(1, x1 - x0), tall);
+        c.fillStyle = SKIN.saidEdge;
+        c.fillRect(Math.round(x0), top, 1, tall);
+        c.fillRect(Math.round(x1) - 1, top, 1, tall);
     }
 
     drawPick(c, top, tall) {
@@ -2140,6 +2412,19 @@ const STYLE = `
     padding-left: 4px; border-radius: 3px; }
 .yue2-t-word { overflow-wrap: anywhere; border-left: 2px solid transparent; padding-left: 4px;
     border-radius: 3px; }
+.yue2-t-word.yue2-t-writable { cursor: text; }
+.yue2-t-word.yue2-t-writable:hover { background: rgba(255, 255, 255, 0.07); }
+.yue2-t-wordbox { display: flex; flex-direction: column; gap: 5px; margin: 5px 0;
+    padding: 6px; border-radius: 6px; border: 1px solid #3B7DD8;
+    background: rgba(59, 125, 216, 0.10); }
+.yue2-panel textarea.yue2-t-wordarea { width: 100%; box-sizing: border-box; resize: none;
+    overflow-y: auto; font: inherit; min-height: 0; line-height: 1.5;
+    color: var(--input-text, #ddd); background: var(--comfy-input-bg, #222);
+    border: 1px solid #3B7DD8; border-radius: 4px; padding: 4px 6px; }
+.yue2-t-wordwhy { border-top: 1px solid rgba(255, 255, 255, 0.12); padding-top: 5px;
+    font-size: 10px; line-height: 1.45; color: var(--descrip-text, #8FA3AD); }
+.yue2-t-wordknobs { margin-top: 4px; color: #9CC4E0; }
+.yue2-t-wordrow { display: flex; gap: 6px; flex-wrap: wrap; }
 .yue2-t-words .yue2-t-now { background: rgba(240, 176, 88, 0.16); border-left-color: #F0B058;
     color: var(--input-text, #eee); }
 .yue2-t-words .yue2-t-over { background: rgba(255, 255, 255, 0.05);

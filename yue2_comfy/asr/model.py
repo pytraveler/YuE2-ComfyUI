@@ -39,8 +39,14 @@ def load(folder: str, device, dtype=torch.bfloat16) -> network.Network:
 
 
 def mono_16k(waveform: torch.Tensor, rate: int) -> torch.Tensor:
-    """``[channels, samples]`` at any rate as mono float32 at 16 kHz, on the CPU."""
+    """``[channels, samples]`` at any rate as mono float32 at 16 kHz, on the CPU.
+
+    A whole ComfyUI AUDIO value, ``[recordings, channels, samples]``, is heard
+    as its first recording, which is the one every node here works on.
+    """
     mono = waveform.detach().float().cpu()
+    if mono.dim() == 3:
+        mono = mono[0]
     if mono.dim() == 2:
         mono = mono.mean(dim=0)
     if int(rate) != prompt.SAMPLE_RATE:

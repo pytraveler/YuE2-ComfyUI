@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import io
+import json
 import logging
+import math
 import os
 import time
 
@@ -51,6 +54,12 @@ track, which is how a take that runs a minute is listened to at all. That
 costs the temp folder a WAV per take -- 21 MB a minute of stereo -- until
 ComfyUI clears it at startup, and buys the ear the whole song around the
 join."""
+
+DECODE_SHARE = 0.08
+"""The share of the bar that turning a remembered song back into sound takes.
+
+Measured 2026-09-19 on a 5090: 1.1 to 1.7 seconds for a four-minute song,
+against minutes to sing one, so it is a sliver of any run that also edits."""
 
 GRID_SHARE = 0.12
 """The share of the bar that laying the score over the song takes: the separator and a tenth of a second of arithmetic."""
@@ -78,7 +87,9 @@ RUN_KEYS = ("device", "offload", "low_vram", "download", "keep_model_loaded", "v
 knobs on this node: an edit sampled another way would not sound like the song
 it goes into. They come out of the song's memory, and so do the adapters it
 was sung with, which is what makes a retake of a song sung through a LoRA come
-back in the same voice."""
+back in the same voice. The track window can still ask for another temperature
+or guide for one edit alone, see ``_edited``; that is a choice made about that
+stretch, not a setting of the run."""
 
 SUNG_KEYS = ("cot", "cfg_scale", "ode_steps", "temperature", "top_p", "top_k",
              "repetition_penalty")
@@ -104,11 +115,39 @@ VOICE_ONLY = (
     "node's output."
 )
 
-NO_AUDIO = "No audio is connected. Join the song you want to edit to 'audio'."
+NO_AUDIO = (
+    "Nothing is chosen to edit. Join a song to 'audio', or press 'Saved songs...' on the node "
+    "and pick one this install has sung."
+)
+
+GONE = (
+    "The song this node was opened on is no longer remembered. It may have been the oldest when "
+    "the store filled up, or ComfyUI/user/yue2_comfy/songs may have been cleared.\n\n"
+    "Press 'Saved songs...' and pick another, or join the audio to 'audio'."
+)
+
+NOT_A_KEY = (
+    "The 'song_key' field does not hold a song key. It is written by 'Saved songs...' on the "
+    "node and is not meant to be typed; clear it and pick a song again."
+)
+
+SONG_TOOLTIP = (
+    "Which remembered song to edit when nothing is joined to 'audio'. Written by the 'Saved "
+    "songs...' button on the node, which shows what this install has sung and what each one "
+    "is.\n\nThe song comes back from its latents, the last stage of singing it and nothing more: "
+    "about a second and a half for four minutes, against minutes to sing it again. The sound it "
+    "makes is the same performance but not the same file to the bit, so the song answers to "
+    "that sound too. With 'Keep each song's sound beside it' switched on in the 'Saved "
+    "songs...' window, the sound is read off the disk instead, which is faster still and is "
+    "the song's own file to the bit.\n\nA song joined to 'audio' wins over this field: the "
+    "graph is what the run is about, and the field is what to do when there is no graph above "
+    "this node yet."
+)
 
 AUDIO_TOOLTIP = (
     "A song this pack has sung: the output of 'YuE2 Generate Song', 'YuE2 Render Plan' or "
-    "'YuE2 Decode Latents', or a FLAC or WAV of one loaded with 'Load Audio'.\n\n"
+    "'YuE2 Decode Latents', or a FLAC or WAV of one loaded with 'Load Audio'. Optional: with "
+    "nothing joined here the node opens the song chosen with 'Saved songs...'.\n\n"
     "An MP3 or another lossy file changes nearly every sample, and the song behind it is not "
     "found."
 )
@@ -163,6 +202,18 @@ class _Refused(Exception):
 _GRIDS = collections.OrderedDict()
 """The grid measured for each song, by its key: measuring it separates the voice, which is a download and a minute of card."""
 
+GRID_SUFFIX = ".grid.json"
+"""Where a measured grid waits for the next session, beside the song it belongs to.
+
+Measuring one separates the song's voice: eight seconds of card on a
+four-minute song, measured on the user's own runs on 2026-09-22. The answer
+never changes, a song being remembered under the key of its own samples, but
+it lived in the session alone, so every song reopened after a restart paid
+those eight seconds again -- and opening saved songs to compare them is what
+the picker is for. Only what the measuring found is written; the rest of a
+grid comes from the score. A file left behind by a song the store dropped is
+a hundred bytes, and still right if that song ever comes back."""
+
 _GRID_KEEP = 8
 
 
@@ -193,18 +244,6 @@ def _temp_folder():
     return folder_paths.get_temp_directory()
 
 
-def _pcm(waveform):
-    """A waveform as interleaved little-endian 16-bit samples, the way ``songs.key`` rounds them."""
-    import torch
-
-    samples = waveform.detach()
-    if samples.dim() == 3:
-        samples = samples[0]
-    samples = samples.to(device="cpu", dtype=torch.float32).transpose(0, 1).contiguous()
-    pcm = (samples.reshape(-1) * 32768.0).round_().clamp_(-32768, 32767)
-    return pcm.to(torch.int16).numpy().astype("<i2", copy=False).tobytes()
-
-
 def _write_wave(waveform, rate: int, name: str):
     """One stretch of sound in ComfyUI's temp folder, served back to the window by ``routes.send_sound``."""
     import wave
@@ -222,7 +261,7 @@ def _write_wave(waveform, rate: int, name: str):
             handle.setnchannels(int(channels))
             handle.setsampwidth(2)
             handle.setframerate(int(rate))
-            handle.writeframes(_pcm(waveform))
+            handle.writeframes(songs.pcm16(waveform))
     except Exception:
         log.warning("[yue2_comfy.edit_track] this take could not be written for listening",
                     exc_info=True)
@@ -257,6 +296,66 @@ def _wave(waveform, count: int = PEAKS) -> dict:
     body = samples.pow(2).mean(dim=0)[:usable].reshape(-1, step).mean(dim=1).sqrt()
     return {"peaks": [round(float(value), 4) for value in loudest.tolist()],
             "rms": [round(float(value), 4) for value in body.tolist()]}
+
+
+def _edited(settings, edit) -> dict:
+    """The settings one edit sings by: the song's own, with what the window asked for over them.
+
+    An edit is sung the way the song was sung -- that is what keeps a retake
+    in the same voice as the song around it -- unless the window says
+    otherwise for that one edit. See ``track.VARY`` and ``track.GUIDE``.
+    """
+    if getattr(edit, "vary", None) is None and getattr(edit, "guide", None) is None:
+        return settings
+    wanted = dict(settings)
+    if edit.vary is not None:
+        wanted["temperature"] = float(edit.vary)
+    if edit.guide is not None:
+        wanted["cfg_scale"] = float(edit.guide)
+    return wanted
+
+
+def _edge(step, frames: int) -> str:
+    """Which end of the song a cut left bare: 'head', 'tail', or neither of them."""
+    if step.kind != "cut":
+        return ""
+    if step.start <= 0 and step.stop < frames:
+        return "head"
+    if step.stop >= frames and step.start > 0:
+        return "tail"
+    return ""
+
+
+def _faded(waveform, seconds, head: bool, rate: int):
+    """The sound with a ramp laid on the edge a cut left bare.
+
+    A cut inside the song is joined with a crossfade at each end. One that
+    takes the first bars, or the last, has no other side to fade into, so the
+    song would start or stop wherever the samples happened to be. The ramp is
+    the raised cosine the joins use, over as many seconds as the edit asks
+    for. Never laid in place: the take it came from is kept for the session.
+    """
+    import torch
+
+    count = min(int(round(float(seconds) * rate)), int(waveform.shape[-1]))
+    if count < 2:
+        return waveform
+    steps = torch.arange(count, dtype=torch.float32) + 0.5
+    ramp = (0.5 - 0.5 * torch.cos(math.pi * steps / count)).to(waveform.dtype)
+    faded = waveform.clone()
+    if head:
+        faded[..., :count] *= ramp
+    else:
+        faded[..., -count:] *= ramp.flip(0)
+    return faded
+
+
+def _sampled(settings) -> dict:
+    """What the song is sung with, for the window's own knobs to start from."""
+    from .inpaint import core
+
+    return {"vary": round(float(settings.get("temperature") or 0.0), 3),
+            "guide": round(float(core.guidance(settings)), 3)}
 
 
 def _settings(song, options, unique_id) -> dict:
@@ -320,6 +419,46 @@ class Results:
 RESULTS = Results()
 
 
+def _grid_file(name: str):
+    """The path the grid for *name* is kept at, or None when there is nowhere to keep it."""
+    folder = songs.store().folder
+    if not folder or not songs.is_key(name):
+        return None
+    return os.path.join(folder, name + GRID_SUFFIX)
+
+
+def _grid_read(name: str, sheet):
+    """The grid measured for this song in some other session, or None. Never fatal."""
+    path = _grid_file(name)
+    if path is None:
+        return None
+    try:
+        with io.open(path, encoding="utf-8") as handle:
+            kept = json.load(handle)
+        return grid.Grid(offset=float(kept["offset"]), rate=float(kept["rate"]),
+                         tick=grid.tick_seconds(sheet), starts=grid.starts_of(sheet),
+                         by_voice=bool(kept["by_voice"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        log.debug("[yue2_comfy.edit_track] %s cannot be read and is measured again", path,
+                  exc_info=True)
+        return None
+
+
+def _grid_keep(name: str, clock) -> None:
+    """Write the measured grid beside its song. Never fatal: it only saves time."""
+    path = _grid_file(name)
+    if path is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump({"offset": float(clock.offset), "rate": float(clock.rate),
+                       "by_voice": bool(clock.by_voice)}, handle)
+    except OSError:
+        log.debug("[yue2_comfy.edit_track] the grid could not be written to %s", path,
+                  exc_info=True)
+
+
 def _grid_of(name: str, song, waveform, rate: int, settings, unique_id, progress):
     """The score laid over the song, measured once per song and kept.
 
@@ -338,6 +477,13 @@ def _grid_of(name: str, song, waveform, rate: int, settings, unique_id, progress
     from .vocals_only import separator_weights, voice_of
 
     sheet = notation.read(song.score)
+    kept = _grid_read(name, sheet)
+    if kept is not None:
+        _GRIDS[name] = kept
+        log.info("[yue2_comfy.edit_track] the score's place on this song was measured before: "
+                 "from %.2f s at %.4f of its tempo, placed by %s", kept.offset, kept.rate,
+                 "the voice" if kept.by_voice else "the mix")
+        return kept
     path = separator_weights(settings, unique_id, progress)
     voice = voice_of({"waveform": waveform, "sample_rate": rate}, settings, unique_id, progress,
                      path=path)["waveform"]
@@ -347,6 +493,7 @@ def _grid_of(name: str, song, waveform, rate: int, settings, unique_id, progress
              "placed by %s, in %.1f s", clock.offset, clock.rate,
              "the voice" if clock.by_voice else "the mix", time.perf_counter() - began)
     _GRIDS[name] = clock
+    _grid_keep(name, clock)
     while len(_GRIDS) > _GRID_KEEP:
         _GRIDS.popitem(last=False)
     return clock
@@ -387,6 +534,71 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
             "ended": bool(take.ended), "flagged": _flagged(take), "audio": entry}
 
 
+def _was_facts(waveform, rate: int, prior, step, name: str) -> dict:
+    """The song as it stood before the edit, as a row the takes list shows first.
+
+    Shaped like a take, so the window draws, plays and compares it the same
+    way, with ``index`` -1 and no seed: it is not a take of the edit, it is
+    what the edit replaced. ``seconds`` is the stretch as it was, against a
+    take's own length, and ``grid`` the bars before the edit moved them.
+    """
+    from .inpaint import grid
+
+    entry = _write_wave(waveform, rate, "{}_was.wav".format(name[:16]))
+    drawn = _wave(waveform)
+    laid = None
+    if prior.sheet is not None and prior.clock is not None:
+        laid = grid.layout(prior.sheet, prior.clock, prior.frames)
+    return {"seed": None, "index": -1, "kept": False, "sung": True,
+            "seconds": round((step.stop - step.start) * FRAME_SECONDS, 3),
+            "total": round(int(waveform.shape[-1]) / float(rate), 3),
+            "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": laid,
+            "join": None, "natural": None, "ended": False, "flagged": False, "audio": entry}
+
+
+def _moved(marks, step, count: int) -> list:
+    """Where the marks of the edits already made sit in the song after this one.
+
+    An edit that put ``count`` frames where ``step.start`` to ``step.stop``
+    were moves everything after it by the difference, and swallows whatever
+    stood inside it.
+    """
+    shift = count - (step.stop - step.start)
+    moved = []
+    for mark in marks:
+        if step.start <= mark["start"] < step.stop:
+            continue
+        if mark["start"] >= step.stop:
+            mark = dict(mark, start=mark["start"] + shift)
+        moved.append(mark)
+    return moved
+
+
+def _stamped(edited, waveform, parent: str, before, marks):
+    """The edited song with what a picker needs of it: its family, its age, its picture.
+
+    ``parent`` is the key the run opened and ``before`` the song kept under
+    it, so this one belongs to that song's line, or starts one under that
+    song. The picture is a kilobyte and never worth failing the edit over.
+    """
+    import dataclasses
+
+    peaks, body = b"", b""
+    try:
+        peaks, body = songs.strip(waveform)
+    except Exception:
+        log.warning("[yue2_comfy.edit_track] this edit could not be drawn for the picker",
+                    exc_info=True)
+    return dataclasses.replace(
+        edited, parent=parent, root=before.root or parent, created=time.time(),
+        peaks=peaks, body=body,
+        edit=[{"op": mark["op"],
+               "at": [round(mark["start"] * FRAME_SECONDS, 3),
+                      round((mark["start"] + mark["count"]) * FRAME_SECONDS, 3)],
+               "bars": mark["bars"], "seed": mark["seed"], "took": mark["took"]}
+              for mark in marks])
+
+
 def _take_gap(seed: int, index: int) -> dict:
     """A take the list asks for that this session has not sung, as a row the window can offer.
 
@@ -399,6 +611,72 @@ def _take_gap(seed: int, index: int) -> dict:
             "join": None, "natural": None, "ended": False, "flagged": False, "audio": None}
 
 
+def _sound_of(models, song, progress):
+    """A remembered song turned back into sound, for a run that was handed no audio.
+
+    The latents are what the acoustic stage made of the performance, so this
+    is the last stage of singing the song and nothing else: 1.1 to 1.7 seconds
+    for a four-minute song on a 5090, measured 2026-09-19, against minutes to
+    sing one. What comes out is the same performance but not the same file to
+    the bit -- the decode picks its convolutions from the memory it has, which
+    moves the last bits 64 to 68 dB down -- so the caller writes that sound's
+    name down beside the song, and what this node hands on can always be
+    edited again.
+    """
+    from . import generate
+    from .inpaint import core
+
+    began = time.perf_counter()
+    latents = core.latents_of(song).to(models.device)
+    waveform, timing = generate.decode(models, latents, progress, interrupted,
+                                       stages=generate.alone(generate.Stages.DECODE))
+    log.info("[yue2_comfy.edit_track] the remembered song came back as %.1f s of sound in %.1f s",
+             timing["seconds_of_audio"], time.perf_counter() - began)
+    return waveform
+
+
+def _kept_sound(name: str, song):
+    """The song's own sound, read off the disk instead of decoded, or None when there is none.
+
+    Only when it really is this song's sound: a file whose rate or length is
+    not what the song says is not, and the song is decoded as it would have
+    been without it. See ``songs.sound_of``.
+    """
+    try:
+        kept = songs.sound_of(name)
+    except Exception:
+        log.warning("[yue2_comfy.edit_track] the sound kept beside this song could not be read, "
+                    "so it is decoded instead", exc_info=True)
+        return None
+    if kept is None:
+        return None
+    waveform = kept["waveform"]
+    if (int(kept["sample_rate"]) != int(song.sample_rate)
+            or int(waveform.shape[-1]) != int(song.samples)):
+        log.warning("[yue2_comfy.edit_track] the sound kept beside this song is %d samples at "
+                    "%d Hz where the song is %d at %d, so it is decoded instead",
+                    int(waveform.shape[-1]), int(kept["sample_rate"]), int(song.samples),
+                    int(song.sample_rate))
+        return None
+    return waveform
+
+
+def _keep_sound(name: str, waveform, rate: int) -> None:
+    """Keep the sound this song has just been decoded into, when the store keeps sounds.
+
+    A song sung before the switch was turned on has no sound beside it, and
+    the only way to make one is the decode this run has already paid for. So
+    the first time such a song is opened it pays that decode once, and never
+    again. Never fatal.
+    """
+    try:
+        if songs.store().wants_sound():
+            songs.sound_keep(name, waveform, rate)
+    except Exception:
+        log.warning("[yue2_comfy.edit_track] the sound of this song could not be kept beside it",
+                    exc_info=True)
+
+
 def _remember(waveform, song) -> str:
     """Remember the edited song, so it can be saved, loaded and edited again. Never fatal."""
     try:
@@ -407,6 +685,22 @@ def _remember(waveform, song) -> str:
         log.warning("[yue2_comfy.edit_track] this edit could not be remembered, so it cannot be "
                     "edited again", exc_info=True)
         return ""
+
+
+def _also(waveform, song, name: str) -> None:
+    """Write down that a remembered song also answers to the sound it decodes to. Never fatal.
+
+    That sound is not the one the song was remembered by, see
+    ``songs.Store.alias``, so without this the audio this node hands on is a
+    song the pack does not know, and remembering it again writes a twin of
+    every latent of it.
+    """
+    try:
+        songs.alias(waveform, song.sample_rate, name)
+    except Exception:
+        log.warning("[yue2_comfy.edit_track] the sound this song decodes to could not be "
+                    "written down, so editing what this node hands on may not find it",
+                    exc_info=True)
 
 
 class YuE2EditTrack:
@@ -419,13 +713,14 @@ class YuE2EditTrack:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "audio": ("AUDIO", {"tooltip": AUDIO_TOOLTIP}),
                 "takes": ("INT", {"default": 2, "min": 1, "max": track.MAX_TAKES,
                                   "tooltip": TAKES_TOOLTIP}),
             },
             "optional": {
+                "audio": ("AUDIO", {"tooltip": AUDIO_TOOLTIP}),
                 "edits": ("STRING", {"multiline": True, "default": "", "tooltip": EDITS_TOOLTIP}),
                 "options": (OPTIONS_TYPE, {"tooltip": OPTIONS_TOOLTIP}),
+                "song_key": ("STRING", {"default": "", "tooltip": SONG_TOOLTIP}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -435,21 +730,36 @@ class YuE2EditTrack:
     FUNCTION = "edit"
     CATEGORY = CATEGORY
 
-    def edit(self, audio, takes=2, edits="", options=None, unique_id=None):
+    def edit(self, audio=None, takes=2, edits="", options=None, song_key="", unique_id=None):
+        """The song named by 'audio' or by 'song_key', with the list of edits made on it.
+
+        Audio wins when both are there: the graph above this node is what the
+        run is about, and the field is for a node that has no graph above it
+        yet -- a workflow opened after a restart, where singing the song again
+        to edit a bar of it costs minutes.
+        """
         from .inpaint import core
         from .staged import adapters, session
 
-        if not audio or audio.get("waveform") is None:
-            refuse(unique_id, NO_AUDIO)
         progress = NodeProgress(unique_id, title=ORIGIN)
-        waveform, rate = audio["waveform"], int(audio["sample_rate"])
+        given = bool(audio) and audio.get("waveform") is not None
+        opened = "" if given else str(song_key or "").strip()
+        if not given and not opened:
+            refuse(unique_id, NO_AUDIO)
+        waveform, rate = (audio["waveform"], int(audio["sample_rate"])) if given else (None, 0)
+        name = opened
+        if given:
+            try:
+                name = songs.key(waveform, rate)
+            except ValueError as error:
+                refuse(unique_id, str(error))
         try:
-            name = songs.key(waveform, rate)
-        except ValueError as error:
-            refuse(unique_id, str(error))
-        song = songs.store().get(name)
+            song = songs.store().get(name)
+        except ValueError:
+            refuse(unique_id, NOT_A_KEY)
         if song is None:
-            refuse(unique_id, UNKNOWN)
+            refuse(unique_id, UNKNOWN if given else GONE)
+        name = songs.canonical(name)
         if song.settings.get("vocals_only"):
             refuse(unique_id, VOICE_ONLY)
         try:
@@ -468,14 +778,6 @@ class YuE2EditTrack:
                 refuse(unique_id, "Edit 1: {}".format(error))
 
         began = time.perf_counter()
-        clock = None
-        low = 0.0
-        if song.score:
-            low = 0.0 if name in _GRIDS else GRID_SHARE
-            clock = _grid_of(name, song, waveform, rate, settings,
-                             unique_id, Band(progress, 0.0, GRID_SHARE) if wanted else progress)
-        state = track.opened(song, clock, sheet)
-
         stack = contextlib.ExitStack()
         models = [None]
 
@@ -484,10 +786,27 @@ class YuE2EditTrack:
                 models[0] = stack.enter_context(session(settings, unique_id, progress))
             return models[0]
 
-        history, notices, picks, shown = [], [], [], None
-        current, sound = song, waveform
+        history, notices, picks, shown, marks = [], [], [], None, []
+        clock, state, current, sound = None, None, song, waveform
         try:
             with stack:
+                first = 0.0
+                if not given:
+                    waveform = _kept_sound(name, song)
+                    if waveform is None:
+                        first = DECODE_SHARE
+                        waveform = _sound_of(loaded(), song,
+                                             Band(progress, 0.0, DECODE_SHARE) if wanted
+                                             else progress)
+                        _keep_sound(name, waveform, int(song.sample_rate))
+                    rate, sound = int(song.sample_rate), waveform
+                low = first
+                if song.score:
+                    low = first if name in _GRIDS else first + GRID_SHARE
+                    clock = _grid_of(name, song, waveform, rate, settings, unique_id,
+                                     Band(progress, first, first + GRID_SHARE) if wanted
+                                     else progress)
+                state = track.opened(song, clock, sheet)
                 for index, edit in enumerate(wanted):
                     if interrupted():
                         raise InterruptedError("Cancelled between edits")
@@ -507,18 +826,31 @@ class YuE2EditTrack:
                     kept = ordered[pick]
                     history.append((edit, kept.seed))
                     picks.append(pick)
-                    prior = state
+                    prior, earlier = state, sound
+                    edge = _edge(step, state.frames)
                     state = track.after(state, step, kept.count)
                     current, sound = kept.song, kept.waveform
-                    shown = (step, ordered, pick, made, prior, seeds)
+                    if edge and edit.fade:
+                        sound = _faded(sound, edit.fade, edge == "head", rate)
+                    marks = _moved(marks, step, kept.count)
+                    marks.append({"op": step.kind, "start": step.start, "count": kept.count,
+                                  "bars": list(edit.bars) if edit.bars else None,
+                                  "seed": None if step.kind == "cut" else int(kept.seed),
+                                  "took": round((step.stop - step.start) * FRAME_SECONDS, 3)})
+                    shown = (step, ordered, pick, made, prior, seeds, earlier)
         except InterruptedError:
             translate_interrupt()
             raise
         except _Refused as stop:
             refuse(unique_id, str(stop))
 
-        keyed = name if not wanted else _remember(sound, current)
-        payload = self._payload(name, keyed, sound, rate, state, wanted, picks, shown)
+        keyed = name
+        if wanted:
+            keyed = _remember(sound, _stamped(current, sound, name, song, marks))
+        elif not given:
+            _also(sound, song, name)
+        payload = self._payload(name, keyed, sound, rate, state, wanted, picks, shown,
+                                settings)
         if shown is not None and _flagged(shown[1][shown[2]]):
             kept = shown[1][shown[2]]
             notices.append(("warn", "The join of the take kept scores {:.2f} where the song's own "
@@ -553,6 +885,7 @@ class YuE2EditTrack:
         """
         from .inpaint import core, ops
 
+        settings = _edited(settings, edit)
         entry = RESULTS.get(name) or {"takes": {}, "natural": None}
         seeds = (0,) if step.kind == "cut" else edit.seeds()
         if step.kind != "cut" and edit.take is not None:
@@ -582,17 +915,21 @@ class YuE2EditTrack:
         return entry
 
     def _payload(self, name: str, keyed: str, sound, rate: int, state, wanted, picks,
-                 shown) -> dict:
+                 shown, settings) -> dict:
         """Everything the track window draws.
 
         ``song`` is the key the result is remembered under, empty when it could
-        not be remembered, and ``was`` the key of the song that came in.
+        not be remembered; a run with no edits hands back the song it opened,
+        so that key is the one it came in under. ``was`` is the key of the
+        song that came in, which is the song's own even when the run was
+        handed one of its other names.
         ``seconds`` is the length of the result; ``peaks`` and ``rms`` its wave,
         at most ``PEAKS`` values from 0 to 1 each; ``grid`` is ``grid.layout`` of the score on
         the result, None for a song without one; ``lyrics`` the words it sings now,
         which the window shows beside the track and a cut takes sections out
         of; ``edits`` the list as it was read, with the take kept written into
-        every retake. After at least one edit there are also ``kind``, ``at``
+        every retake, and ``sung`` the temperature and the guide the song itself
+        was sung with, which is where the window's own knobs start. After at least one edit there are also ``kind``, ``at``
         (the seconds the last edit took in hand, on the song as it was before
         it), ``dropped`` (the section tags a cut took out), ``chosen`` and
         ``takes``: an entry a take, with seed, index, kept, sung, seconds,
@@ -600,14 +937,17 @@ class YuE2EditTrack:
         the bars after the edit), join, natural, ended, flagged and ``audio``,
         the temp file of the whole song that take makes, None when it could not
         be written. A take the list asks for that this session has not sung is
-        ``sung`` false and empty otherwise, see ``_take_gap``.
+        ``sung`` false and empty otherwise, see ``_take_gap``. After a retake
+        there is also ``before``, the song as it stood before that edit, in
+        the same shape, so the list can offer it beside the takes to compare
+        with, see ``_was_facts``.
         """
         import dataclasses
 
         from .inpaint import grid
 
         drawn = _wave(sound)
-        payload = {"song": keyed, "was": name,
+        payload = {"song": keyed, "was": name, "sung": _sampled(settings),
                    "seconds": round(state.frames * FRAME_SECONDS, 3), "sample_rate": rate,
                    "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": None,
                    "lyrics": state.lyrics, "takes": [], "chosen": None,
@@ -618,7 +958,7 @@ class YuE2EditTrack:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
         if shown is None:
             return payload
-        step, ordered, pick, made, prior, seeds = shown
+        step, ordered, pick, made, prior, seeds, earlier = shown
         payload["chosen"] = pick
         payload["kind"] = step.kind
         payload["at"] = [round(step.start * FRAME_SECONDS, 3), round(step.stop * FRAME_SECONDS, 3)]
@@ -627,6 +967,8 @@ class YuE2EditTrack:
             _take_facts(take, index, pick, made, rate, prior, step) if take is not None
             else _take_gap(seeds[index], index)
             for index, take in enumerate(ordered)]
+        if step.kind != "cut":
+            payload["before"] = _was_facts(earlier, rate, prior, step, made)
         return payload
 
 

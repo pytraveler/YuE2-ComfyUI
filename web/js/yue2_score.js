@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import {
-    ask, buttonRow, element, frame, graphChanged, installStyle, panelWidget,
-    setWidgetValue, showWidget, sourceOf, widgetNamed,
+    ask, buttonRow, confirmed, element, frame, graphChanged, installStyle, panelWidget,
+    setWidgetValue, showWidget, sourceOf, warned, widgetNamed,
 } from "./yue2_controls.js";
 import * as roll from "./yue2_roll.js";
 import * as sounds from "./yue2_sounds.js";
@@ -2490,18 +2490,23 @@ class ScoreEditor {
             + "'" + this.back + "' loads it; the edit stays until then.");
     }
 
-    reset() {
+    async reset() {
         if (this.planScore) {
-            if (this.edited() && !window.confirm("Throw away the edits and load the score "
-                + (this.own ? "this node" : "the plan node") + " wrote?")) return;
+            if (this.edited() && !(await confirmed(
+                "The notes in this window have been edited.",
+                { title: "Load the score " + (this.own ? "this node" : "the plan node")
+                         + " wrote?", ok: "Load it", cancel: "Keep the edits",
+                  danger: true }))) return;
             this.fromBox = false;
             this.baseWords = this.planWords;
             this.load(this.planScore);
             return;
         }
         if (!this.fromBox) return;
-        if (!window.confirm("Remove the edit kept on this node? The score it was made on has not arrived "
-            + "since the page was opened, so the window stays empty until the next run.")) return;
+        if (!(await confirmed("The score it was made on has not arrived since the page was "
+            + "opened, so the window stays empty until the next run.",
+            { title: "Remove the edit kept on this node?", ok: "Remove it",
+              danger: true }))) return;
         this.fromBox = false;
         this.baseWords = null;
         this.load("");
@@ -2510,7 +2515,7 @@ class ScoreEditor {
             ? "writes the model's score again." : "sings the plan's own score."));
     }
 
-    escape() {
+    async escape() {
         if (this.chordInput || this.sectionInput) {
             this.closeChordInput();
             this.closeSectionInput();
@@ -2527,7 +2532,10 @@ class ScoreEditor {
             this.draw();
             return;
         }
-        if (this.edited() && !window.confirm("Close the score editor and lose these changes?")) return;
+        if (this.edited() && !(await confirmed(
+            "The notes in this window have been edited. Closing now leaves the node as it was.",
+            { title: "Close the score editor?", ok: "Close and lose them",
+              cancel: "Keep editing", danger: true }))) return;
         this.close();
     }
 
@@ -2564,8 +2572,10 @@ class ScoreEditor {
         const typed = roll.splitMark(this.textBox.value).score;
         let text = (this.current || "").trim();
         if (this.typedProblem && typed !== text) {
-            if (!window.confirm("The ABC text cannot be read note by note:\n\n" + this.typedProblem
-                + "\n\nPut it on the node anyway? The node will try to sing it as it is.")) return;
+            if (!(await confirmed(this.typedProblem
+                + "\n\nThe node will try to sing it as it is.",
+                { title: "The ABC text cannot be read note by note", ok: "Put it on anyway",
+                  danger: true }))) return;
             text = typed;
         }
         const model = String(this.planScore || "").trim();
@@ -2591,12 +2601,12 @@ function openScoreEditor(node) {
         new ScoreEditor(node);
     } catch (error) {
         console.error("[YuE2] the score editor failed to open:", error);
-        window.alert("The score editor could not open: " + (error?.message || error)
+        warned("The score editor could not open: " + (error?.message || error)
             + "\n\nThe score_abc box is still on the node's properties panel.");
     }
 }
 
-function resetScoreEdit(node) {
+async function resetScoreEdit(node) {
     const box = roll.splitMark(widgetNamed(node, SCORE)?.value ?? "");
     if (!box.score) return;
     const next = sourceWords(node)
@@ -2604,7 +2614,8 @@ function resetScoreEdit(node) {
         : isGenerate(node)
         ? "The next run writes the model's score again, and a new seed gives a new tune."
         : "The next run sings the plan's own score.";
-    if (!window.confirm("Throw away the edited score kept on this node?\n\n" + next)) return;
+    if (!(await confirmed(next, { title: "Throw away the edited score kept on this node?",
+                                  ok: "Throw it away", danger: true }))) return;
     setWidgetValue(node, SCORE, "");
     if (node.properties) {
         delete node.properties.yue2_score_bars;

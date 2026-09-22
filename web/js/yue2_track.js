@@ -1,14 +1,17 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { buttonRow, element, frame, installStyle, panelWidget, setWidgetValue, showWidget,
-    widgetNamed } from "./yue2_controls.js";
+import { buttonRow, confirmed, element, frame, installStyle, panelWidget, setWidgetValue,
+    showWidget, sourceOf, widgetNamed } from "./yue2_controls.js";
 import * as list from "./yue2_editlist.js";
+import { openSongs } from "./yue2_songs.js";
 import * as roll from "./yue2_roll.js";
 import { parseLyrics } from "./yue2_sheet.js";
 
 const NODE = "YuE2EditTrack";
 const EDITS = "edits";
 const TAKES = "takes";
+const SONG = "song_key";
+const AUDIO_IN = "audio";
 const TRACK_UI = "yue2_edit_track";
 const AUDIO_UI = "audio";
 const SUMMARY = "yue2_track_summary";
@@ -20,6 +23,14 @@ const EDIT_LABEL = "Edit track\u2026";
 const EDIT_TOOLTIP =
     "Open the track: the song's wave, its bars and its sections. Select a stretch and sing it "
     + "again or take it out. The node runs when you press Render inside.";
+const SONGS_LABEL = "Saved songs\u2026";
+const SONGS_TOOLTIP =
+    "Open a song this install has already sung, without singing it again. Everything an edit "
+    + "needs was remembered when it was sung, so it comes back in a second or two -- which is "
+    + "what a workflow opened after a restart is for. The song opened is drawn straight away: "
+    + "this node is run alone, and the track is waiting inside. A song joined to 'audio' wins "
+    + "over the one chosen here, and nothing is run while one is.";
+
 const RESET_LABEL = "Reset track";
 const RESET_TOOLTIP =
     "Throw away every edit on this node. The next run hands the song on as it came in; the takes "
@@ -74,6 +85,54 @@ const SKIN = {
 };
 
 const WAITING = "Press Render to hear it.";
+
+const BY_ITSELF = "The blue button under the track does it.";
+
+const BEFORE = -1;
+
+const WAS_NAME = "As it was";
+
+const WAS_WHY =
+    "The song as it stood before this edit. Choosing it draws and plays the song without the "
+    + "edit, in place, so a take can be heard against what it replaced. Nothing is sung for it.";
+
+const WAS_SAID =
+    "Nothing is sung: the edit comes off the list, and the song this node hands on is the one "
+    + "on the track now. The takes already sung stay sung, so putting the edit back is free.";
+
+const NEXT_DROP = "Drop this edit";
+
+const DROP_WHY =
+    "Takes the last edit off the list and runs this node alone, so the song it hands on is the "
+    + "one on the track.";
+
+const NEXT_RETAKE = "Sing it";
+const NEXT_CUT = "Cut it";
+const NEXT_CHOOSE = "Keep this take";
+const NEXT_CATCHUP = "Catch up";
+const NEXT_OPEN = "Open the song";
+
+const RUN_WHY =
+    "Runs this node alone, without the rest of the graph. The bar above follows it and Cancel "
+    + "stops it between stages. It is the same as Render.";
+
+const OPEN_SAID =
+    "Nothing is drawn yet. Opening the song brings its sound back from what was remembered of "
+    + "it, which is a second or two, and draws its bars and its words.";
+
+const CATCHUP_SAID =
+    "The track was drawn from a list this node no longer has. Running it again draws what the "
+    + "list says now; nothing already sung is sung twice.";
+
+const KEPT_ELSEWHERE =
+    "The track above plays this take, but the song this node hands on still carries the one it "
+    + "kept. Keeping it costs no singing -- the take is already sung.";
+
+const SUNG_ONCE = "Takes already sung in this session come back without being sung again.";
+
+const CUT_MOVES =
+    "The node moves both ends to the same place in the singing, so what goes can differ from "
+    + "this by a beat, and it takes the words of any section it empties out of the lyrics.";
 
 const HINT =
     "Drag across the wave to select, and drag either end of a selection to stretch it; hold Alt "
@@ -138,6 +197,40 @@ const WORDS_SAID = {
     "some": WORDS_GUESSED + WORDS_BY_SOME,
 };
 
+const FADE_IN = 0.2;
+const FADE_OUT = 1.5;
+
+const SEED_WHY =
+    "The seed the takes of the next retake are counted from. The same seed sings the same take, "
+    + "so a take worth keeping can always be had again. It stays as it is until it is changed, "
+    + "and a retake of the same stretch with the same seed comes straight back out of this "
+    + "session's memory.";
+
+const DICE_WHY = "Another seed, so the next retake sings takes nobody has heard yet.";
+
+const VARY_WHY =
+    "How far the next retake may wander: the temperature it samples at. It starts at the song's "
+    + "own, and an edit sung the way the song was sung is the one that sits in the same voice "
+    + "as the song around it. Raise it for takes that differ more from each other and from what "
+    + "was there, at the risk of a stretch that does not belong.";
+
+const GUIDE_WHY =
+    "How hard the next retake is held to the style and the words: the CFG scale of that edit "
+    + "alone, 1 being none. Above 1 the model sings every token twice, once without the prompt, "
+    + "so the edit takes about twice as long.";
+
+const FADE_WHY =
+    "How long the song takes to come in, or to go out, where this cut leaves it bare. A cut "
+    + "inside the song is joined with a crossfade at each end; one that takes the first bars, "
+    + "or the last, has no other side to fade into. Moving this sings nothing again.";
+
+const AS_SUNG = " as sung";
+
+const SONGS_HERE =
+    "Open another song this install has sung, without leaving this window. The edits on the "
+    + "node are of the song it is on now, so another song starts with none. The one opened is "
+    + "drawn straight away, as if Render had been pressed on it.";
+
 const NOT_DRAWN =
     "This node has not run yet, so there is no track to draw. Render runs this node alone: it "
     + "finds the song in the pack's memory, lays the song's score over its sound and draws it "
@@ -150,6 +243,76 @@ const NO_SCORE_HERE =
 
 function isTrack(node) {
     return node?.type === NODE || node?.comfyClass === NODE;
+}
+
+function nodeSong(node) {
+    const value = widgetNamed(node, SONG)?.value;
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function chooseSong(node) {
+    openSongs(node, nodeSong(node), Boolean(sourceOf(node, AUDIO_IN)), async (row) => {
+        if (row.key === nodeSong(node)) return;
+        const { edits } = nodeList(node);
+        if (edits.length && !(await confirmed("This node has " + edits.length
+            + (edits.length === 1 ? " edit" : " edits")
+            + " of the song it is on now. Opening another song throws them away.",
+            { title: "Open another song?", ok: "Open it", cancel: "Stay on this one",
+              danger: true }))) return;
+        setWidgetValue(node, SONG, row.key);
+        node.__yue2SongSaid = (row.style || "no style given") + " \u00b7 "
+            + roll.clock(row.seconds || 0);
+        writeList(node, []);
+        node.__yue2TrackDrawn = null;
+        node.__yue2TrackSong = null;
+        node.__yue2TrackStamp = 0;
+        paintSummary(node);
+        node.__yue2TrackWindow?.arrived();
+        openPicked(node);
+    }, (gone) => {
+        if (!gone.includes(nodeSong(node))) return;
+        setWidgetValue(node, SONG, "");
+        node.__yue2SongSaid = "";
+        writeList(node, []);
+        node.__yue2TrackDrawn = null;
+        node.__yue2TrackSong = null;
+        node.__yue2TrackStamp = 0;
+        paintSummary(node);
+        node.__yue2TrackWindow?.arrived();
+    });
+}
+
+function runAlone(node) {
+    return app.queuePrompt(0, 1, { queueNodeIds: [String(node.id)] });
+}
+
+function drawAlone(node) {
+    node.__yue2TrackDrawing = true;
+    paintSummary(node);
+    const done = () => {
+        api.removeEventListener("execution_error", done);
+        api.removeEventListener("execution_interrupted", done);
+        api.removeEventListener("execution_success", done);
+        node.__yue2TrackDrawing = false;
+        paintSummary(node);
+    };
+    api.addEventListener("execution_error", done);
+    api.addEventListener("execution_interrupted", done);
+    api.addEventListener("execution_success", done);
+    runAlone(node).catch((error) => {
+        console.warn("[YuE2] this song could not be opened:", error);
+        done();
+    });
+}
+
+function openPicked(node) {
+    if (!nodeSong(node) || sourceOf(node, AUDIO_IN) || node.__yue2TrackDrawing) return;
+    const shown = node.__yue2TrackWindow;
+    if (shown) {
+        shown.render();
+        return;
+    }
+    drawAlone(node);
 }
 
 function nodeText(node) {
@@ -205,6 +368,13 @@ function takeFacts(take) {
     return parts.join(" \u00b7 ");
 }
 
+function wasFacts(was) {
+    const parts = ["the " + roll.clock(was.seconds || 0) + " the retake replaced"];
+    if (typeof was.total === "number") parts.push("song " + roll.clock(was.total));
+    parts.push("nothing sung for it");
+    return parts.join(" \u00b7 ");
+}
+
 function growNode(node) {
     try {
         const wanted = node.computeSize?.()?.[1];
@@ -230,21 +400,27 @@ function paintSummary(node) {
         line("", edits.length + (edits.length === 1 ? " edit, " : " edits, last: ")
             + last.slice(last.indexOf(". ") + 2));
     }
+    const chosen = nodeSong(node);
     if (drawn) {
         const bars = list.barCount(drawn.grid);
         line("yue2-t-dim", roll.clock(drawn.seconds) + " long"
             + (bars ? ", " + bars + " bars" : ", no score")
             + (drawn.song ? "" : ", not remembered"));
+    } else if (chosen) {
+        line("yue2-t-dim", "Saved song: " + (node.__yue2SongSaid || chosen.slice(0, 8))
+            + (node.__yue2TrackDrawing ? ". Opening it now\u2026" : ". Press Render to open it."));
     } else {
         line("yue2-t-dim", "Not drawn yet: open the track and press Render.");
     }
     node.setDirtyCanvas?.(true, true);
 }
 
-function resetTrack(node) {
+async function resetTrack(node) {
     const { edits } = nodeList(node);
-    if (edits.length && !window.confirm("Throw away " + edits.length
-        + (edits.length === 1 ? " edit" : " edits") + " on this node?")) return;
+    if (edits.length && !(await confirmed("Nothing already sung is lost: the takes stay in this "
+        + "session, so putting an edit back costs nothing.",
+        { title: "Throw away " + edits.length + (edits.length === 1 ? " edit" : " edits")
+                 + " on this node?", ok: "Throw them away", danger: true }))) return;
     writeList(node, []);
     paintSummary(node);
     node.__yue2TrackWindow?.refresh();
@@ -291,6 +467,7 @@ class TrackWindow {
         this.others = new Set();
         this.progress = 0;
         this.said = "";
+        this.knobs = { seed: list.newSeed(), vary: null, guide: null, fade: null };
         installStyle(STYLE_ID, STYLE);
         this.build();
         this.onDrawn = (event) => {
@@ -340,6 +517,10 @@ class TrackWindow {
             this.paintButtons();
         });
         top.appendChild(this.fitButton);
+        this.songsButton = element("button", "", SONGS_LABEL);
+        this.songsButton.title = SONGS_HERE;
+        this.songsButton.addEventListener("click", () => chooseSong(this.node));
+        top.appendChild(this.songsButton);
         top.appendChild(element("span", "yue2-t-grow"));
         this.placeLabel = element("span", "yue2-t-facts", "");
         top.appendChild(this.placeLabel);
@@ -407,6 +588,29 @@ class TrackWindow {
         this.undoButton.addEventListener("click", () => this.undo());
         chosen.appendChild(this.undoButton);
         left.appendChild(chosen);
+
+        const knobs = element("div", "yue2-t-bar yue2-t-knobs");
+        this.knobsRow = knobs;
+        this.seedKnob = element("span", "yue2-t-knob");
+        this.seedKnob.title = SEED_WHY;
+        this.seedKnob.appendChild(element("span", "yue2-t-knoblabel", "Seed"));
+        this.seedBox = document.createElement("input");
+        this.seedBox.type = "text";
+        this.seedBox.className = "yue2-t-seed";
+        this.seedBox.addEventListener("change", () => this.seedTyped());
+        this.seedKnob.appendChild(this.seedBox);
+        const dice = element("button", "yue2-t-small", "New seed");
+        dice.title = DICE_WHY;
+        dice.addEventListener("click", () => {
+            this.knobs.seed = list.newSeed();
+            this.paintKnobs();
+        });
+        this.seedKnob.appendChild(dice);
+        knobs.appendChild(this.seedKnob);
+        this.varyKnob = this.knob(knobs, "Variety", VARY_WHY, 0, 5, 0.05, "vary");
+        this.guideKnob = this.knob(knobs, "Guide", GUIDE_WHY, 1, 10, 0.1, "guide");
+        this.fadeKnob = this.knob(knobs, "Fade", FADE_WHY, 0, 6, 0.1, "fade");
+        left.appendChild(knobs);
 
         this.takesRow = element("div", "yue2-t-takes");
         left.appendChild(this.takesRow);
@@ -504,6 +708,7 @@ class TrackWindow {
     shownTake() {
         const takes = this.payload?.takes || [];
         if (!takes.length || this.payload.kind !== "retake") return null;
+        if (this.take === BEFORE) return this.payload.before || null;
         const at = this.take === null || this.take === undefined
             ? (this.payload.chosen === null || this.payload.chosen === undefined
                 ? 0 : this.payload.chosen)
@@ -674,6 +879,72 @@ class TrackWindow {
         this.draw();
     }
 
+    knob(row, label, why, low, high, step, name) {
+        const box = element("span", "yue2-t-knob");
+        box.title = why;
+        box.appendChild(element("span", "yue2-t-knoblabel", label));
+        const slide = document.createElement("input");
+        slide.type = "range";
+        slide.className = "yue2-t-knobslide";
+        slide.min = String(low);
+        slide.max = String(high);
+        slide.step = String(step);
+        slide.addEventListener("input", () => this.knobMoved(name, Number(slide.value)));
+        box.appendChild(slide);
+        const said = element("span", "yue2-t-knobsaid", "");
+        box.appendChild(said);
+        row.appendChild(box);
+        return { box, slide, said };
+    }
+
+    knobMoved(name, value) {
+        const sung = this.payload?.sung || {};
+        const own = name === "vary" ? Number(sung.vary) || 1 : Number(sung.guide) || 1;
+        const step = name === "vary" ? 0.03 : 0.06;
+        this.knobs[name] = name !== "fade" && Math.abs(value - own) < step ? null : value;
+        this.paintKnobs();
+    }
+
+    seedTyped() {
+        const value = Number(this.seedBox.value);
+        if (Number.isSafeInteger(value) && value >= 0) this.knobs.seed = value;
+        this.paintKnobs();
+    }
+
+    fadeFor(edge) {
+        if (typeof this.knobs.fade === "number") return this.knobs.fade;
+        return edge === "head" ? FADE_IN : FADE_OUT;
+    }
+
+    cutEdge() {
+        return list.cutEdge(this.selection, this.grid(), this.total());
+    }
+
+    paintKnobs() {
+        const sung = this.payload?.sung || {};
+        const edge = this.cutEdge();
+        const canRetake = Boolean(this.payload) && !this.retakeButton.disabled;
+        const canFade = Boolean(this.payload) && !this.cutButton.disabled && Boolean(edge);
+        this.knobsRow.hidden = !canRetake && !canFade;
+        this.seedKnob.hidden = !canRetake;
+        this.varyKnob.box.hidden = !canRetake;
+        this.guideKnob.box.hidden = !canRetake;
+        this.fadeKnob.box.hidden = !canFade;
+        this.seedBox.value = String(this.knobs.seed);
+        const vary = this.knobs.vary === null ? Number(sung.vary) || 1 : this.knobs.vary;
+        this.varyKnob.slide.value = String(vary);
+        this.varyKnob.said.textContent = vary.toFixed(2)
+            + (this.knobs.vary === null ? AS_SUNG : "");
+        const guide = this.knobs.guide === null ? Number(sung.guide) || 1 : this.knobs.guide;
+        this.guideKnob.slide.value = String(guide);
+        this.guideKnob.said.textContent = (guide <= 1.001 ? "none" : guide.toFixed(1))
+            + (this.knobs.guide === null ? AS_SUNG : "");
+        const fade = this.fadeFor(edge);
+        this.fadeKnob.slide.value = String(fade);
+        this.fadeKnob.said.textContent = (fade < 0.05 ? "none" : fade.toFixed(1) + " s")
+            + (edge === "head" ? " in" : " out");
+    }
+
     paintButtons() {
         const { edits, error } = nodeList(this.node);
         const drawn = Boolean(this.payload);
@@ -694,7 +965,9 @@ class TrackWindow {
         this.cutButton.disabled = busy || !drawn || Boolean(why)
             || Boolean(list.whyNotCut(this.selection, this.hasScore()));
         this.undoButton.disabled = busy || !edits.length;
+        this.songsButton.disabled = busy;
         this.renderButton.disabled = busy;
+        this.paintKnobs();
         this.playButton.disabled = !this.songEntry();
         this.fitButton.disabled = !drawn || !this.view;
         this.playPickButton.disabled = !this.selection || !this.songEntry();
@@ -723,8 +996,148 @@ class TrackWindow {
         });
     }
 
+    aheadOfTheTrack(drawn, edits) {
+        if (edits.length === drawn.length + 1
+            && list.sameEdits(drawn, edits.slice(0, drawn.length))) return true;
+        return edits.length === drawn.length && edits.length > 0
+            && list.sameEdits(drawn.slice(0, -1), edits.slice(0, -1));
+    }
+
+    aboutEdit(edit, at) {
+        const head = list.describeEdit(edit, at).slice(3);
+        if (edit.op === "cut") {
+            return { head: head, facts: this.cutFacts(edit), label: NEXT_CUT, why: RUN_WHY };
+        }
+        const facts = [this.spanFact(edit)];
+        facts.push(edit.take === null || edit.take === undefined
+            ? "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
+                + ", and keeps the take whose join the model likes best."
+            : "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.");
+        facts.push(SUNG_ONCE);
+        return { head: head, facts: facts.filter(Boolean), label: NEXT_RETAKE, why: RUN_WHY };
+    }
+
+    editSpan(edit) {
+        if (edit.seconds) return [edit.seconds[0], edit.seconds[1]];
+        const grid = this.grid();
+        if (!list.barCount(grid)) return null;
+        return [list.lineAt(grid, edit.bars[0]), list.lineAt(grid, edit.bars[1])];
+    }
+
+    spanFact(edit) {
+        const span = this.editSpan(edit);
+        if (!span) return "";
+        return list.spanText(span[0], span[1]) + ", " + roll.clock(Math.max(0, span[1] - span[0]))
+            + " of the song.";
+    }
+
+    cutFacts(edit) {
+        const span = this.editSpan(edit);
+        const said = [];
+        if (span) {
+            const gone = Math.max(0, span[1] - span[0]);
+            said.push("Takes out " + list.spanText(span[0], span[1]) + " -- " + roll.clock(gone)
+                + " of the song. What is left plays "
+                + roll.clock(Math.max(0, this.total() - gone)) + ".");
+            const words = this.wordsCut(span[0], span[1]);
+            if (words.sections.length) {
+                said.push("Empties " + words.sections.join(", ")
+                    + ", whose words leave the lyrics with it.");
+            }
+            if (words.lines.length) {
+                const shown = words.lines.slice(0, 4).join(" / ");
+                said.push("The words it takes: " + shown
+                    + (words.lines.length > 4 ? " ... and " + (words.lines.length - 4) + " more"
+                        : ""));
+            }
+        }
+        said.push(CUT_MOVES);
+        return said;
+    }
+
+    wordsCut(from, to) {
+        const sections = this.grid()?.sections || [];
+        const emptied = [];
+        sections.forEach((section, index) => {
+            const stop = sections[index + 1] ? sections[index + 1].start
+                : Math.max(section.end, this.total());
+            if (section.start >= from - 0.02 && stop <= to + 0.02) {
+                emptied.push(list.sectionName(section) || "the lines with no tag");
+            }
+        });
+        const lines = [];
+        const first = this.wordAt(from);
+        const last = this.wordAt(Math.max(from, to - 0.01));
+        if (first && last && last.block >= first.block) {
+            for (let at = first.block; at <= last.block; at += 1) {
+                const row = this.blocks[at];
+                if (!row) continue;
+                const said = row.block.lines;
+                const start = at === first.block ? Math.max(0, first.line) : 0;
+                const end = at === last.block ? Math.max(0, last.line) : said.length - 1;
+                for (let line = start; line <= end && line < said.length; line += 1) {
+                    if (said[line] && /\p{L}/u.test(said[line])) lines.push(said[line].trim());
+                }
+            }
+        }
+        return { sections: emptied, lines };
+    }
+
+    nextWork() {
+        const { edits, error } = nodeList(this.node);
+        if (error) return null;
+        const answered = list.readEdits(this.payload?.edits || "", nodeTakes(this.node));
+        const drawn = answered.error ? [] : answered.edits;
+        const last = edits.length ? edits[edits.length - 1] : null;
+        if (!this.payload) {
+            if (last) return this.aboutEdit(last, edits.length - 1);
+            return nodeSong(this.node) || sourceOf(this.node, AUDIO_IN)
+                ? { head: "The track is not drawn yet.", facts: [OPEN_SAID], label: NEXT_OPEN,
+                    why: RUN_WHY }
+                : null;
+        }
+        if (!list.sameEdits(drawn, edits)) {
+            if (last && this.aheadOfTheTrack(drawn, edits)) {
+                return this.aboutEdit(last, edits.length - 1);
+            }
+            return { head: "The list and the track no longer say the same thing.",
+                     facts: [CATCHUP_SAID], label: NEXT_CATCHUP, why: RUN_WHY };
+        }
+        if (this.take === BEFORE && this.payload.before && last && this.sameEdit()) {
+            return { head: "The song as it was, without the last edit, is on the track.",
+                     facts: [WAS_SAID], label: NEXT_DROP, why: DROP_WHY,
+                     act: () => this.dropLast() };
+        }
+        if (last && last.op === "retake") {
+            const kept = last.take === null || last.take === undefined ? null : last.take;
+            const chosen = this.payload.chosen === null || this.payload.chosen === undefined
+                ? null : this.payload.chosen;
+            if (kept !== null && chosen !== null && kept !== chosen) {
+                return { head: "Take " + (kept + 1) + " is chosen, take " + (chosen + 1)
+                             + " is what the node hands on.",
+                         facts: [KEPT_ELSEWHERE], label: NEXT_CHOOSE, why: RUN_WHY };
+            }
+        }
+        return null;
+    }
+
+    paintNext() {
+        const work = this.nextWork();
+        if (!work) return;
+        const box = element("div", "yue2-t-next");
+        box.appendChild(element("div", "yue2-t-nexthead", work.head));
+        for (const said of work.facts) box.appendChild(element("div", "yue2-t-dim", said));
+        const go = element("button", "yue2-t-go", work.label);
+        go.title = work.why;
+        go.disabled = this.working;
+        go.addEventListener("click", () => (work.act ? work.act() : this.render()));
+        box.appendChild(go);
+        this.takesRow.appendChild(box);
+    }
+
     paintTakes() {
         this.takesRow.replaceChildren();
+        this.paintNext();
         const takes = this.payload?.takes || [];
         if (!takes.length || this.payload?.kind !== "retake") return;
         const { edits } = nodeList(this.node);
@@ -740,6 +1153,21 @@ class TrackWindow {
         if (!same) this.takesRow.appendChild(element("div", "yue2-t-warn", OTHER_LIST));
         if (takes.some((take) => take.sung === false)) {
             this.takesRow.appendChild(element("div", "yue2-t-dim", GONE_WITH_SESSION));
+        }
+        const was = this.payload.before;
+        if (was) {
+            const row = element("label", "yue2-t-take yue2-t-was");
+            row.title = WAS_WHY;
+            const box = document.createElement("input");
+            box.type = "radio";
+            box.name = "yue2-take-" + this.node.id;
+            box.checked = Boolean(shown) && shown.index === BEFORE;
+            box.disabled = this.working;
+            box.addEventListener("change", () => this.showTake(BEFORE));
+            row.appendChild(box);
+            row.appendChild(element("span", "yue2-t-takename", WAS_NAME));
+            row.appendChild(element("span", "yue2-t-dim", wasFacts(was)));
+            this.takesRow.appendChild(row);
         }
         for (const take of takes) {
             const gone = take.sung === false;
@@ -1559,13 +1987,17 @@ class TrackWindow {
             this.setStatus(error, true);
             return;
         }
-        const made = list.editFor(this.selection, op, nodeTakes(this.node), list.newSeed());
+        const edge = this.cutEdge();
+        const made = list.editFor(this.selection, op, nodeTakes(this.node), this.knobs.seed, {
+            vary: this.knobs.vary, guide: this.knobs.guide,
+            fade: edge ? this.fadeFor(edge) : null,
+        });
         writeList(this.node, [...edits, made]);
         paintSummary(this.node);
         this.selection = null;
         this.refresh();
         this.setStatus(list.describeEdit(made, edits.length).slice(3) + " is on the list. "
-            + WAITING);
+            + BY_ITSELF);
     }
 
     undo() {
@@ -1586,15 +2018,28 @@ class TrackWindow {
         const { edits, error } = nodeList(this.node);
         const mine = !error && edits.length && edits[edits.length - 1].op === "retake"
             && this.sameEdit();
-        if (mine) {
+        if (mine && index !== BEFORE) {
             writeList(this.node, list.withTake(edits, edits.length - 1, index));
             paintSummary(this.node);
         }
         this.refresh();
         if (fromTakes) this.takesRow.querySelector("input:checked")?.focus();
-        this.setStatus("Take " + (index + 1) + " is on the track."
-            + (mine ? " " + WAITING + " Nothing is sung again for it." : " " + OTHER_LIST));
+        if (index === BEFORE) {
+            this.setStatus("The song as it was, before this edit, is on the track."
+                + (mine ? " Nothing is sung: drop the edit with the button below, or pick a take "
+                    + "again." : " " + OTHER_LIST));
+        } else {
+            this.setStatus("Take " + (index + 1) + " is on the track."
+                + (mine ? " Nothing is sung again for it: keep it with the button below, and the "
+                    + "song this node hands on is built on it." : " " + OTHER_LIST));
+        }
         if (at !== null) this.playSong(at, until);
+    }
+
+    dropLast() {
+        this.take = null;
+        this.undo();
+        this.render();
     }
 
     singTake(index) {
@@ -1605,8 +2050,9 @@ class TrackWindow {
         writeList(this.node, list.withTake(edits, last, index));
         paintSummary(this.node);
         this.refresh();
-        this.setStatus("Take " + (index + 1) + " is the one the list keeps. " + WAITING
-            + " It is the only take sung, and the song comes back built on it.");
+        this.setStatus("Take " + (index + 1) + " is the one the list keeps. It is the only take "
+            + "sung, and the song comes back built on it.");
+        this.render();
     }
 
     moreTakes() {
@@ -1617,8 +2063,8 @@ class TrackWindow {
         writeList(this.node, list.withTakes(edits, edits.length - 1, last.takes + 1));
         paintSummary(this.node);
         this.refresh();
-        this.setStatus("Take " + (last.takes + 1) + " is asked for. " + WAITING
-            + " Only the new take is sung.");
+        this.setStatus("Take " + (last.takes + 1) + " is asked for. Only the new take is sung.");
+        this.render();
     }
 
     async render() {
@@ -1629,7 +2075,7 @@ class TrackWindow {
         this.setStatus("Running this node alone. The bar above follows it, and Cancel stops it "
             + "between stages.");
         try {
-            await app.queuePrompt(0, 1, { queueNodeIds: [String(this.node.id)] });
+            await runAlone(this.node);
         } catch (error) {
             this.finished();
             this.setStatus("This node could not be queued: " + (error?.message || error), true);
@@ -1662,6 +2108,15 @@ const STYLE = `
 .yue2-track button.yue2-t-small { font-size: 11px; padding: 2px 8px; }
 .yue2-t-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
 .yue2-t-picks { margin-top: 5px; }
+.yue2-t-knobs { margin-top: -2px; gap: 12px; }
+.yue2-t-knob { display: inline-flex; align-items: center; gap: 6px; }
+.yue2-t-knoblabel { font-size: 12px; color: var(--descrip-text, #999); }
+.yue2-t-knobslide { width: 92px; accent-color: #3B7DD8; }
+.yue2-t-knobsaid { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 66px;
+    color: var(--input-text, #ddd); }
+.yue2-t-seed { width: 118px; font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 5px;
+    color: var(--input-text, #ddd); background: var(--comfy-input-bg, #2b2b2b);
+    border: 1px solid var(--border-color, #4e4e4e); }
 .yue2-t-grow { flex: 1 1 auto; }
 .yue2-t-facts { font-size: 12px; color: var(--descrip-text, #999); white-space: nowrap; }
 .yue2-t-pick { font-size: 12px; color: var(--input-text, #ddd); white-space: nowrap; }
@@ -1698,9 +2153,17 @@ const STYLE = `
 .yue2-t-take { display: flex; gap: 10px; align-items: center; font-size: 12px; padding: 3px 4px;
     border-radius: 5px; cursor: pointer; color: var(--input-text, #ddd); user-select: none; }
 .yue2-t-take:hover { background: rgba(255, 255, 255, 0.06); }
+.yue2-t-next { display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+    margin-bottom: 8px; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #3B7DD8; background: rgba(59, 125, 216, 0.14); }
+.yue2-t-nexthead { font-size: 12px; font-weight: 600; }
+.yue2-track button.yue2-t-go { margin-top: 5px; font-size: 12px; padding: 3px 14px;
+    background: #3B7DD8; border-color: #3B7DD8; color: #fff; }
 .yue2-t-takename { min-width: 54px; }
 .yue2-t-takegap { display: inline-block; width: 13px; }
 .yue2-t-take input { accent-color: #3B7DD8; margin: 0; }
+.yue2-t-was { border-bottom: 1px solid var(--border-color, #4e4e4e); padding-bottom: 5px;
+    margin-bottom: 2px; }
 .yue2-t-run { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .yue2-t-progress { flex: 1 1 auto; height: 6px; border-radius: 3px; overflow: hidden;
     background: rgba(255, 255, 255, 0.10); }
@@ -1729,6 +2192,7 @@ function installTrack(node) {
     installStyle(STYLE_ID, STYLE);
     buttonRow(node, BUTTONS, [
         { label: EDIT_LABEL, tooltip: EDIT_TOOLTIP, onClick: () => openTrack(node) },
+        { label: SONGS_LABEL, tooltip: SONGS_TOOLTIP, onClick: () => chooseSong(node) },
         { label: RESET_LABEL, tooltip: RESET_TOOLTIP, onClick: () => resetTrack(node) },
     ]);
     const summary = element("div", "yue2-t-summary");
@@ -1737,6 +2201,7 @@ function installTrack(node) {
     node.__yue2TrackSummary = summary;
     panelWidget(node, SUMMARY, summary, () => SUMMARY_H);
     showWidget(node, EDITS, false);
+    showWidget(node, SONG, false);
     paintSummary(node);
     growNode(node);
 }

@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import {
-    ask, buttonRow, element, frame, installStyle, panelWidget,
-    setWidgetValue, showWidget, sourceOf, widgetNamed,
+    ask, buttonRow, confirmed, element, frame, installStyle, panelWidget,
+    setWidgetValue, showWidget, sourceOf, warned, widgetNamed,
 } from "./yue2_controls.js";
 import { editValue, splitMark } from "./yue2_roll.js";
 import { EXAMPLES, GENRES } from "./yue2_styles.js";
@@ -427,7 +427,7 @@ class SongEditor {
         this.scheduleTokens(0);
     }
 
-    escape() {
+    async escape() {
         if (MENU) {
             closeMenu();
             return;
@@ -436,7 +436,10 @@ class SongEditor {
             this.finishEdit(false);
             return;
         }
-        if (this.changed() && !window.confirm("Close the song editor and lose these changes?")) {
+        if (this.changed() && !(await confirmed(
+            "The style and the words in this window have been changed. Closing it now leaves "
+            + "the node as it was.", { title: "Close the song editor?", ok: "Close and lose them",
+                                       cancel: "Keep editing", danger: true }))) {
             return;
         }
         this.close();
@@ -1047,12 +1050,14 @@ class SongEditor {
         else this.renderLyrics();
     }
 
-    backToTags() {
+    async backToTags() {
         const tags = String(this.node.__yue2Lyrics || "");
         if (!tags) return;
         if (this.editing) this.finishEdit(true);
         if (this.lyricsText().trim() !== tags.trim()
-            && !window.confirm("Throw away these lyrics and load what the last run gave?")) return;
+            && !(await confirmed("The words in this window have been changed since the last run.",
+                { title: "Load the last run's words?", ok: "Load them", cancel: "Keep these",
+                  danger: true }))) return;
         this.asText = false;
         this.textArea = null;
         this.lyricsRaw = tags;
@@ -1151,7 +1156,7 @@ function openEditor(node) {
         new SongEditor(node);
     } catch (error) {
         console.error("[YuE2] the song editor failed to open:", error);
-        window.alert("The song editor could not open: " + (error?.message || error)
+        warned("The song editor could not open: " + (error?.message || error)
             + "\n\nThe style and lyrics text boxes are still on the node's properties panel.");
     }
 }
@@ -1271,11 +1276,12 @@ function paintLyricsSummary(node, holder) {
     holder.appendChild(lyricsPreview(shown));
 }
 
-function resetLyrics(node) {
+async function resetLyrics(node) {
     const box = splitMark(widgetNamed(node, LYRICS)?.value ?? "");
     if (!box.score) return;
-    if (!window.confirm("Throw away the lyrics kept on this node?\n\n"
-        + "The next run outputs the node's own lyrics again.")) return;
+    if (!(await confirmed("The next run outputs the node's own lyrics again.",
+        { title: "Throw away the lyrics kept on this node?", ok: "Throw them away",
+          danger: true }))) return;
     setWidgetValue(node, LYRICS, "");
     paintSummary(node);
 }

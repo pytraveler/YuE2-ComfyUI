@@ -623,7 +623,12 @@ def _held(song, region, count: int):
 
 
 def _prompts(models, song, lyrics, score, settings):
-    """The prompt and the negative prompt of the song with other lyrics and another score."""
+    """The prompt and the negative prompt of the song with other lyrics and another score.
+
+    The unconditional branch is built whenever this run needs one, which is
+    not only when the song had one: an edit may be sung under a guide of its
+    own, see ``track.GUIDE``.
+    """
     from ..vendor.yue2.protocol import SongRequest, negative_prefix, token_prefixes
 
     scale = float(settings.get("cfg_scale") or 0) or None
@@ -632,7 +637,7 @@ def _prompts(models, song, lyrics, score, settings):
     ids = None if request.cot == "off" else list(models.tokenizer.encode(score))
     prefix = token_prefixes(request, models.tokenizer, ids)
     negative = None
-    if song.negative is not None:
+    if song.negative is not None or request.guidance != 1:
         negative = negative_prefix(request, models.tokenizer, ids)
     return prefix, negative
 

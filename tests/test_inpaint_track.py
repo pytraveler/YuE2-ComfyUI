@@ -268,6 +268,41 @@ def test_the_words_before_the_first_tag_are_named_when_a_cut_takes_them():
     assert "the lines before the first tag" in step.notices[0][1]
 
 
+def test_a_retake_may_ask_for_its_own_sampling_and_a_cut_for_a_fade():
+    """The window's knobs travel in the list, so a saved workflow sings what was asked for."""
+    edits = track.read('[{"op": "retake", "bars": [0, 4], "vary": 1.6, "guide": 2.5},'
+                       ' {"op": "cut", "bars": [4, 8], "fade": 1.5}]')
+    assert (edits[0].vary, edits[0].guide, edits[0].fade) == (1.6, 2.5, None)
+    assert (edits[1].vary, edits[1].guide, edits[1].fade) == (None, None, 1.5)
+    assert track.read(track.written(edits)) == edits, "and they come back through the field"
+    plain = track.read('[{"op": "retake", "bars": [0, 4]}, {"op": "cut", "bars": [4, 8]}]')
+    assert [edit.vary for edit in plain] == [None, None], "an edit that says nothing asks none"
+    assert "vary" not in track.written(plain), "and nothing of it is written down"
+
+
+@pytest.mark.parametrize("item, says", [
+    ('{"op": "retake", "bars": [0, 4], "vary": 9}', "the variety is 9"),
+    ('{"op": "retake", "bars": [0, 4], "guide": 0.5}', "the guide is 0.5"),
+    ('{"op": "retake", "bars": [0, 4], "vary": "warm"}', "the variety is not a number"),
+    ('{"op": "cut", "bars": [0, 4], "fade": 30}', "the fade is 30"),
+])
+def test_a_knob_outside_what_it_can_be_is_refused(item, says):
+    with pytest.raises(ValueError, match=says):
+        track.read("[" + item + "]")
+
+
+def test_the_takes_of_an_edit_follow_its_sampling_and_not_its_fade():
+    """Another temperature is another take; a longer fade is the same sound with a ramp on it."""
+    one, other = track.read('[{"op": "retake", "bars": [0, 4], "seed": 3},'
+                            ' {"op": "retake", "bars": [0, 4], "seed": 3, "vary": 1.5}]')
+    assert track.name("song", [], one) != track.name("song", [], other)
+    guided = track.read('[{"op": "retake", "bars": [0, 4], "seed": 3, "guide": 3.0}]')[0]
+    assert track.name("song", [], guided) != track.name("song", [], one)
+    plain, faded = track.read('[{"op": "cut", "bars": [0, 4]},'
+                              ' {"op": "cut", "bars": [0, 4], "fade": 2.0}]')
+    assert track.name("song", [], plain) == track.name("song", [], faded)
+
+
 def test_the_name_of_a_result_holds_the_song_the_edits_and_the_takes_kept():
     edits = track.read('[{"op": "cut", "bars": [2, 4]}, {"op": "retake", "bars": [2, 6], "seed": 5}]')
     cut, retake = edits

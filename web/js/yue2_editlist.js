@@ -23,6 +23,23 @@ function seedly(value) {
     return whole(value) && Number.isSafeInteger(value) && value >= 0;
 }
 
+const VARY = [0, 5];
+const GUIDE = [1, 10];
+const FADE = [0, 6];
+
+function measure(item, key, where, what, span) {
+    const value = given(item, key);
+    if (value === null) return null;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(where + ": " + what + " is not a number.");
+    }
+    if (value < span[0] || value > span[1]) {
+        throw new Error(where + ": " + what + " is " + value + ", and it is between " + span[0]
+            + " and " + span[1] + ".");
+    }
+    return value;
+}
+
 function pair(value) {
     return Array.isArray(value) && value.length === 2;
 }
@@ -82,7 +99,9 @@ function editOf(item, index, takes) {
     }
     const span = rangeOf(item, where);
     if (op === "cut") {
-        return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null };
+        return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
+                 vary: null, guide: null,
+                 fade: measure(item, "fade", where, "the fade", FADE) };
     }
     const seed = asked(item, "seed", 0);
     if (!whole(seed)) throw new Error(where + ": the seed is not a whole number.");
@@ -102,7 +121,9 @@ function editOf(item, index, takes) {
             throw new Error(where + " keeps take " + (take + 1) + " of " + wanted + ".");
         }
     }
-    return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take };
+    return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
+             vary: measure(item, "vary", where, "the variety", VARY),
+             guide: measure(item, "guide", where, "the guide", GUIDE), fade: null };
 }
 
 export function readEdits(text, takes = 1) {
@@ -137,6 +158,10 @@ export function writeEdits(edits) {
             item.seed = edit.seed;
             item.takes = edit.takes;
             if (edit.take !== null && edit.take !== undefined) item.take = edit.take;
+            if (typeof edit.vary === "number") item.vary = edit.vary;
+            if (typeof edit.guide === "number") item.guide = edit.guide;
+        } else if (typeof edit.fade === "number") {
+            item.fade = edit.fade;
         }
         return item;
     }));
@@ -247,11 +272,17 @@ export function describeEdit(edit, index) {
         : spanText(edit.seconds[0], edit.seconds[1]);
     const kept = edit.op === "retake" && edit.take !== null && edit.take !== undefined
         ? ", take " + (edit.take + 1) + " of " + edit.takes : "";
-    return (index + 1) + ". " + what + " of " + where + kept;
+    const extra = [];
+    if (typeof edit.vary === "number") extra.push("variety " + edit.vary.toFixed(2));
+    if (typeof edit.guide === "number") extra.push("guide " + edit.guide.toFixed(1));
+    if (typeof edit.fade === "number") extra.push("fade " + edit.fade.toFixed(1) + " s");
+    return (index + 1) + ". " + what + " of " + where + kept
+        + (extra.length ? ", " + extra.join(", ") : "");
 }
 
-export function editFor(selection, op, takes, seed) {
-    const edit = { op, bars: null, seconds: null, seed: 0, takes: 1, take: null };
+export function editFor(selection, op, takes, seed, knobs = {}) {
+    const edit = { op, bars: null, seconds: null, seed: 0, takes: 1, take: null,
+                   vary: null, guide: null, fade: null };
     if (selection.first === null) {
         edit.seconds = [Number(selection.from.toFixed(3)), Number(selection.to.toFixed(3))];
     } else {
@@ -260,8 +291,22 @@ export function editFor(selection, op, takes, seed) {
     if (op === "retake") {
         edit.seed = seed;
         edit.takes = Math.max(1, Math.min(MAX_TAKES, takes));
+        if (typeof knobs.vary === "number") edit.vary = knobs.vary;
+        if (typeof knobs.guide === "number") edit.guide = knobs.guide;
+    } else if (typeof knobs.fade === "number") {
+        edit.fade = knobs.fade;
     }
     return edit;
+}
+
+export function cutEdge(selection, grid, seconds) {
+    const bars = barCount(grid);
+    if (!selection) return "";
+    const head = selection.first === null ? selection.from <= 0.02 : selection.first === 0;
+    const tail = selection.first === null ? selection.to >= seconds - 0.02
+        : bars > 0 && selection.stop >= bars;
+    if (head === tail) return "";
+    return head ? "head" : "tail";
 }
 
 export function whyNotCut(selection, hasScore) {

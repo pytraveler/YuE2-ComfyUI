@@ -145,6 +145,62 @@ const WINDOW_STYLE = `
     box-sizing: border-box; }
 `;
 
+const ASKED_STYLE_ID = "yue2-asked-style";
+const ASKED_STYLE = `
+.yue2-panel.yue2-asked { width: min(460px, 92vw); height: auto; max-height: calc(100vh - 64px);
+    gap: 10px; padding: 18px 20px; }
+.yue2-asked-title { font-size: 14px; font-weight: 600; }
+.yue2-asked-text { font-size: 13px; line-height: 1.5; white-space: pre-line; overflow: auto;
+    color: var(--descrip-text, #bbb); }
+.yue2-asked-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.yue2-asked button { font: inherit; font-size: 12px; padding: 5px 14px; border-radius: 6px;
+    cursor: pointer; color: var(--input-text, #ddd); background: var(--comfy-input-bg, #2b2b2b);
+    border: 1px solid var(--border-color, #4e4e4e); }
+.yue2-asked button:hover { background: var(--comfy-menu-bg, #353535); }
+.yue2-asked button.yue2-asked-go { background: #3B7DD8; border-color: #3B7DD8; color: #fff; }
+.yue2-asked button.yue2-asked-danger { background: #B4433A; border-color: #B4433A; color: #fff; }
+`;
+
+export function confirmed(text, { title = "", ok = "OK", cancel = "Cancel",
+                                  danger = false } = {}) {
+    installStyle(ASKED_STYLE_ID, ASKED_STYLE);
+    return new Promise((resolve) => {
+        let answer = false;
+        const made = frame({ onClose: () => resolve(answer) });
+        made.panel.classList.add("yue2-asked");
+        if (title) made.panel.appendChild(element("div", "yue2-asked-title", title));
+        made.panel.appendChild(element("div", "yue2-asked-text", String(text)));
+        const row = element("div", "yue2-asked-row");
+        const no = element("button", "", cancel);
+        const yes = element("button", "yue2-asked-go" + (danger ? " yue2-asked-danger" : ""), ok);
+        no.addEventListener("click", () => made.close());
+        yes.addEventListener("click", () => {
+            answer = true;
+            made.close();
+        });
+        row.appendChild(no);
+        row.appendChild(yes);
+        made.panel.appendChild(row);
+        yes.focus();
+    });
+}
+
+export function warned(text, { title = "", ok = "OK" } = {}) {
+    installStyle(ASKED_STYLE_ID, ASKED_STYLE);
+    return new Promise((resolve) => {
+        const made = frame({ onClose: () => resolve() });
+        made.panel.classList.add("yue2-asked");
+        made.panel.appendChild(element("div", "yue2-asked-title", title || "That did not work"));
+        made.panel.appendChild(element("div", "yue2-asked-text", String(text)));
+        const row = element("div", "yue2-asked-row");
+        const yes = element("button", "yue2-asked-go", ok);
+        yes.addEventListener("click", () => made.close());
+        row.appendChild(yes);
+        made.panel.appendChild(row);
+        yes.focus();
+    });
+}
+
 const OPEN = [];
 
 export function frame({ onClose, sticky } = {}) {

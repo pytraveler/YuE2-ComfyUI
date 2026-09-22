@@ -188,6 +188,124 @@ def answer_loras() -> tuple:
                 "error": "Listing the LoRA files hit an error it did not expect: {}".format(error)}, 200
 
 
+SHOWN_SONGS = 200
+"""How many songs the picker is handed at once: the ones used most recently.
+
+The store holds thousands within its budget, and a list to choose from is
+read from the top. Anyone past two hundred is looking for a song they last
+touched long ago, and the row they want is better found by opening it again
+from its own workflow than by scrolling."""
+
+
+def answer_songs() -> tuple:
+    """``(payload, status)`` for the picker on 'YuE2 Edit Track' asking what can be opened.
+
+    The songs this install has sung and remembered, the one used last first,
+    with what tells them apart on screen: where each came from, its style, the
+    first of its words, how long it is, whether it has bars to select and
+    whether it is a voice-only song, which cannot be edited. No latents and no
+    sound; see ``songs.Store.listing``. ``sounds`` is the switch that keeps
+    each song's own sound beside it, and what those sounds take.
+    """
+    from . import songs
+
+    try:
+        return {"ok": True, "songs": songs.listing(SHOWN_SONGS), "sounds": songs.sounds()}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        log.warning("[yue2_comfy.routes] listing the songs failed: %s", error, exc_info=True)
+        return {"ok": False, "songs": [], "sounds": NO_SOUNDS,
+                "error": "Listing the songs this pack remembers hit an error it did not "
+                         "expect: {}".format(error)}, 200
+
+
+NO_SOUNDS = {"on": False, "count": 0, "bytes": 0, "budget": 0, "can": False, "why": ""}
+"""What the window is told about the kept sounds when the songs cannot be listed at all."""
+
+
+def _one_song(body):
+    """The song key one of these requests is about, or a refusal to send back instead."""
+    if not isinstance(body, dict) or not isinstance(body.get("key"), str):
+        return None, ({"ok": False, "error": "Send a JSON object with the song's 'key'."}, 400)
+
+    from . import songs
+
+    if not songs.is_key(body["key"]):
+        return None, ({"ok": False, "error": "That is not a song key."}, 400)
+    return body["key"], None
+
+
+def answer_song_note(body) -> tuple:
+    """``(payload, status)`` for the picker writing a word on a song, or taking it off.
+
+    The note is kept beside the song, not inside it, so writing one never
+    rewrites the latents; an empty note takes the file away. See
+    ``songs.Store.remark``.
+    """
+    name, refused = _one_song(body)
+    if refused is not None:
+        return refused
+    if not isinstance(body.get("note", ""), str):
+        return {"ok": False, "error": "'note' must be a string."}, 400
+
+    from . import songs
+
+    try:
+        return {"ok": True, "key": name, "note": songs.remark(name, body.get("note", ""))}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        log.warning("[yue2_comfy.routes] writing a note failed: %s", error, exc_info=True)
+        return {"ok": False, "error": "The note could not be written: {}".format(error)}, 200
+
+
+def answer_song_drop(body) -> tuple:
+    """``(payload, status)`` for the picker deleting a song, with 'family' for its edits too.
+
+    Everything kept beside the song goes with it -- its note, its sound, the
+    grid measured on it, the other name its sound has. The answer says which
+    keys went, so the window can drop those rows and the node can let go of a
+    song it was opened on. See ``songs.Store.drop``.
+    """
+    name, refused = _one_song(body)
+    if refused is not None:
+        return refused
+
+    from . import songs
+
+    try:
+        gone = songs.drop(name, bool(body.get("family")))
+        return {"ok": True, "keys": gone["keys"], "bytes": gone["bytes"],
+                "sounds": songs.sounds()}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        log.warning("[yue2_comfy.routes] deleting a song failed: %s", error, exc_info=True)
+        return {"ok": False, "keys": [],
+                "error": "The song could not be deleted: {}".format(error)}, 200
+
+
+def answer_song_sounds(body) -> tuple:
+    """``(payload, status)`` for the switch that keeps each song's sound beside it.
+
+    ``on`` turns it on or off from now on; ``sweep`` deletes the sounds
+    already kept, which loses nothing that a decode cannot make again. The
+    answer is what ``songs.sounds`` says afterwards.
+    """
+    if not isinstance(body, dict):
+        return {"ok": False, "error": "Send a JSON object with 'on' or 'sweep'."}, 400
+
+    from . import songs
+
+    try:
+        if body.get("sweep"):
+            payload = songs.sweep_sounds()
+        elif isinstance(body.get("on"), bool):
+            payload = songs.keep_sounds(body["on"])
+        else:
+            return {"ok": False, "error": "Send 'on' as true or false, or 'sweep' as true."}, 400
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        log.warning("[yue2_comfy.routes] the sounds switch failed: %s", error, exc_info=True)
+        return {"ok": False, "error": "That could not be done: {}".format(error)}, 200
+    payload["ok"] = True
+    return payload, 200
+
+
 def _byte_span(wanted, size: int):
     """The one byte range a Range header asks for, as ``(first, last)`` within a file of ``size``.
 
@@ -357,6 +475,30 @@ def register() -> None:
     async def loras(request):
         """The LoRA files for YuE2, for the rows on 'YuE2 LoRA'."""
         payload, status = await asyncio.to_thread(answer_loras)
+        return web.json_response(payload, status=status)
+
+    @routes.get(PREFIX + "/songs")
+    async def songs_kept(request):
+        """The songs this install remembers, for the picker on 'YuE2 Edit Track'."""
+        payload, status = await asyncio.to_thread(answer_songs)
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/songs/note")
+    async def song_note(request):
+        """A word the person put on a song, written beside it."""
+        payload, status = await asyncio.to_thread(answer_song_note, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/songs/drop")
+    async def song_drop(request):
+        """A song deleted from the picker, with everything kept beside it."""
+        payload, status = await asyncio.to_thread(answer_song_drop, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/songs/sounds")
+    async def song_sounds(request):
+        """The switch that keeps each song's own sound beside it, and the sweep that clears them."""
+        payload, status = await asyncio.to_thread(answer_song_sounds, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.get(PREFIX + "/sound")

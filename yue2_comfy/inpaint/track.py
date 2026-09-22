@@ -62,6 +62,11 @@ class Edit:
     ``bars`` counts from 0 with the second number not included, as the score
     does; ``seconds`` measures the song as the edits before this one left it.
     Exactly one of the two is given.
+
+    ``vary`` and ``guide`` are a retake's own sampling, and ``fade`` a cut's
+    own fade; each is None for "as the song was sung", which is what an edit
+    written before the window could ask says. See ``VARY``, ``GUIDE`` and
+    ``FADE``.
     """
 
     op: str
@@ -70,6 +75,9 @@ class Edit:
     seed: int
     takes: int
     take: int | None
+    vary: float | None = None
+    guide: float | None = None
+    fade: float | None = None
 
     def seeds(self) -> tuple:
         """The seed of every take this edit asks for, counted on from its own."""
@@ -106,6 +114,29 @@ class Step:
     dropped: tuple
     notices: tuple
 
+
+VARY = (0.0, 5.0)
+"""What a retake's ``vary`` may be: the temperature an options node offers.
+
+An edit is sung the way the song was sung, which is what keeps a retake in the
+same voice as the song around it. ``vary`` is the window's way of saying
+otherwise for one edit: it is the temperature that edit samples at, and the
+higher it is the further the takes wander from each other and from the song."""
+
+GUIDE = (1.0, 10.0)
+"""What a retake's ``guide`` may be: the CFG scale of that edit alone, 1 being none.
+
+A song sung without guidance can still have an edit sung with it -- the
+unconditional branch is built for whatever run needs one -- which costs that
+edit a second pass over the model."""
+
+FADE = (0.0, 6.0)
+"""How long a cut's fade may be, in seconds.
+
+Only a cut that takes the first bars or the last leaves an edge with nothing
+to fade into: anywhere else the two sides are already joined with a crossfade.
+It is laid on the sound after the singing, so changing it costs nothing that
+was already sung."""
 
 SEED_LIMIT = 2 ** 53
 
@@ -154,6 +185,20 @@ def _range(item, index: int):
     return None, (pair[0], pair[1])
 
 
+def _measure(item, key: str, where: str, what: str, span):
+    """One number an edit may carry, checked; None when the edit does not say."""
+    value = item.get(key)
+    if value is None:
+        return None
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value)):
+        raise ValueError("{}: {} is not a number.".format(where, what))
+    if not span[0] <= float(value) <= span[1]:
+        raise ValueError("{}: {} is {:g}, and it is between {:g} and {:g}.".format(
+            where, what, float(value), span[0], span[1]))
+    return float(value)
+
+
 def _edit(item, index: int, takes: int) -> Edit:
     where = "Edit {}".format(index + 1)
     if not isinstance(item, dict):
@@ -164,7 +209,8 @@ def _edit(item, index: int, takes: int) -> Edit:
                          "or 'cut'.".format(where, op))
     bars, seconds = _range(item, index)
     if op == "cut":
-        return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None)
+        return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None,
+                    fade=_measure(item, "fade", where, "the fade", FADE))
     seed = _whole(item.get("seed", 0), "{}: the seed".format(where))
     if not 0 <= seed < SEED_LIMIT:
         raise ValueError(SEED_RANGE.format(where))
@@ -178,7 +224,9 @@ def _edit(item, index: int, takes: int) -> Edit:
         take = _whole(take, "{}: the take kept".format(where))
         if not 0 <= take < wanted:
             raise ValueError("{} keeps take {} of {}.".format(where, take + 1, wanted))
-    return Edit(op=op, bars=bars, seconds=seconds, seed=seed, takes=wanted, take=take)
+    return Edit(op=op, bars=bars, seconds=seconds, seed=seed, takes=wanted, take=take,
+                vary=_measure(item, "vary", where, "the variety", VARY),
+                guide=_measure(item, "guide", where, "the guide", GUIDE))
 
 
 def read(text, takes: int = 1) -> tuple:
@@ -217,6 +265,12 @@ def written(edits) -> str:
             item["takes"] = edit.takes
             if edit.take is not None:
                 item["take"] = edit.take
+            if edit.vary is not None:
+                item["vary"] = edit.vary
+            if edit.guide is not None:
+                item["guide"] = edit.guide
+        elif edit.fade is not None:
+            item["fade"] = edit.fade
         items.append(item)
     return json.dumps(items)
 
@@ -305,9 +359,17 @@ def after(state: State, step: Step, count: int) -> State:
 
 
 def _spelled(edit: Edit, seed) -> dict:
-    """One edit as the name of a result spells it: what it does and where, and which take was kept."""
+    """One edit as the name of a result spells it: what it does and where, and which take was kept.
+
+    How it was sampled belongs here -- takes sung at another temperature are
+    other takes -- while a cut's fade does not: it is laid on the sound
+    afterwards, so moving it sings nothing again.
+    """
     item = {"op": edit.op, "bars": list(edit.bars) if edit.bars else None,
             "seconds": list(edit.seconds) if edit.seconds else None, "seed": edit.seed}
+    for key, value in (("vary", edit.vary), ("guide", edit.guide)):
+        if value is not None:
+            item[key] = value
     if seed is not None:
         item["kept"] = int(seed)
     return item

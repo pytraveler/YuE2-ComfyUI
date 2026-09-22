@@ -1235,7 +1235,8 @@ def spelled(edit):
     """One of the node's edits in the shape the window holds it in."""
     return {"op": edit.op, "bars": None if edit.bars is None else list(edit.bars),
             "seconds": None if edit.seconds is None else list(edit.seconds),
-            "seed": edit.seed, "takes": edit.takes, "take": edit.take}
+            "seed": edit.seed, "takes": edit.takes, "take": edit.take,
+            "vary": edit.vary, "guide": edit.guide, "fade": edit.fade}
 
 
 @needs_node
@@ -1276,10 +1277,12 @@ def test_what_the_window_writes_is_what_the_node_sings():
     """)
     edits = track.read(written[0], 1)
     assert [spelled(edit) for edit in edits] == [
-        {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3, "take": 2},
-        {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None},
+        {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3,
+         "take": 2, "vary": None, "guide": None, "fade": None},
+        {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None,
+         "vary": None, "guide": None, "fade": None},
         {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
-         "take": None},
+         "take": None, "vary": None, "guide": None, "fade": None},
     ]
     assert json.loads(track.written(edits)) == json.loads(written[0])
     assert len(track.read(written[1], 1)) == 2
@@ -1367,7 +1370,8 @@ def test_the_track_window_names_the_node_its_widgets_and_its_ui_key_the_same_way
     for constant, widget in (("EDITS", "edits"), ("TAKES", "takes")):
         assert 'const {} = "{}";'.format(constant, widget) in source
         assert widget in shape["required"] or widget in shape["optional"]
-    assert "queueNodeIds: [String(this.node.id)]" in source, "Render must run this node alone"
+    assert "queueNodeIds: [String(node.id)]" in source, "a run of ours runs this node alone"
+    assert "await runAlone(this.node);" in source, "which is what Render does"
     doc = edit_track.YuE2EditTrack._payload.__doc__
     for key in ("peaks", "rms", "grid", "lyrics", "takes", "chosen", "dropped", "at", "kind",
                 "edits", "seconds", "total", "song"):
@@ -1595,10 +1599,359 @@ def test_a_take_the_session_never_sang_is_a_row_the_window_can_ask_for():
         "the track never follows a take that was not sung")
     takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
     assert "const gone = take.sung === false;" in takes
-    assert takes.index("if (gone) {") < takes.index("box.type = \"radio\";"), (
+    loop = takes[takes.index("for (const take of takes) {"):]
+    assert loop.index("if (gone) {") < loop.index("box.type = \"radio\";"), (
         "a take that was not sung gets no radio")
     assert "GONE_WITH_SESSION" in takes, "the row says why it is not there"
     assert "this.singTake(take.index)" in takes
     sing = source[source.index("    singTake(index) {"):source.index("    moreTakes() {")]
     assert "list.withTake(edits, last, index)" in sing, "it keeps that take instead"
-    assert "WAITING" in sing, "and the node has to run for it"
+    assert "this.render();" in sing, "and it is sung at once, not on a later Render"
+
+
+SONGS = WEB / "yue2_songs.js"
+
+
+def test_the_song_as_it_was_stands_first_among_the_takes_of_a_retake():
+    """Hearing the retake against what it replaced is the whole point of asking for one."""
+    source = TRACK.read_text(encoding="utf-8")
+    takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
+    assert takes.index("const was = this.payload.before;") < takes.index("for (const take of"), (
+        "what the retake replaced comes first, above the takes of it")
+    assert "this.showTake(BEFORE)" in takes and "WAS_NAME" in takes
+    shown = source[source.index("    shownTake() {"):source.index("    wave() {")]
+    assert "if (this.take === BEFORE) return this.payload.before || null;" in shown, (
+        "so the track, the bars, the sound and the mark all follow it like a take")
+    show = source[source.index("    showTake(index) {"):source.index("    dropLast() {")]
+    assert "if (mine && index !== BEFORE)" in show, "choosing it writes no take on the list"
+    work = source[source.index("    nextWork() {"):source.index("    paintNext() {")]
+    assert "this.take === BEFORE" in work and "NEXT_DROP" in work, (
+        "and the block offers the one thing that follows: take the edit off")
+    assert "act: () => this.dropLast()" in work
+    paint = source[source.index("    paintNext() {"):source.index("    paintTakes() {")]
+    assert "work.act ? work.act() : this.render()" in paint, "the button does the work itself"
+    drop = source[source.index("    dropLast() {"):source.index("    singTake(index) {")]
+    assert "this.undo();" in drop and "this.render();" in drop
+
+
+def test_the_window_carries_the_knobs_the_next_edit_will_be_made_with():
+    """A retake with no say over how it is sung is a retake sung again and again by hand."""
+    source = TRACK.read_text(encoding="utf-8")
+    made = source[source.index('const knobs = element("div", "yue2-t-bar yue2-t-knobs");'):
+                  source.index("left.appendChild(knobs);")]
+    for name in ("Variety", "Guide", "Fade"):
+        assert 'this.knob(knobs, "' + name + '"' in made, name + " has a knob of its own"
+    assert "this.knobs.seed = list.newSeed();" in made, "and another seed is a button away"
+    paint = source[source.index("    paintKnobs() {"):source.index("    paintButtons() {")]
+    assert "this.seedKnob.hidden = !canRetake;" in paint
+    assert "this.fadeKnob.box.hidden = !canFade;" in paint
+    assert "Boolean(edge)" in paint, "the fade is offered where the cut leaves an edge bare"
+    assert "AS_SUNG" in paint, "and a knob nobody moved says it is the song's own"
+    moved = source[source.index("    knobMoved(name, value) {"):source.index("    seedTyped() {")]
+    assert "Math.abs(value - own) < step ? null : value" in moved, (
+        "dragged back to the song's own, it asks for nothing again")
+    added = source[source.index("    addEdit(op) {"):source.index("    undo() {")]
+    assert "vary: this.knobs.vary, guide: this.knobs.guide," in added
+    assert "fade: edge ? this.fadeFor(edge) : null," in added, (
+        "a cut in the middle of the song carries no fade at all")
+
+
+def test_only_a_cut_that_reaches_an_end_of_the_song_is_offered_a_fade():
+    """Anywhere else the two sides are joined with a crossfade already."""
+    source = EDITLIST.read_text(encoding="utf-8")
+    edge = source[source.index("export function cutEdge("):
+                  source.index("export function whyNotCut(")]
+    assert "selection.first === 0" in edge and "selection.stop >= bars" in edge
+    assert 'if (head === tail) return "";' in edge, (
+        "a selection that is the whole song reaches both ends and is neither")
+    written = source[source.index("export function writeEdits("):
+                     source.index("export function newSeed(")]
+    assert 'if (typeof edit.fade === "number") {' in written
+    assert 'if (typeof edit.vary === "number") item.vary = edit.vary;' in written
+
+
+def test_a_song_opened_from_the_picker_is_drawn_without_anyone_pressing_render():
+    """Drawing it is the only thing anybody does next, and it costs a second or two."""
+    source = TRACK.read_text(encoding="utf-8")
+    chosen = source[source.index("function chooseSong(node) {"):source.index("function runAlone(")]
+    assert "openPicked(node);" in chosen, "the song just written on the node is the one drawn"
+    assert chosen.index("setWidgetValue(node, SONG, row.key);") < chosen.index("openPicked(node)")
+    picked = source[source.index("function openPicked(node) {"):source.index("function nodeText(")]
+    assert "sourceOf(node, AUDIO_IN)" in picked, (
+        "a song joined to 'audio' wins, and running the node would run whatever sings it")
+    assert "!nodeSong(node)" in picked, "and a song dropped under the node leaves nothing to draw"
+    assert "shown.render();" in picked, "an open window runs it itself, so it follows the run"
+    alone = source[source.index("function drawAlone(node) {"):source.index("function openPicked(")]
+    for event in ("execution_error", "execution_interrupted", "execution_success"):
+        assert alone.count('api.addEventListener("' + event) == 1
+        assert alone.count('api.removeEventListener("' + event) == 1, (
+            "the end of the run is let go of again, so a song picked twice leaves one listener")
+
+
+def test_the_track_window_can_open_another_saved_song_without_closing():
+    """The picker is a window over a window, which is what frame's stack is for."""
+    source = TRACK.read_text(encoding="utf-8")
+    assert 'this.songsButton = element("button", "", SONGS_LABEL);' in source
+    assert "chooseSong(this.node)" in source, "the same picker the node's own button opens"
+    assert "this.songsButton.disabled = busy;" in source, "though not while the node is running"
+
+
+def test_the_pack_asks_its_questions_in_a_window_of_its_own():
+    """The browser's own dialog carries a checkbox that switches it off for the whole site.
+
+    Tick it once and every confirm answers no for good: deleting a song, or
+    being warned that an edit is about to be thrown away, would quietly stop
+    working with nothing on screen to say why.
+    """
+    for path in sorted(WEB.glob("*.js")):
+        source = path.read_text(encoding="utf-8")
+        for call in ("window.confirm(", "window.alert(", "window.prompt("):
+            assert call not in source, path.name + " still asks through the browser"
+    source = (WEB / "yue2_controls.js").read_text(encoding="utf-8")
+    asked = source[source.index("export function confirmed("):
+                   source.index("export function warned(")]
+    assert "onClose: () => resolve(answer)" in asked, (
+        "closing it any way at all -- Escape, the backdrop, Cancel -- answers no")
+    assert "answer = true;" in asked, "and only the one button answers yes"
+    assert "yes.focus();" in asked, "Enter answers it, as the browser's own did"
+    assert "yue2-asked-danger" in asked, "a question that deletes something says so in red"
+
+
+def test_the_picker_shows_a_song_by_what_it_is_not_by_its_key():
+    """A key is sixty-four characters of nothing to look at, so the row is what the song is.
+
+    Style, the first of its words, where it came from, how long it is and when
+    it was last opened -- the store keeps all of it beside the latents, so a
+    row costs one small read and no sound.
+    """
+    source = SONGS.read_text(encoding="utf-8")
+    assert 'const ROUTE = "/yue2/songs";' in source
+    facts = source[source.index("function facts(row) {"):source.index("function matches(")]
+    for field in ("row.origin", "row.seconds", "row.seed"):
+        assert field in facts, "a row without " + field + " is two songs that look alike"
+    head = source[source.index("    function headRow(line,"):source.index("    function kidRow(")]
+    order = [head.index("yue2-s-" + part) for part in ("when", "style", "words", "facts")]
+    assert order == sorted(order), (
+        "four lines: when it was made, the style, the words, where it came from. Songs edited "
+        "one after another differ by nothing but the time, so the time has a line of its own")
+    first = head[head.index('element("div", "yue2-s-head")'):head.index("yue2-s-style")]
+    assert "yue2-s-when" in first and "yue2-s-style" not in first, (
+        "the first line carries the time, the marks and how many edits, nothing else")
+    assert "when(born(row))" in head, (
+        "the time a song was made, not the time it was last read: reading touches the file")
+    said = source[source.index("function words(row) {"):source.index("function facts(")]
+    assert 'line.startsWith("[") && line.endsWith("]")' in said, "section tags are not words"
+    assert "row.whole === false" in said, "a listing carries only the first of the lyrics"
+
+
+def test_the_picker_will_not_hand_over_a_song_the_node_would_refuse():
+    """A voice-only song holds the whole mix while it sounds like the voice; the node refuses it."""
+    source = SONGS.read_text(encoding="utf-8")
+    take = source[source.index("    function take() {"):source.index("    function pick(")]
+    assert "if (!openable(row)) return;" in take
+    able = source[source.index("    function openable(row) {"):source.index("    function take()")]
+    assert "!row.voice" in able, "a voice-only song is not one that can be opened"
+    mark = source[source.index("function badges(row, chosen) {"):source.index("function matches(")]
+    assert "VOICE_ONLY" in mark and "row.key === chosen" in mark, (
+        "a voice-only song says so, and the song the node is on is marked")
+    assert "else if (!row.bars)" in mark, "a song with no score is offered, and says so"
+    rows = source[source.index("    function headRow(line,"):source.index("    function draw() {")]
+    assert rows.count("yue2-s-barred") == 2, "and it is dimmed wherever it shows"
+
+
+def test_a_song_joined_to_the_node_leaves_the_list_to_read_and_not_to_open():
+    """The link wins over the field, so opening one here would move nothing but the field."""
+    source = SONGS.read_text(encoding="utf-8")
+    able = source[source.index("    function openable(row) {"):source.index("    function take()")]
+    assert "!joined" in able, "a second click on a row opens nothing either, take() asking this"
+    every = [line.strip() for line in source.splitlines() if "open.disabled" in line]
+    assert every and all("openable(" in line or line == "open.disabled = true;" for line in every), (
+        "every place that turns the button back on asks the same question: two of them did not, "
+        "and the button came up live on a node with a link in it")
+    assert 'let mine = joined ? "" : (chosen || "");' in source, (
+        "and no row says it is the one on the node while the link is what the node is on")
+    assert "if (joined) open.title = JOINED;" in source, "the button says why it is off"
+    assert "labelled and deleted from here" in source, (
+        "the rest of the list is what the picker is for as well, so it is not taken away")
+    assert "this.songsButton.disabled = busy;" in TRACK.read_text(encoding="utf-8"), (
+        "which is why the button that opens it stays where it is")
+
+
+def test_the_edits_of_a_song_fold_under_the_song_they_were_made_from():
+    """Five edits of one song are five rows that differ by nothing but the time, in a flat list.
+
+    The song holds the line it belongs to, so the picker can group them
+    without walking a chain that a dropped song would break.
+    """
+    source = SONGS.read_text(encoding="utf-8")
+    group = source[source.index("function families(shown) {"):source.index("export function ")]
+    assert "const id = row.root || row.key;" in group, "a song and its edits are one line"
+    assert "if (!line.head) line.head = line.kids.shift() || null;" in group, (
+        "a line whose first song has gone is headed by the oldest edit left of it")
+    assert "line.kids.sort((one, two) => born(one) - born(two));" in group, "oldest edit first"
+    assert "order.sort((one, two) => two.used - one.used);" in group, (
+        "and the line used last is the first line")
+    draw = source[source.index("    function draw() {"):source.index("    find.addEventListener")]
+    assert "wanted || unfolded === line.id" in draw, (
+        "one line is open at a time, and a search opens whatever it found")
+    head = source[source.index("    function headRow(line,"):source.index("    function kidRow(")]
+    assert 'unfolded = unfolded === line.id ? "" : line.id;' in head, "the turn folds and unfolds"
+    assert "picture(" not in head, "the song itself draws no strip"
+    kid = source[source.index("    function kidRow(row) {"):source.index("    function draw() {")]
+    assert "picture(row)" in kid, "an edit draws the song with the stretch it changed"
+    assert "yue2-s-style" not in kid and "words(row)" not in kid, (
+        "and not the style and words of the song it is an edit of, which are already above it")
+    assert "what(row)" in kid, "it says what it did instead"
+
+
+def test_the_strip_beside_an_edit_is_the_song_with_the_stretch_it_changed():
+    """No sound is kept, so the picture is: a kilobyte of peaks saved with the song."""
+    source = SONGS.read_text(encoding="utf-8")
+    drawn = source[source.index("function picture(row) {"):source.index("function badges(")]
+    assert 'setAttribute("preserveAspectRatio", "none")' in drawn, (
+        "the strip is drawn once and stretched to whatever width the row has")
+    assert "yue2-s-flat" in drawn, "a song saved before pictures were kept still draws a bar"
+    band = source[source.index("function band(mark, seconds) {"):source.index("function picture(")]
+    assert 'cut ? "yue2-s-seam" : "yue2-s-span"' in band, "a cut is a seam, a retake a stretch"
+    assert "(Number(at[0]) / seconds) * WIDE" in band, "placed by the seconds of this song"
+    read = source[source.index("function bytes(text) {"):source.index("function envelope(")]
+    assert "atob(String(text))" in read, "the peaks travel as base64, a byte a slice"
+    assert "return [];" in read, "and anything else draws nothing rather than throwing"
+
+
+def test_the_picker_makes_the_row_it_is_on_plain_and_opens_one_on_a_second_click():
+    """A tint behind a row with a waveform drawn across it is not a selection anybody can see."""
+    source = SONGS.read_text(encoding="utf-8")
+    style = source[source.index("const STYLE = `"):]
+    assert "inset 4px 0 0 #3B7DD8" in style, "the row chosen carries a bar of colour, not a tint"
+    twice = source[source.index("    function struckTwice(row) {"):
+                   source.index("    function noteBox(")]
+    assert "now - struck.at < TWICE" in twice, "a second click on the same row, soon after"
+    assert "take();" in twice, "opens the song and closes the window"
+    head = source[source.index("    function headRow(line,"):source.index("    function kidRow(")]
+    kid = source[source.index("    function kidRow(row) {"):source.index("    function draw() {")]
+    for part in (head, kid):
+        assert "if (struckTwice(row)) return;" in part, "on a song and on its edits alike"
+    assert "dblclick" not in source, (
+        "counted here rather than left to the browser, which drops its own dblclick when the "
+        "row is replaced between the two clicks -- and picking a row redraws the list")
+
+
+def test_a_word_can_be_written_on_a_song_and_is_shown_on_its_row():
+    """The one thing a song cannot say about itself is what it was wanted for."""
+    source = SONGS.read_text(encoding="utf-8")
+    assert 'const NOTE_ROUTE = "/yue2/songs/note";' in source
+    acts = source[source.index("    function acts(row, whole) {"):
+                  source.index("    function headRow(")]
+    assert "writing = row.key;" in acts, "the pencil opens the box on that row"
+    box = source[source.index("    function noteBox(row) {"):source.index("    function noted(")]
+    assert 'if (event.key === "Enter") end(true);' in box
+    assert 'else if (event.key === "Escape") end(false);' in box
+    assert "setTimeout(" in box, (
+        "the write waits for the draw under way, which is what took the box away")
+    write = source[source.index("    async function writeNote(row, text) {"):
+                   source.index("    async function erase(")]
+    assert "row.note = was;" in write, "a note the server would not take goes back as it was"
+    hay = source[source.index("function matches(row, wanted) {"):
+                 source.index("function iconButton(")]
+    assert "row.note" in hay, "and the search finds a song by the word on it"
+
+
+def test_a_song_or_one_of_its_edits_can_be_deleted_from_the_picker():
+    """Deleting it by hand means finding a folder of keys; the row that shows it can do it."""
+    source = SONGS.read_text(encoding="utf-8")
+    assert 'const DROP_ROUTE = "/yue2/songs/drop";' in source
+    erase = source[source.index("    async function erase(row, whole) {"):
+                   source.index("    async function setSounds(")]
+    assert 'confirmed(said, { title: asked, ok: "Delete", danger: true })' in erase, (
+        "nothing goes without being asked first, in a window of the pack's own")
+    assert "{ key: row.key, family: Boolean(whole) }" in erase, (
+        "the song takes its edits with it, an edit goes alone")
+    assert "await load();" in erase, "the list is read again rather than patched by hand"
+    assert "onDrop?.(gone)" in erase, "and a node opened on a song that has gone is told"
+    head = source[source.index("    function headRow(line,"):source.index("    function kidRow(")]
+    kid = source[source.index("    function kidRow(row) {"):source.index("    function draw() {")]
+    assert "acts(row, true)" in head and "acts(row, false)" in kid
+    track = TRACK.read_text(encoding="utf-8")
+    choose = track[track.index("function chooseSong(node) {"):track.index("function nodeText(")]
+    assert 'setWidgetValue(node, SONG, "");' in choose, "the key it was on is cleared"
+
+
+def test_the_window_can_keep_each_songs_sound_beside_the_song():
+    """A read off the disk beats a decode, and the window is where that is decided."""
+    source = SONGS.read_text(encoding="utf-8")
+    assert 'const SOUNDS_ROUTE = "/yue2/songs/sounds";' in source
+    keep = source[source.index("    function paintKeep() {"):
+                  source.index("    async function writeNote(")]
+    assert "keepBox.disabled = busy || !can;" in keep, (
+        "a machine with no PyAV is told why rather than offered a switch that does nothing")
+    assert "size(keeping.bytes)" in keep and "size(keeping.budget)" in keep, (
+        "what they take, against what they may take")
+    assert "sweep.hidden = !count;" in keep, "nothing kept, nothing to press"
+    swept = source[source.index("    async function setSounds(body) {"):
+                   source.index("    async function load(")]
+    assert "if (body.sweep) await load();" in swept, "a sweep changes every row"
+
+
+def test_the_node_writes_the_chosen_key_and_says_which_song_it_is():
+    """The key is written for the node, and the summary says the song, because the key says nothing."""
+    track = TRACK.read_text(encoding="utf-8")
+    choose = track[track.index("function chooseSong(node) {"):track.index("function nodeText(")]
+    assert "setWidgetValue(node, SONG, row.key)" in choose, "and setWidgetValue records the change"
+    assert "sourceOf(node, AUDIO_IN)" in choose, "the picker says so when the graph wins"
+    assert "showWidget(node, SONG, false);" in track, "the key is chosen, never typed"
+    assert "SONGS_LABEL" in track and "chooseSong(node)" in track
+    summary = track[track.index("function paintSummary(node) {"):track.index("function resetTrack(")]
+    assert "Saved song: " in summary and "Press Render to open it." in summary
+
+
+def test_the_window_runs_the_work_itself_instead_of_asking_for_render():
+    """Nobody reads 'press Render'. Every step that needs the node carries the button that runs it.
+
+    The block above the takes says what is about to happen -- the stretch, the
+    takes, or for a cut the seconds and the words that go -- and its button
+    runs this node alone. 'More takes' and 'Sing it' run straight away, and a
+    take switched on the track offers to be kept, because until the node runs
+    again the song it hands on carries the take it kept last time.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    work = source[source.index("    nextWork() {"):source.index("    paintNext() {")]
+    assert "NEXT_OPEN" in work, "a node with a song and no track offers to open it"
+    assert "NEXT_CATCHUP" in work, "a list the track cannot be reached from says so"
+    assert "kept !== chosen" in work, "a take chosen but not kept is work to do"
+    paint = source[source.index("    paintNext() {"):source.index("    paintTakes() {")]
+    assert 'element("button", "yue2-t-go", work.label)' in paint
+    assert "work.act ? work.act() : this.render()" in paint, (
+        "the button does the work itself, and is never a hint to press Render")
+    assert source.index("    paintNext() {") < source.index("    paintTakes() {"), (
+        "the block is built before the rows it stands above")
+    takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
+    assert "this.paintNext();" in takes and takes.index("this.paintNext();") < takes.index(
+        "const takes = this.payload?.takes"), "the block shows even when no takes are drawn"
+    for name in ("    singTake(index) {", "    moreTakes() {"):
+        piece = source[source.index(name):]
+        piece = piece[:piece.index("\n    }")]
+        assert "this.render();" in piece, name.strip() + " still waits for Render"
+
+
+def test_a_cut_says_what_it_takes_out_before_it_is_made():
+    """A cut cannot be listened to first, so what it removes is spelled out: seconds and words."""
+    source = TRACK.read_text(encoding="utf-8")
+    facts = source[source.index("    cutFacts(edit) {"):source.index("    wordsCut(from, to) {")]
+    assert "Takes out " in facts and "What is left plays " in facts
+    assert "words.sections" in facts and "words.lines" in facts
+    assert "CUT_MOVES" in facts, "the node moves the ends, and the block admits it"
+    words = source[source.index("    wordsCut(from, to) {"):source.index("    nextWork() {")]
+    assert "this.wordAt(from)" in words and "this.blocks[at]" in words, (
+        "the lines come from the words already laid against the track")
+
+
+def test_choosing_another_saved_song_clears_the_track_it_replaces():
+    """The edits are bars of the song that was open; on another song they mean somewhere else."""
+    source = TRACK.read_text(encoding="utf-8")
+    choose = source[source.index("function chooseSong(node) {"):source.index("function nodeText(")]
+    assert "if (row.key === nodeSong(node)) return;" in choose, "picking the same song changes nothing"
+    assert "await confirmed(" in choose, "edits are not thrown away silently"
+    assert "writeList(node, []);" in choose
+    assert "node.__yue2TrackDrawn = null;" in choose, "the old song's takes must not stay on screen"
+    assert "arrived();" in choose, "and the window redraws from nothing"

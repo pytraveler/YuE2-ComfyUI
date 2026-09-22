@@ -227,6 +227,51 @@ def test_asking_for_a_third_take_sings_only_the_third(stand):
     assert [take["seed"] for take in payload(answer)["takes"]] == [40, 41, 42]
 
 
+def test_a_list_that_already_keeps_a_take_sings_that_one_alone(stand):
+    """A workflow saved with a take chosen, opened where nothing of it was sung.
+
+    The takes live in the session that sang them. Reopening a saved list in a
+    fresh ComfyUI found none of them, and the node sang all four of an edit to
+    throw three of them away -- what the user saw as a node that "generates
+    four takes at the first load". The seeds are counted on from the edit's
+    own, so the take the list kept is the only one the song needs.
+    """
+    answer = run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40, "takes": 4, "take": 2}]')
+    assert stand.calls == [("retake", 192, 414, (42,))]
+    drawn = payload(answer)
+    assert [take["seed"] for take in drawn["takes"]] == [40, 41, 42, 43]
+    assert [take["sung"] for take in drawn["takes"]] == [False, False, True, False]
+    assert drawn["chosen"] == 2
+    assert answer["result"][0]["waveform"][0, 0, 0] == pytest.approx(0.1)
+
+
+def test_a_take_this_session_never_sang_is_offered_as_its_seed(stand):
+    """The window draws a row for it, so it has to say which take it is and that it has no sound."""
+    answer = run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40, "takes": 4, "take": 2}]')
+    gap = payload(answer)["takes"][0]
+    assert gap["sung"] is False and gap["seed"] == 40 and gap["index"] == 0
+    assert gap["audio"] is None and gap["peaks"] == [] and gap["grid"] is None
+    assert gap["join"] is None and gap["kept"] is False and gap["flagged"] is False
+    assert gap["seconds"] is None and gap["total"] is None
+
+
+def test_asking_for_one_of_the_takes_left_sings_it_and_keeps_the_other(stand):
+    """'Sing it' moves the take the list keeps; the one already sung is not sung again."""
+    run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40, "takes": 4, "take": 2}]')
+    stand.calls.clear()
+    answer = run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40, "takes": 4, "take": 0}]')
+    assert stand.calls == [("retake", 192, 414, (40,))]
+    assert [take["sung"] for take in payload(answer)["takes"]] == [True, False, True, False]
+    assert payload(answer)["chosen"] == 0
+
+
+def test_a_retake_with_no_take_kept_yet_still_sings_them_all(stand):
+    """The pick is made among the takes, so a list that has not chosen needs every one of them."""
+    answer = run(stand, '[{"op": "retake", "bars": [4, 8], "seed": 40, "takes": 3}]')
+    assert stand.calls == [("retake", 192, 414, (40, 41, 42))]
+    assert [take["sung"] for take in payload(answer)["takes"]] == [True, True, True]
+
+
 def test_an_edit_added_at_the_end_sings_only_itself(stand):
     text = '[{"op": "cut", "bars": [2, 4]}]'
     run(stand, text)

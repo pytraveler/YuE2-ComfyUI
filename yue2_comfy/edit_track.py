@@ -12,6 +12,10 @@ What it costs is paid once. The takes of every edit stay in this session's
 memory under a name made of the song, the edits before it and what this one
 does, so adding an edit at the end sings that edit alone, switching to another
 take of the last one costs nothing, and undoing an edit costs nothing either.
+That memory is only this session's. A workflow saved with a list still asks
+for the takes it once compared, so reopening it in a fresh ComfyUI sings the
+take the list kept and that one alone; the others are offered as seeds, since
+a seed sings the same take whenever it is asked.
 
 The window that writes the list is ``web/js/yue2_track.js``; the list's shape
 lives in ``inpaint.track``, which the tests read from both sides. Module scope
@@ -113,6 +117,9 @@ TAKES_TOOLTIP = (
     "How many times a retake sings the same stretch, so there is something to choose between. "
     "The one whose join the model likes best is kept; the track window plays them all and lets "
     "you keep another, which costs nothing -- they are all already sung.\n\n"
+    "They are sung once and kept in this session's memory. A workflow opened in a fresh "
+    "ComfyUI sings only the take its list kept, however many it once compared; the window "
+    "shows the others and sings one on request, a seed always giving back the same take.\n\n"
     "A cut ignores this: a cut is the same cut however often it is made."
 )
 
@@ -371,13 +378,25 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
     laid = None
     if own.sheet is not None and own.clock is not None:
         laid = grid.layout(own.sheet, own.clock, own.frames)
-    return {"seed": int(take.seed), "index": index, "kept": index == chosen,
+    return {"seed": int(take.seed), "index": index, "kept": index == chosen, "sung": True,
             "seconds": round(take.count * FRAME_SECONDS, 3),
             "total": round(int(take.waveform.shape[-1]) / float(rate), 3),
             "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": laid,
             "join": None if take.join is None else round(take.join, 4),
             "natural": None if take.join is None or take.natural is None else round(take.natural, 4),
             "ended": bool(take.ended), "flagged": _flagged(take), "audio": entry}
+
+
+def _take_gap(seed: int, index: int) -> dict:
+    """A take the list asks for that this session has not sung, as a row the window can offer.
+
+    It carries its seed and nothing else, because nothing else exists yet: no
+    file, no length, no join. Singing it later gives the take that seed always
+    gives, so the row is an offer, not a loss.
+    """
+    return {"seed": int(seed), "index": index, "kept": False, "sung": False,
+            "seconds": None, "total": None, "peaks": [], "rms": [], "grid": None,
+            "join": None, "natural": None, "ended": False, "flagged": False, "audio": None}
 
 
 def _remember(waveform, song) -> str:
@@ -483,7 +502,7 @@ class YuE2EditTrack:
                     entry = self._sung(loaded, current, sound, state, step, edit, made,
                                        settings, band)
                     seeds = (0,) if step.kind == "cut" else edit.seeds()
-                    ordered = [entry["takes"][seed] for seed in seeds]
+                    ordered = [entry["takes"].get(seed) for seed in seeds]
                     pick = edit.take if edit.take is not None else core.best(ordered)
                     kept = ordered[pick]
                     history.append((edit, kept.seed))
@@ -491,7 +510,7 @@ class YuE2EditTrack:
                     prior = state
                     state = track.after(state, step, kept.count)
                     current, sound = kept.song, kept.waveform
-                    shown = (step, ordered, pick, made, prior)
+                    shown = (step, ordered, pick, made, prior, seeds)
         except InterruptedError:
             translate_interrupt()
             raise
@@ -520,11 +539,24 @@ class YuE2EditTrack:
         return {"ui": ui, "result": (out,)}
 
     def _sung(self, loaded, song, waveform, state, step, edit, name, settings, band):
-        """The takes of one edit: the ones already sung under this name, and the ones still missing."""
+        """The takes of one edit: the ones already sung under this name, and the ones still missing.
+
+        Only the takes the result needs are sung. An edit that already says
+        which take was kept needs that one: the others are there to compare,
+        and comparing them is over. This is what a workflow saved with a
+        chosen take costs when it is opened again -- the list still asks for
+        the four takes it once compared, while the takes themselves live in
+        this session's memory and a restart empties it. Their seeds are
+        counted on from the edit's own, so any of them can be sung later and
+        comes out the same take; the window offers them. An edit with nothing
+        kept yet sings all of them, because the pick is made among them.
+        """
         from .inpaint import core, ops
 
         entry = RESULTS.get(name) or {"takes": {}, "natural": None}
         seeds = (0,) if step.kind == "cut" else edit.seeds()
+        if step.kind != "cut" and edit.take is not None:
+            seeds = (seeds[edit.take],)
         missing = [seed for seed in seeds if seed not in entry["takes"]]
         if not missing:
             band.ratio(1.0)
@@ -563,11 +595,12 @@ class YuE2EditTrack:
         every retake. After at least one edit there are also ``kind``, ``at``
         (the seconds the last edit took in hand, on the song as it was before
         it), ``dropped`` (the section tags a cut took out), ``chosen`` and
-        ``takes``: an entry a take, with seed, index, kept, seconds, total,
-        peaks, rms, grid (that take's own layout, since its length moves the
-        bars after the edit), join, natural, ended, flagged and ``audio``, the
-        temp file of the whole song that take makes, None when it could not be
-        written.
+        ``takes``: an entry a take, with seed, index, kept, sung, seconds,
+        total, peaks, rms, grid (that take's own layout, since its length moves
+        the bars after the edit), join, natural, ended, flagged and ``audio``,
+        the temp file of the whole song that take makes, None when it could not
+        be written. A take the list asks for that this session has not sung is
+        ``sung`` false and empty otherwise, see ``_take_gap``.
         """
         import dataclasses
 
@@ -585,13 +618,15 @@ class YuE2EditTrack:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
         if shown is None:
             return payload
-        step, ordered, pick, made, prior = shown
+        step, ordered, pick, made, prior, seeds = shown
         payload["chosen"] = pick
         payload["kind"] = step.kind
         payload["at"] = [round(step.start * FRAME_SECONDS, 3), round(step.stop * FRAME_SECONDS, 3)]
         payload["dropped"] = list(step.dropped)
-        payload["takes"] = [_take_facts(take, index, pick, made, rate, prior, step)
-                            for index, take in enumerate(ordered)]
+        payload["takes"] = [
+            _take_facts(take, index, pick, made, rate, prior, step) if take is not None
+            else _take_gap(seeds[index], index)
+            for index, take in enumerate(ordered)]
         return payload
 
 

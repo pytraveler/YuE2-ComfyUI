@@ -1576,3 +1576,29 @@ def test_play_starts_at_the_mark_and_a_stalled_player_is_nudged_once():
         "the nudge comes before the red line")
     assert "nudged = false;" in follow[follow.index("if (now !== last) {"):follow.index("} else if")], (
         "a player that moved again may be nudged again later")
+
+
+def test_a_take_the_session_never_sang_is_a_row_the_window_can_ask_for():
+    """A saved list asks for four takes; a fresh session has the one it kept. The rest are offers.
+
+    The node sings only the take the list keeps, so the window has to show the
+    others as what they are: seeds with no sound. They get no radio, because
+    there is nothing to switch the track to, and a button that puts one on the
+    list instead.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    facts = source[source.index("function takeFacts("):source.index("function growNode(")]
+    assert "if (take.sung === false) return NOT_SUNG;" in facts, (
+        "a take with no sound has no length and no join to show")
+    shown = source[source.index("    shownTake() {"):source.index("    wave() {")]
+    assert "take.sung === false ? null : take" in shown, (
+        "the track never follows a take that was not sung")
+    takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
+    assert "const gone = take.sung === false;" in takes
+    assert takes.index("if (gone) {") < takes.index("box.type = \"radio\";"), (
+        "a take that was not sung gets no radio")
+    assert "GONE_WITH_SESSION" in takes, "the row says why it is not there"
+    assert "this.singTake(take.index)" in takes
+    sing = source[source.index("    singTake(index) {"):source.index("    moreTakes() {")]
+    assert "list.withTake(edits, last, index)" in sing, "it keeps that take instead"
+    assert "WAITING" in sing, "and the node has to run for it"

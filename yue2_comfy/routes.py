@@ -266,28 +266,48 @@ async def send_sound(request, folder):
 
     Reads happen off the loop, writes wait for the socket, and nothing is
     handed to sendfile, so a browser holding one take open costs nobody else
-    their file. A client that goes away mid-file ends the loop quietly.
+    their file.
+
+    A client that goes away mid-file ends the loop quietly. That is the common
+    case, not a fault: the window swaps the player to another take, the player
+    seeks, or the page closes, and every one of those aborts a request that
+    still has bytes to write. aiohttp reports all of them as a ConnectionError
+    of one kind or another -- the write fails, or the drain waiter is broken
+    with a plain ConnectionError("Connection lost") -- and lets it out of the
+    handler as a request that failed, which fills the console with tracebacks.
+    Returning the response instead leaves aiohttp to close the connection the
+    way it does for its own file responses. The file is opened before the
+    answer is prepared, so one that has been swept since it was measured is
+    still a 404 rather than a traceback halfway through a body.
     """
     from aiohttp import web
 
     status, headers, path, offset, count = sound_answer(
         request.query.get("name", ""), request.headers.get("Range"), folder)
-    response = web.StreamResponse(status=status, headers=headers)
-    await response.prepare(request)
+    handle = None
     if path is not None and request.method == "GET":
         try:
-            with open(path, "rb") as handle:
-                handle.seek(offset)
-                left = count
-                while left > 0:
-                    piece = await asyncio.to_thread(handle.read, min(SOUND_CHUNK, left))
-                    if not piece:
-                        break
-                    left -= len(piece)
-                    await response.write(piece)
-        except (ConnectionResetError, ConnectionAbortedError):
-            return response
-    await response.write_eof()
+            handle = open(path, "rb")
+        except OSError:
+            status, headers, count = 404, {"Content-Length": "0"}, 0
+    response = web.StreamResponse(status=status, headers=headers)
+    try:
+        await response.prepare(request)
+        if handle is not None:
+            handle.seek(offset)
+            left = count
+            while left > 0:
+                piece = await asyncio.to_thread(handle.read, min(SOUND_CHUNK, left))
+                if not piece:
+                    break
+                left -= len(piece)
+                await response.write(piece)
+        await response.write_eof()
+    except ConnectionError:
+        pass
+    finally:
+        if handle is not None:
+            handle.close()
     return response
 
 

@@ -95,6 +95,12 @@ const SOUND_FAULTS = {
     4: "the browser will not play a file of this kind",
 };
 
+const NOT_SUNG = "not in this session -- Sing it, then Render";
+
+const GONE_WITH_SESSION =
+    "Takes live in the session that sang them, so this one holds the take the list kept and "
+    + "nothing else. The rest are still their seeds: singing one again gives back that same take.";
+
 const OTHER_LIST =
     "These takes are of the edit that was drawn. Press Render to catch up with the list as it is "
     + "now -- a take already sung is never sung again.";
@@ -187,6 +193,7 @@ function soundUrl(entry, stamp, viaView) {
 }
 
 function takeFacts(take) {
+    if (take.sung === false) return NOT_SUNG;
     const parts = [take.seconds.toFixed(1) + " s sung"];
     if (take.join !== null && take.join !== undefined) {
         parts.push("join " + take.join.toFixed(2)
@@ -501,7 +508,8 @@ class TrackWindow {
             ? (this.payload.chosen === null || this.payload.chosen === undefined
                 ? 0 : this.payload.chosen)
             : this.take;
-        return takes[Math.max(0, Math.min(takes.length - 1, at))] || null;
+        const take = takes[Math.max(0, Math.min(takes.length - 1, at))] || null;
+        return take && take.sung === false ? null : take;
     }
 
     wave() {
@@ -730,15 +738,23 @@ class TrackWindow {
             + " -- the one chosen is the track above, so playing compares them in place."));
         this.takesRow.appendChild(head);
         if (!same) this.takesRow.appendChild(element("div", "yue2-t-warn", OTHER_LIST));
+        if (takes.some((take) => take.sung === false)) {
+            this.takesRow.appendChild(element("div", "yue2-t-dim", GONE_WITH_SESSION));
+        }
         for (const take of takes) {
-            const row = element("label", "yue2-t-take");
-            const box = document.createElement("input");
-            box.type = "radio";
-            box.name = "yue2-take-" + this.node.id;
-            box.checked = Boolean(shown) && take.index === shown.index;
-            box.disabled = this.working;
-            box.addEventListener("change", () => this.showTake(take.index));
-            row.appendChild(box);
+            const gone = take.sung === false;
+            const row = element(gone ? "div" : "label", "yue2-t-take");
+            if (gone) {
+                row.appendChild(element("span", "yue2-t-takegap", ""));
+            } else {
+                const box = document.createElement("input");
+                box.type = "radio";
+                box.name = "yue2-take-" + this.node.id;
+                box.checked = Boolean(shown) && take.index === shown.index;
+                box.disabled = this.working;
+                box.addEventListener("change", () => this.showTake(take.index));
+                row.appendChild(box);
+            }
             row.appendChild(element("span", "yue2-t-takename", "Take " + (take.index + 1)));
             row.appendChild(element("span", "yue2-t-dim", takeFacts(take)));
             if (take.kept) {
@@ -753,6 +769,14 @@ class TrackWindow {
                     + "than the takes that sounded right did on the stand. Listen to it, ask for "
                     + "another take, or select a wider stretch.";
                 row.appendChild(flag);
+            }
+            if (gone) {
+                const sing = element("button", "yue2-t-small", "Sing it");
+                sing.title = "Keep this take instead, and sing it on the next run. It is the only "
+                    + "one sung, and its seed has not changed, so it comes back the take it was.";
+                sing.disabled = this.working || !mine;
+                sing.addEventListener("click", () => this.singTake(take.index));
+                row.appendChild(sing);
             }
             this.takesRow.appendChild(row);
         }
@@ -1573,6 +1597,18 @@ class TrackWindow {
         if (at !== null) this.playSong(at, until);
     }
 
+    singTake(index) {
+        const { edits, error } = nodeList(this.node);
+        if (error || !edits.length) return;
+        const last = edits.length - 1;
+        if (edits[last].op !== "retake" || !this.sameEdit()) return;
+        writeList(this.node, list.withTake(edits, last, index));
+        paintSummary(this.node);
+        this.refresh();
+        this.setStatus("Take " + (index + 1) + " is the one the list keeps. " + WAITING
+            + " It is the only take sung, and the song comes back built on it.");
+    }
+
     moreTakes() {
         const { edits, error } = nodeList(this.node);
         if (error || !edits.length) return;
@@ -1663,6 +1699,7 @@ const STYLE = `
     border-radius: 5px; cursor: pointer; color: var(--input-text, #ddd); user-select: none; }
 .yue2-t-take:hover { background: rgba(255, 255, 255, 0.06); }
 .yue2-t-takename { min-width: 54px; }
+.yue2-t-takegap { display: inline-block; width: 13px; }
 .yue2-t-take input { accent-color: #3B7DD8; margin: 0; }
 .yue2-t-run { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .yue2-t-progress { flex: 1 1 auto; height: 6px; border-radius: 3px; overflow: hidden;

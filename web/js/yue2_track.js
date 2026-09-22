@@ -12,6 +12,7 @@ const EDITS = "edits";
 const TAKES = "takes";
 const SONG = "song_key";
 const AUDIO_IN = "audio";
+const USE_AUDIO = "use_audio";
 const TRACK_UI = "yue2_edit_track";
 const AUDIO_UI = "audio";
 const SUMMARY = "yue2_track_summary";
@@ -35,6 +36,18 @@ const RESET_LABEL = "Reset track";
 const RESET_TOOLTIP =
     "Throw away every edit on this node. The next run hands the song on as it came in; the takes "
     + "already sung stay in memory, so putting an edit back costs nothing.";
+
+const SWITCH_BOX = 14;
+const SWITCH_GAP = 12;
+const SWITCH_REACH = 3;
+const SWITCH_INSET = 22;
+const SWITCH_ON = "#4A9D5B";
+const SWITCH_OFF = "#2B2B2B";
+const SWITCH_EDGE = "#6A6A6A";
+const SWITCH_TICK = "#FFFFFF";
+const SWITCH_DIM = 0.35;
+
+const AUDIO_OFF = "'audio' off";
 
 const SUMMARY_H = 50;
 const STRIP_H = 20;
@@ -154,10 +167,38 @@ function typing(target) {
         || Boolean(target && target.isContentEditable);
 }
 
+function singsAgain(op) {
+    return op === "retake" || op === "words";
+}
+
 const WORDS_WHERE =
     "The stretch in green is where the song's own bars put this line. It is the same guess that "
     + "lights a line up while the song plays, not a measurement, and what is sung is found by "
     + "hearing the song.";
+
+const WORDS_WHERE_HEARD =
+    "The stretch in green is where the song sings this line, from its first word to its last: "
+    + "the song was heard once and every word of it found.";
+
+const WORDS_TIMED =
+    "Each line lights up while the song sings it, and pointing at a line shows where it is on "
+    + "the track. The times are the song's own, found by hearing it once.";
+
+const LINE_HOLD = 1.0;
+const LINE_GAP = 2.5;
+
+const HEARD_WHY =
+    "How many of the new words the speech model hears this take sing, in their order. A word "
+    + "the old line shares with the new one is heard either way, so a take that sang the old "
+    + "line still scores a few.";
+
+const PICK_JOIN =
+    "The take whose join the model scored best; it is the one the node keeps unless the list "
+    + "says otherwise.";
+
+const PICK_WORDS =
+    "The take heard singing the most of the new words, the join deciding a tie; it is the one "
+    + "the node keeps unless the list says otherwise.";
 
 const WORDS_KNOBS =
     "Seed, Variety and Guide under the track are this edit's own, so set them before singing.";
@@ -289,8 +330,93 @@ function nodeSong(node) {
     return typeof value === "string" ? value.trim() : "";
 }
 
+function audioOn(node) {
+    return widgetNamed(node, USE_AUDIO)?.value !== false;
+}
+
+function audioJoined(node) {
+    return audioOn(node) && Boolean(sourceOf(node, AUDIO_IN));
+}
+
+function vueNodes() {
+    try {
+        return Boolean(app.extensionManager?.setting?.get?.("Comfy.VueNodes.Enabled"));
+    } catch (error) {
+        return false;
+    }
+}
+
+function switchAt(node, ctx) {
+    const index = (node.inputs || []).findIndex((input) => input.name === AUDIO_IN);
+    if (index < 0 || typeof node.getConnectionPos !== "function") return null;
+    const spot = new Float32Array(2);
+    node.getConnectionPos(true, index, spot);
+    if (ctx) {
+        const input = node.inputs[index];
+        ctx.save();
+        ctx.font = (window.LiteGraph?.NODE_TEXT_SIZE ?? 14) + "px Arial";
+        node.__yue2SwitchLabel = ctx.measureText(
+            String(input.label || input.localized_name || input.name || "")).width;
+        ctx.restore();
+    }
+    const wide = node.__yue2SwitchLabel ?? 40;
+    return {
+        x: Math.min(spot[0] - node.pos[0] + 10 + wide + SWITCH_GAP + SWITCH_BOX / 2,
+                    node.size[0] - SWITCH_INSET),
+        y: spot[1] - node.pos[1],
+        joined: node.inputs[index].link !== null && node.inputs[index].link !== undefined,
+    };
+}
+
+function drawSwitch(node, ctx) {
+    const at = switchAt(node, ctx);
+    if (!at) return;
+    const on = audioOn(node);
+    const x = at.x - SWITCH_BOX / 2;
+    const y = at.y - SWITCH_BOX / 2;
+    const r = 3;
+    ctx.save();
+    ctx.globalAlpha = at.joined ? 1.0 : SWITCH_DIM;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + SWITCH_BOX, y, x + SWITCH_BOX, y + SWITCH_BOX, r);
+    ctx.arcTo(x + SWITCH_BOX, y + SWITCH_BOX, x, y + SWITCH_BOX, r);
+    ctx.arcTo(x, y + SWITCH_BOX, x, y, r);
+    ctx.arcTo(x, y, x + SWITCH_BOX, y, r);
+    ctx.closePath();
+    ctx.fillStyle = on ? SWITCH_ON : SWITCH_OFF;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = SWITCH_EDGE;
+    ctx.stroke();
+    if (on) {
+        ctx.strokeStyle = SWITCH_TICK;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(x + SWITCH_BOX * 0.24, y + SWITCH_BOX * 0.52);
+        ctx.lineTo(x + SWITCH_BOX * 0.43, y + SWITCH_BOX * 0.72);
+        ctx.lineTo(x + SWITCH_BOX * 0.78, y + SWITCH_BOX * 0.28);
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function onSwitch(node, pos) {
+    const at = switchAt(node, null);
+    if (!at || !pos) return false;
+    const reach = SWITCH_BOX / 2 + SWITCH_REACH;
+    return Math.abs(pos[0] - at.x) <= reach && Math.abs(pos[1] - at.y) <= reach;
+}
+
+function toggleAudio(node) {
+    setWidgetValue(node, USE_AUDIO, !audioOn(node));
+    paintSummary(node);
+    node.__yue2TrackWindow?.refresh();
+}
+
 function chooseSong(node) {
-    openSongs(node, nodeSong(node), Boolean(sourceOf(node, AUDIO_IN)), async (row) => {
+    openSongs(node, nodeSong(node), audioJoined(node), async (row) => {
         if (row.key === nodeSong(node)) return;
         const { edits } = nodeList(node);
         if (edits.length && !(await confirmed("This node has " + edits.length
@@ -345,7 +471,7 @@ function drawAlone(node) {
 }
 
 function openPicked(node) {
-    if (!nodeSong(node) || sourceOf(node, AUDIO_IN) || node.__yue2TrackDrawing) return;
+    if (!nodeSong(node) || audioJoined(node) || node.__yue2TrackDrawing) return;
     const shown = node.__yue2TrackWindow;
     if (shown) {
         shown.render();
@@ -407,8 +533,15 @@ function takeFacts(take) {
     return parts.join(" \u00b7 ");
 }
 
-function wasFacts(was) {
-    const parts = ["the " + roll.clock(was.seconds || 0) + " the retake replaced"];
+function heardFacts(take) {
+    if (!Array.isArray(take.heard)) return "";
+    return "heard " + take.heard[0] + " of " + take.heard[1]
+        + (take.heard[1] === 1 ? " word" : " words");
+}
+
+function wasFacts(was, kind) {
+    const parts = ["the " + roll.clock(was.seconds || 0)
+        + (kind === "words" ? " the new words replaced" : " the retake replaced")];
     if (typeof was.total === "number") parts.push("song " + roll.clock(was.total));
     parts.push("nothing sung for it");
     return parts.join(" \u00b7 ");
@@ -440,14 +573,18 @@ function paintSummary(node) {
             + last.slice(last.indexOf(". ") + 2));
     }
     const chosen = nodeSong(node);
+    const off = !audioOn(node) && Boolean(sourceOf(node, AUDIO_IN)) ? ", " + AUDIO_OFF : "";
     if (drawn) {
         const bars = list.barCount(drawn.grid);
         line("yue2-t-dim", roll.clock(drawn.seconds) + " long"
             + (bars ? ", " + bars + " bars" : ", no score")
-            + (drawn.song ? "" : ", not remembered"));
+            + (drawn.song ? "" : ", not remembered") + off);
     } else if (chosen) {
         line("yue2-t-dim", "Saved song: " + (node.__yue2SongSaid || chosen.slice(0, 8))
-            + (node.__yue2TrackDrawing ? ". Opening it now\u2026" : ". Press Render to open it."));
+            + (node.__yue2TrackDrawing ? ". Opening it now\u2026" : ". Press Render to open it.")
+            + (off ? " (" + AUDIO_OFF + ")" : ""));
+    } else if (off) {
+        line("yue2-t-dim", AUDIO_OFF + ": press 'Saved songs...' and pick one to edit.");
     } else {
         line("yue2-t-dim", "Not drawn yet: open the track and press Render.");
     }
@@ -753,7 +890,7 @@ class TrackWindow {
 
     shownTake() {
         const takes = this.payload?.takes || [];
-        if (!takes.length || this.payload.kind !== "retake") return null;
+        if (!takes.length || !singsAgain(this.payload.kind)) return null;
         if (this.take === BEFORE) return this.payload.before || null;
         const at = this.take === null || this.take === undefined
             ? (this.payload.chosen === null || this.payload.chosen === undefined
@@ -813,7 +950,8 @@ class TrackWindow {
         }
         if (at) {
             const made = this.madeSpan();
-            return "The retake is in the song, at " + list.spanText(made[0], made[1])
+            return (this.payload.kind === "words" ? "The new words are in the song, at "
+                : "The retake is in the song, at ") + list.spanText(made[0], made[1])
                 + ". Listen to the takes, or keep another one.";
         }
         if (!this.hasScore()) return NO_SCORE_HERE;
@@ -1074,10 +1212,13 @@ class TrackWindow {
     }
 
     takeFact(edit) {
-        return edit.take === null || edit.take === undefined
-            ? "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
-                + ", and keeps the take whose join the model likes best."
-            : "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.";
+        if (edit.take !== null && edit.take !== undefined) {
+            return "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.";
+        }
+        return "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
+            + (edit.op === "words"
+                ? ", hears every take, and keeps the one heard singing the most of the new words."
+                : ", and keeps the take whose join the model likes best.");
     }
 
     editSpan(edit) {
@@ -1129,6 +1270,17 @@ class TrackWindow {
             }
         });
         const lines = [];
+        const timed = this.timedLines();
+        if (timed) {
+            for (const [number, start, stop] of timed) {
+                const where = this.whereLine(number);
+                const middle = (start + stop) / 2;
+                if (!where || middle < from || middle > to) continue;
+                const said = this.blocks[where.block].block.lines[where.line];
+                if (said && /\p{L}/u.test(said)) lines.push(said.trim());
+            }
+            return { sections: emptied, lines };
+        }
         const first = this.wordAt(from);
         const last = this.wordAt(Math.max(from, to - 0.01));
         if (first && last && last.block >= first.block) {
@@ -1154,7 +1306,7 @@ class TrackWindow {
         const last = edits.length ? edits[edits.length - 1] : null;
         if (!this.payload) {
             if (last) return this.aboutEdit(last, edits.length - 1);
-            return nodeSong(this.node) || sourceOf(this.node, AUDIO_IN)
+            return nodeSong(this.node) || audioJoined(this.node)
                 ? { head: "The track is not drawn yet.", facts: [OPEN_SAID], label: NEXT_OPEN,
                     why: RUN_WHY }
                 : null;
@@ -1171,7 +1323,7 @@ class TrackWindow {
                      facts: [WAS_SAID], label: NEXT_DROP, why: DROP_WHY,
                      act: () => this.dropLast() };
         }
-        if (last && last.op === "retake") {
+        if (last && singsAgain(last.op)) {
             const kept = last.take === null || last.take === undefined ? null : last.take;
             const chosen = this.payload.chosen === null || this.payload.chosen === undefined
                 ? null : this.payload.chosen;
@@ -1202,14 +1354,16 @@ class TrackWindow {
         this.takesRow.replaceChildren();
         this.paintNext();
         const takes = this.payload?.takes || [];
-        if (!takes.length || this.payload?.kind !== "retake") return;
+        if (!takes.length || !singsAgain(this.payload?.kind)) return;
         const { edits } = nodeList(this.node);
         const last = edits.length - 1;
         const same = this.sameEdit();
-        const mine = same && last >= 0 && edits[last].op === "retake";
+        const mine = same && last >= 0 && singsAgain(edits[last].op);
         const shown = this.shownTake();
+        const words = this.payload.kind === "words";
         const head = element("div", "yue2-t-takehead");
-        head.appendChild(element("span", "", "Takes of the retake at "
+        head.appendChild(element("span", "", (words ? "Takes of the new words at "
+            : "Takes of the retake at ")
             + (this.payload.at ? list.spanText(this.payload.at[0], this.payload.at[1]) : "")
             + " -- the one chosen is the track above, so playing compares them in place."));
         this.takesRow.appendChild(head);
@@ -1220,7 +1374,7 @@ class TrackWindow {
         const was = this.payload.before;
         if (was) {
             const row = element("label", "yue2-t-take yue2-t-was");
-            row.title = WAS_WHY;
+            row.title = WAS_WHY + (was.said ? "\n\nHeard there before: " + was.said : "");
             const box = document.createElement("input");
             box.type = "radio";
             box.name = "yue2-take-" + this.node.id;
@@ -1229,7 +1383,7 @@ class TrackWindow {
             box.addEventListener("change", () => this.showTake(BEFORE));
             row.appendChild(box);
             row.appendChild(element("span", "yue2-t-takename", WAS_NAME));
-            row.appendChild(element("span", "yue2-t-dim", wasFacts(was)));
+            row.appendChild(element("span", "yue2-t-dim", wasFacts(was, this.payload.kind)));
             this.takesRow.appendChild(row);
         }
         for (const take of takes) {
@@ -1248,10 +1402,15 @@ class TrackWindow {
             }
             row.appendChild(element("span", "yue2-t-takename", "Take " + (take.index + 1)));
             row.appendChild(element("span", "yue2-t-dim", takeFacts(take)));
+            const heard = heardFacts(take);
+            if (heard) {
+                const tag = element("span", take.mumbled ? "yue2-t-warn" : "yue2-t-heard", heard);
+                tag.title = HEARD_WHY + (take.said ? "\n\nHeard: " + take.said : "");
+                row.appendChild(tag);
+            }
             if (take.kept) {
                 const mark = element("span", "yue2-t-dim", "the model's pick");
-                mark.title = "The take whose join the model scored best; it is the one the node "
-                    + "keeps unless the list says otherwise.";
+                mark.title = words ? PICK_WORDS : PICK_JOIN;
                 row.appendChild(mark);
             }
             if (take.flagged) {
@@ -1312,7 +1471,8 @@ class TrackWindow {
                     const at = row.lines.length;
                     const block = this.blocks.length;
                     said.classList.add("yue2-t-writable");
-                    said.title = WORDS_HOW + "\n\n" + WORDS_WHERE;
+                    said.title = WORDS_HOW + "\n\n"
+                        + (this.lineTime(number) ? WORDS_WHERE_HEARD : WORDS_WHERE);
                     said.addEventListener("click", (event) => this.pickLine(number, event));
                     said.addEventListener("pointerenter", () => this.overWords(block, at));
                     said.addEventListener("pointerleave", () => this.overWords(null, null));
@@ -1328,8 +1488,9 @@ class TrackWindow {
             this.blocks.push(row);
         }
         this.pairWords();
-        this.words.title = !(this.grid()?.sections || []).length ? WORDS_NO_SCORE
-            : (WORDS_SAID[this.pairedBy] || WORDS_UNPAIRED);
+        this.words.title = this.timedLines() ? WORDS_TIMED
+            : (!(this.grid()?.sections || []).length ? WORDS_NO_SCORE
+                : (WORDS_SAID[this.pairedBy] || WORDS_UNPAIRED));
         this.markWords();
         this.fitArea();
         if (this.knobsRow) this.paintKnobs();
@@ -1344,7 +1505,30 @@ class TrackWindow {
         this.draw();
     }
 
+    timedLines() {
+        const take = this.shownTake();
+        const lines = take ? take.lines : this.payload?.lines;
+        return Array.isArray(lines) && lines.length ? lines : null;
+    }
+
+    lineTime(number) {
+        return (this.timedLines() || []).find((span) => span[0] === number) || null;
+    }
+
     lineSpan(block, line) {
+        const row = this.blocks[block];
+        if (row && this.timedLines()) {
+            const numbers = line < 0 ? row.numbers : [row.numbers[line]];
+            const spans = numbers.map((number) => this.lineTime(number)).filter(Boolean);
+            if (spans.length) {
+                return [Math.min(...spans.map((span) => span[1])),
+                        Math.max(...spans.map((span) => span[2]))];
+            }
+        }
+        return this.guessedSpan(block, line);
+    }
+
+    guessedSpan(block, line) {
         const sections = this.grid()?.sections || [];
         const row = this.blocks[block];
         const index = this.paired.indexOf(block);
@@ -1532,6 +1716,25 @@ class TrackWindow {
     }
 
     wordAt(second) {
+        const timed = this.timedLines();
+        if (!timed || !this.blocks.length) return this.guessedAt(second);
+        let at = -1;
+        for (let index = 0; index < timed.length; index += 1) {
+            if (timed[index][1] <= second) at = index;
+        }
+        if (at >= 0) {
+            const stop = timed[at][2];
+            const next = timed[at + 1];
+            const held = second <= stop + LINE_HOLD
+                || (Boolean(next) && second < next[1] && next[1] - stop <= LINE_GAP);
+            const where = held ? this.whereLine(timed[at][0]) : null;
+            if (where) return where;
+        }
+        const guess = this.guessedAt(second);
+        return guess ? { block: guess.block, line: -1 } : null;
+    }
+
+    guessedAt(second) {
         const sections = this.grid()?.sections || [];
         if (!sections.length || !this.blocks.length) return null;
         let index = -1;
@@ -1850,7 +2053,7 @@ class TrackWindow {
         const mine = nodeList(this.node);
         if (mine.error || !mine.edits.length) return false;
         const last = mine.edits[mine.edits.length - 1];
-        if (last.op !== "retake") return false;
+        if (!singsAgain(last.op)) return false;
         const wanted = last.take === null || last.take === undefined ? 0 : last.take;
         return wanted === take.index;
     }
@@ -2288,7 +2491,7 @@ class TrackWindow {
         this.take = index;
         this.stopSound();
         const { edits, error } = nodeList(this.node);
-        const mine = !error && edits.length && edits[edits.length - 1].op === "retake"
+        const mine = !error && edits.length && singsAgain(edits[edits.length - 1].op)
             && this.sameEdit();
         if (mine && index !== BEFORE) {
             writeList(this.node, list.withTake(edits, edits.length - 1, index));
@@ -2318,7 +2521,7 @@ class TrackWindow {
         const { edits, error } = nodeList(this.node);
         if (error || !edits.length) return;
         const last = edits.length - 1;
-        if (edits[last].op !== "retake" || !this.sameEdit()) return;
+        if (!singsAgain(edits[last].op) || !this.sameEdit()) return;
         writeList(this.node, list.withTake(edits, last, index));
         paintSummary(this.node);
         this.refresh();
@@ -2331,7 +2534,7 @@ class TrackWindow {
         const { edits, error } = nodeList(this.node);
         if (error || !edits.length) return;
         const last = edits[edits.length - 1];
-        if (last.op !== "retake" || last.takes >= list.MAX_TAKES) return;
+        if (!singsAgain(last.op) || last.takes >= list.MAX_TAKES) return;
         writeList(this.node, list.withTakes(edits, edits.length - 1, last.takes + 1));
         paintSummary(this.node);
         this.refresh();
@@ -2455,6 +2658,7 @@ const STYLE = `
 .yue2-t-fill { height: 100%; width: 0%; background: #3B7DD8; transition: width 0.2s linear; }
 .yue2-t-dim { color: var(--descrip-text, #999); }
 .yue2-t-warn { color: #E0A45A; }
+.yue2-t-heard { color: #7ED394; }
 .yue2-t-status { font-size: 12px; min-height: 18px; margin: 2px 0;
     color: var(--descrip-text, #aaa); }
 .yue2-t-status.yue2-t-bad { color: #E08A8A; }
@@ -2487,6 +2691,7 @@ function installTrack(node) {
     panelWidget(node, SUMMARY, summary, () => SUMMARY_H);
     showWidget(node, EDITS, false);
     showWidget(node, SONG, false);
+    showWidget(node, USE_AUDIO, vueNodes());
     paintSummary(node);
     growNode(node);
 }
@@ -2512,6 +2717,29 @@ app.registerExtension({
         nodeType.prototype.onConfigure = function () {
             const result = onConfigure?.apply(this, arguments);
             setTimeout(() => paintSummary(this), 0);
+            return result;
+        };
+
+        const onDrawForeground = nodeType.prototype.onDrawForeground;
+        nodeType.prototype.onDrawForeground = function (ctx) {
+            const result = onDrawForeground?.apply(this, arguments);
+            if (!this.flags?.collapsed && ctx) drawSwitch(this, ctx);
+            return result;
+        };
+
+        const onMouseDown = nodeType.prototype.onMouseDown;
+        nodeType.prototype.onMouseDown = function (event, pos) {
+            if (!this.flags?.collapsed && onSwitch(this, pos)) {
+                toggleAudio(this);
+                return true;
+            }
+            return onMouseDown ? onMouseDown.apply(this, arguments) : undefined;
+        };
+
+        const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+        nodeType.prototype.onConnectionsChange = function () {
+            const result = onConnectionsChange?.apply(this, arguments);
+            paintSummary(this);
             return result;
         };
 

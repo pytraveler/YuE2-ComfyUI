@@ -1387,7 +1387,7 @@ def test_the_track_window_names_the_node_its_widgets_and_its_ui_key_the_same_way
     assert "await runAlone(this.node);" in source, "which is what Render does"
     doc = edit_track.YuE2EditTrack._payload.__doc__
     for key in ("peaks", "rms", "grid", "lyrics", "takes", "chosen", "dropped", "at", "kind",
-                "edits", "seconds", "total", "song"):
+                "edits", "seconds", "total", "song", "lines", "heard", "said", "mumbled"):
         assert re.search(r"\b(?:payload|take|drawn|entry)\??\." + key + r"\b", source), (
             key + " is written but never drawn")
         assert re.search(r"\b" + key + r"\b", doc), key + " is drawn but not written down"
@@ -1692,8 +1692,9 @@ def test_a_song_opened_from_the_picker_is_drawn_without_anyone_pressing_render()
     assert "openPicked(node);" in chosen, "the song just written on the node is the one drawn"
     assert chosen.index("setWidgetValue(node, SONG, row.key);") < chosen.index("openPicked(node)")
     picked = source[source.index("function openPicked(node) {"):source.index("function nodeText(")]
-    assert "sourceOf(node, AUDIO_IN)" in picked, (
-        "a song joined to 'audio' wins, and running the node would run whatever sings it")
+    assert "audioJoined(node)" in picked, (
+        "a song joined to 'audio' and switched on wins, and running the node would run whatever "
+        "sings it")
     assert "!nodeSong(node)" in picked, "and a song dropped under the node leaves nothing to draw"
     assert "shown.render();" in picked, "an open window runs it itself, so it follows the run"
     alone = source[source.index("function drawAlone(node) {"):source.index("function openPicked(")]
@@ -1913,7 +1914,7 @@ def test_the_node_writes_the_chosen_key_and_says_which_song_it_is():
     track = TRACK.read_text(encoding="utf-8")
     choose = track[track.index("function chooseSong(node) {"):track.index("function nodeText(")]
     assert "setWidgetValue(node, SONG, row.key)" in choose, "and setWidgetValue records the change"
-    assert "sourceOf(node, AUDIO_IN)" in choose, "the picker says so when the graph wins"
+    assert "audioJoined(node)" in choose, "the picker says so when the graph wins"
     assert "showWidget(node, SONG, false);" in track, "the key is chosen, never typed"
     assert "SONGS_LABEL" in track and "chooseSong(node)" in track
     summary = track[track.index("function paintSummary(node) {"):track.index("function resetTrack(")]
@@ -2059,8 +2060,8 @@ def test_the_box_for_new_words_is_the_size_of_what_is_in_it():
 def test_a_line_under_the_pointer_is_shown_on_the_track():
     """The window already lights a line up while the song plays; this is that the other way round."""
     source = TRACK.read_text(encoding="utf-8")
-    span = source[source.index("    lineSpan(block, line) {"):source.index("    whereLine(")]
-    at = source[source.index("    wordAt(second) {"):source.index("    markWords() {")]
+    span = source[source.index("    guessedSpan(block, line) {"):source.index("    whereLine(")]
+    at = source[source.index("    guessedAt(second) {"):source.index("    markWords() {")]
     for shared in ("section.sung", "stop <= from", "sections[index + 1]"):
         assert shared in span and shared in at, (
             "the line's place and the place's line have to be the same guess: " + shared)
@@ -2075,4 +2076,78 @@ def test_a_line_under_the_pointer_is_shown_on_the_track():
                   else source.index("    saidSpan() {") + 1200]
     assert "this.editing" in said, (
         "an open box shows where it will sing without the pointer being anywhere")
+
+
+def test_lines_light_up_where_the_song_sings_them_once_their_times_are_known():
+    """The node hears the song and hands over when each line is sung; the bars are the fallback."""
+    source = TRACK.read_text(encoding="utf-8")
+    timed = source[source.index("    timedLines() {"):source.index("    lineTime(")]
+    assert "take ? take.lines : this.payload?.lines" in timed, (
+        "a take is a song of its own length, so its lines are its own")
+    at = source[source.index("    wordAt(second) {"):source.index("    guessedAt(second) {")]
+    assert "this.timedLines()" in at and "this.guessedAt(second)" in at
+    assert "LINE_HOLD" in at and "LINE_GAP" in at, (
+        "a line stays lit through a breath, not through an interlude")
+    span = source[source.index("    lineSpan(block, line) {"):source.index("    guessedSpan(")]
+    assert "this.lineTime(number)" in span and "this.guessedSpan(block, line)" in span
+    cut = source[source.index("    wordsCut(from, to) {"):source.index("    nextWork() {")]
+    assert "this.timedLines()" in cut, "a cut names the lines it takes by where they are sung"
+    words = source[source.index("    paintWords() {"):source.index("    overWords(")]
+    assert "WORDS_TIMED" in words and "WORDS_WHERE_HEARD" in words, (
+        "the panel says which it is: heard, or guessed from the bars")
+
+
+def test_a_change_of_words_offers_its_takes_as_a_retake_does():
+    """The takes of new words were sung and compared but never shown: none could be heard side by
+    side, none kept but the join's, and More takes was not there."""
+    source = TRACK.read_text(encoding="utf-8")
+    assert 'return op === "retake" || op === "words";' in source
+    assert source.count('op === "retake"') == 1
+    for pattern in ('op !== "retake"', 'kind === "retake"', 'kind !== "retake"'):
+        assert pattern not in source, pattern
+    for method in ("    shownTake() {", "    paintTakes() {", "    nextWork() {",
+                   "    onlyTheTake() {", "    showTake(index) {", "    singTake(index) {",
+                   "    moreTakes() {"):
+        start = source.index(method)
+        body = source[start:source.index("\n    }\n", start)]
+        assert "singsAgain(" in body, method
+
+
+def test_a_take_of_new_words_says_how_much_of_them_was_heard():
+    source = TRACK.read_text(encoding="utf-8")
+    facts = source[source.index("function heardFacts(take) {"):source.index("function wasFacts(")]
+    assert '"heard " + take.heard[0] + " of " + take.heard[1]' in facts
+    takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
+    assert "heardFacts(take)" in takes and "take.mumbled" in takes and "take.said" in takes
+    assert "PICK_WORDS" in takes, "the pick is explained by what picked it"
+    assert "was.said" in takes, "the song as it was says what was heard there before"
+    fact = source[source.index("    takeFact(edit) {"):source.index("    editSpan(edit) {")]
+    assert 'edit.op === "words"' in fact, "the blue block says how the take will be picked"
+
+
+def test_the_audio_input_is_switched_off_by_a_square_beside_it():
+    """The MiniMax rewriter's way: a square drawn by the input, its state a widget of the node.
+
+    Everything that asked whether a song is joined to 'audio' asks whether one
+    is joined and switched on, or the picker would refuse a song the node is
+    about to edit.
+    """
+    from yue2_comfy import edit_track
+
+    source = TRACK.read_text(encoding="utf-8")
+    assert 'const USE_AUDIO = "use_audio";' in source
+    assert "use_audio" in edit_track.YuE2EditTrack.INPUT_TYPES()["optional"]
+    hooks = source[source.index("app.registerExtension({"):]
+    for said in ("drawSwitch(this, ctx)", "onSwitch(this, pos)", "toggleAudio(this)"):
+        assert said in hooks, said
+    assert "showWidget(node, USE_AUDIO, vueNodes())" in source, (
+        "Vue nodes draw no square on the canvas, so there the switch is shown as a widget")
+    assert source.count("sourceOf(node, AUDIO_IN)") == 2, "audioJoined and the summary, no more"
+    assert "sourceOf(this.node, AUDIO_IN)" not in source
+    for place, end in (("function chooseSong(node) {", "\n}\n"), ("function openPicked(node) {", "\n}\n"),
+                       ("    nextWork() {", "\n    }\n")):
+        start = source.index(place)
+        assert "audioJoined(" in source[start:source.index(end, start)], place
+    toggled = source[source.index("function toggleAudio(node) {"):source.index("function chooseSong(")]
+    assert "setWidgetValue(node, USE_AUDIO" in toggled, "written so a saved workflow keeps it"
 

@@ -115,6 +115,11 @@ class Take:
     that the model ended the song itself. ``natural`` is the same score for the
     old song at the same place, the one this take has to stand against; it is
     None unless it was asked for.
+
+    ``heard`` and ``said`` belong to a take of new words once somebody has
+    listened to it: ``(found, wanted)``, how many of the words asked for were
+    heard sung in their order, and the words that were heard. Both stay None
+    until then; see ``inpaint.lines.heard``.
     """
 
     seed: int
@@ -126,12 +131,27 @@ class Take:
     ended: bool
     timing: dict
     natural: float | None = None
+    heard: tuple | None = None
+    said: str | None = None
 
 
 def best(takes) -> int:
-    """The index of the take whose join scored best; the first take when none was scored."""
-    scored = [(take.join, -index) for index, take in enumerate(takes) if take.join is not None]
-    return -max(scored)[1] if scored else 0
+    """The index of the take to keep; the first take when none was scored.
+
+    Takes that were heard go by how much of their words were heard sung, and
+    only a tie between them goes to the join: a change of words is worth
+    keeping for the words, and on the stand the take with the best join was
+    the one whose words were heard best in two songs of three. A take nobody
+    heard stands behind every one that was. Takes that were not heard at all
+    go by the join.
+    """
+    scored = []
+    for index, take in enumerate(takes):
+        if take is None or (take.join is None and take.heard is None):
+            continue
+        share = -1.0 if take.heard is None else take.heard[0] / max(1, take.heard[1])
+        scored.append((share, -math.inf if take.join is None else take.join, -index))
+    return -max(scored)[2] if scored else 0
 
 
 def _settings(settings) -> dict:
@@ -684,8 +704,11 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
     seeds = [normalize_seed(seed) for seed in seeds]
     noise_seeds = seeds if noise_seeds is None else [normalize_seed(seed) for seed in noise_seeds]
     ids = [int(value) + CODEC_OFFSET for value in song.codec]
-    prefix, unconditional = (song.prefix, song.negative) if lyrics is None and score is None         else _prompts(models, song, song.lyrics if lyrics is None else lyrics,
-                      song.score if score is None else score, settings)
+    if lyrics is None and score is None:
+        prefix, unconditional = song.prefix, song.negative
+    else:
+        prefix, unconditional = _prompts(models, song, song.lyrics if lyrics is None else lyrics,
+                                         song.score if score is None else score, settings)
     context = list(prefix) + ids[:region.start]
     negative = None if unconditional is None else list(unconditional) + ids[:region.start]
     window = _sampling(settings, 1, 1).penalty_window

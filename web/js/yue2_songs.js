@@ -26,9 +26,9 @@ const NO_MATCH = "No song here says that.";
 
 const JOINED =
     "A song is joined to this node's 'audio', and that one wins: the graph is what a run is "
-    + "about. So nothing here can be opened while it is plugged in -- unplug it to edit a song "
-    + "chosen here. Everything else on this list still works: what is remembered can be read, "
-    + "labelled and deleted from here.";
+    + "about. So nothing here can be opened while it is plugged in -- untick the square beside "
+    + "'audio' on the node, or unplug it, to edit a song chosen here. Everything else on this "
+    + "list still works: what is remembered can be read, labelled and deleted from here.";
 
 const VOICE_ONLY = "voice only";
 const VOICE_WHY =

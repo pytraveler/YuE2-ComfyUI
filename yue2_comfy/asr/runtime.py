@@ -16,6 +16,10 @@ on the same network, asked by 'YuE2 Edit Track' when each word of a song is
 sung. Its answer is kept by the song and the words it was measured on, so
 rewriting a second line of a song costs nothing.
 
+The same node asks the speech model to hear a few seconds at a time -- each
+take of a change of words, to keep the one that sings them (``hear``) -- and
+those answers are kept too, by the clip's name.
+
 The model is kept only when 'keep_model_loaded' asks for it, and the Unload
 Models button lets it go (see ``memory``).
 """
@@ -39,12 +43,19 @@ SHORTEST_PIECE = 1600
 ALIGNER_ROOM_BYTES = 3 * 1024 ** 3
 """Free VRAM wanted before the aligner is loaded: 1.2 GB of weights, one pass over a long song, and a margin."""
 
+KEEP_TIMES = 48
+"""How many songs' word times are kept: a list of words each, and a window asks for one a take."""
+
+KEEP_HEARD = 64
+"""How many short clips' words are kept: a line of text each."""
+
 _LOCK = threading.RLock()
 _STATE = {"key": None, "net": None, "tokenizer": None}
 _ALIGNER = {"key": None, "held": None}
 _RESULTS = collections.OrderedDict()
 _LAYOUTS = collections.OrderedDict()
 _TIMES = collections.OrderedDict()
+_HEARD = collections.OrderedDict()
 
 
 def stamp(folder: str) -> tuple:
@@ -212,8 +223,48 @@ def word_times(folder: str, tokenizer_path: str, device, waveform, rate: int, te
     held = acquire_aligner(folder, tokenizer_path, device, progress)
     audio = model.mono_16k(waveform, rate)
     times = aligner_module.align(held, audio, text, cancelled=cancelled, progress=progress)
-    _put(_TIMES, full_key, times)
+    _put(_TIMES, full_key, times, KEEP_TIMES)
     return times
+
+
+def hear(folder: str, device, clips, language: str = "", cancelled=None, progress=None) -> list:
+    """``[{"language", "text"}]``, one for each ``(name, samples)`` in ``clips``, heard one by one.
+
+    A clip is ``[samples]`` of mono 16 kHz audio, a few seconds of a song, and
+    ``name`` says which few seconds: the same name heard again is answered
+    from what was kept. With ``language`` empty the first clip's language, as
+    the model names it, is the one the rest are heard in, so that a run of
+    takes is heard alike; the caller puts first the clip whose language is
+    surest. The captured decoding step is let go however this ends.
+    """
+    weights = stamp(folder)
+    answers = []
+    net = tokenizer = None
+    try:
+        for index, (name, samples) in enumerate(clips):
+            if cancelled is not None and cancelled():
+                raise InterruptedError("Cancelled while the takes were being heard")
+            key = (weights, str(name), language)
+            found = _get(_HEARD, key)
+            if found is None:
+                from . import model
+
+                if net is None:
+                    net, tokenizer = acquire(folder, device, progress)
+                answer = model.recognise(net, tokenizer, samples, language=language,
+                                         cancelled=cancelled)
+                found = {"language": answer["language"] or language, "text": answer["text"]}
+                _put(_HEARD, key, found, KEEP_HEARD)
+            answers.append(found)
+            if index == 0 and not language:
+                language = guide_language(found["language"])
+            if progress is not None:
+                progress.ratio((index + 1) / len(clips))
+    finally:
+        forget = getattr(net, "forget_steps", None)
+        if callable(forget):
+            forget()
+    return answers
 
 
 def _get(store, key):
@@ -224,11 +275,11 @@ def _get(store, key):
         return found
 
 
-def _put(store, key, value) -> None:
+def _put(store, key, value, keep: int = KEEP_RESULTS) -> None:
     with _LOCK:
         store[key] = value
         store.move_to_end(key)
-        while len(store) > KEEP_RESULTS:
+        while len(store) > keep:
             store.popitem(last=False)
 
 

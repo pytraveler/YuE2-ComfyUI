@@ -50,6 +50,13 @@ RATE = 48000
 
 SAMPLES_A_FRAME = 1920
 
+SPEECH_FOLDER = edit_track._speech_folder
+"""The real lookup, kept before the fixture below stands it in for every test."""
+
+WORDS = ('[{"op": "words", "bars": [4, 8], "lines": [3, 4], "text": "one two four", '
+         '"seed": 40}]')
+"""A change of words on the stretch selected: line 4 of the words, sung over bars 5 to 8."""
+
 
 @pytest.fixture
 def torch():
@@ -84,6 +91,19 @@ def a_temp_folder_of_its_own(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(edit_track, "_temp_folder", lambda: str(tmp_path))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_ears_of_the_machine(monkeypatch):
+    """The node never reaches the speech models of the machine the tests run on.
+
+    The embedded Python these tests run with finds the aligner and Qwen3-ASR
+    where this machine keeps them, so a run would load both onto the card and
+    hear silence -- and a machine without them, downloading on, would fetch
+    4 GB. A test about hearing stands them in itself.
+    """
+    monkeypatch.setattr(edit_track, "_aligner_at_hand", lambda settings: None)
+    monkeypatch.setattr(edit_track, "_speech_folder", lambda settings, progress, notices: None)
 
 
 @pytest.fixture
@@ -153,12 +173,14 @@ def test_the_widgets_sit_in_the_order_a_saved_workflow_expects():
     """ComfyUI stores widget values by position, so this order is part of every saved workflow."""
     shape = edit_track.YuE2EditTrack.INPUT_TYPES()
     assert list(shape["required"]) == ["takes"]
-    assert list(shape["optional"]) == ["audio", "edits", "options", "song_key"]
+    assert list(shape["optional"]) == ["audio", "edits", "options", "song_key", "use_audio"]
     fields = dict(list(shape["required"].items()) + list(shape["optional"].items()))
-    assert [name for name, spec in fields.items() if spec[0] in ("INT", "STRING")] == [
-        "takes", "edits", "song_key"], (
-        "widget values are stored by position, so takes and edits keep theirs and the new "
+    assert [name for name, spec in fields.items() if spec[0] in ("INT", "STRING", "BOOLEAN")] == [
+        "takes", "edits", "song_key", "use_audio"], (
+        "widget values are stored by position, so takes and edits keep theirs and each new "
         "field goes last")
+    assert shape["optional"]["use_audio"][1]["default"] is True, (
+        "a workflow saved before the switch has no value for it, and its audio is used")
     assert shape["required"]["takes"][1]["max"] == track.MAX_TAKES
     assert edit_track.YuE2EditTrack.RETURN_NAMES == ("audio",)
 
@@ -1016,3 +1038,288 @@ def test_word_times_wait_beside_their_song_until_the_words_change(tmp_path, monk
     assert edit_track._words_file("not a key") is None
     (tmp_path / (key + edit_track.WORDS_SUFFIX)).write_text("half a file", encoding="utf-8")
     assert edit_track._times_read(key, "one two") is None
+
+
+def hearing(monkeypatch, said, seen=None):
+    """Qwen3-ASR stood in: each clip is heard saying what ``said`` holds for its name.
+
+    The names are the node's own, ``(takes' name, "was")`` for the stretch as
+    the song sang it and ``(takes' name, seed)`` for a take, so ``said`` is
+    keyed by "was" and by seed. A clip is the fill of the sound it was cut from
+    and its two ends, which is enough to see what was cut from what.
+    """
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    monkeypatch.setattr(edit_track, "_speech_folder", lambda settings, progress, notices: "speech")
+    monkeypatch.setattr(edit_track, "_clip", lambda waveform, rate, start, stop: (
+        round(float(waveform.flatten()[0]), 2), round(start, 2), round(stop, 2)))
+
+    def hear(folder, device, clips, language="", cancelled=None, progress=None):
+        answers = []
+        for name, clip in clips:
+            if seen is not None:
+                seen.append((name[1], clip))
+            answers.append({"language": "English", "text": said[name[1]]})
+        return answers
+
+    monkeypatch.setattr(asr_runtime, "hear", hear)
+
+
+def lined(monkeypatch, calls=None):
+    """The aligner stood in and at hand: every word of the text sung half a second after the last."""
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    monkeypatch.setattr(edit_track, "_aligner_at_hand",
+                        lambda settings: ("aligner", "tokenizer", "cuda"))
+
+    def word_times(folder, reader, device, waveform, rate, text, key, progress=None,
+                   cancelled=None):
+        if calls is not None:
+            calls.append((key, text, round(float(waveform.flatten()[0]), 2)))
+        found, at = [], 0.0
+        for word in text.split():
+            found.append((word, at, round(at + 0.4, 3)))
+            at += 0.5
+        return found
+
+    monkeypatch.setattr(asr_runtime, "word_times", word_times)
+
+
+def said_by(monkeypatch):
+    said = []
+    monkeypatch.setattr(edit_track, "announce",
+                        lambda node, findings, kind="notice": said.extend(findings))
+    return said
+
+
+def test_new_words_keep_the_take_heard_singing_them_over_one_that_joins_better(stand,
+                                                                             monkeypatch):
+    """The join is the model's opinion of how the old song goes on; the words are the edit.
+
+    Take 2 joins better and sings the old line; take 1 sings the new one.
+    """
+    hearing(monkeypatch, {"was": "one two three", 40: "one two four", 41: "one two three"})
+    drawn = payload(run(stand, WORDS))
+    assert drawn["chosen"] == 0
+    assert [take["heard"] for take in drawn["takes"]] == [[3, 3], [2, 3]]
+    assert [take["said"] for take in drawn["takes"]] == ["one two four", "one two three"]
+    assert [take["mumbled"] for take in drawn["takes"]] == [False, True]
+    assert json.loads(drawn["edits"])[0]["take"] == 0, "the list handed back keeps it too"
+    assert drawn["before"]["said"] == "one two three", (
+        "the stretch as the song sang it is heard first, for the language")
+
+
+def test_what_is_heard_is_the_stretch_each_take_sang_and_a_little_around_it(stand, monkeypatch):
+    seen = []
+    hearing(monkeypatch, {"was": "x", 40: "one two four", 41: "one two four"}, seen)
+    run(stand, WORDS)
+    start = 192 * FRAME_SECONDS - edit_track.HEARD_AROUND
+    stop = 414 * FRAME_SECONDS + edit_track.HEARD_AROUND
+    assert seen == [("was", (0.0, round(start, 2), round(stop, 2))),
+                    (40, (0.1, round(start, 2), round(stop, 2))),
+                    (41, (0.2, round(start, 2), round(stop, 2)))]
+
+
+def test_takes_heard_alike_are_told_apart_by_the_join(stand, monkeypatch):
+    hearing(monkeypatch, {"was": "x", 40: "one two four", 41: "one two four"})
+    assert payload(run(stand, WORDS))["chosen"] == 1
+
+
+def test_the_singing_model_is_let_go_before_the_takes_are_heard(stand, monkeypatch):
+    """A card that holds the song model or the speech model need not hold both at once, and an
+    edit after the one heard loads the song model again."""
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    events = []
+
+    class watched(_no_models):
+        def __enter__(self):
+            events.append("sing")
+            return super().__enter__()
+
+        def __exit__(self, *exc):
+            events.append("let go")
+            return False
+
+    monkeypatch.setattr("yue2_comfy.staged.session", watched)
+    hearing(monkeypatch, {"was": "x", 40: "one two four", 41: "one two"})
+    heard = asr_runtime.hear
+    monkeypatch.setattr(asr_runtime, "hear",
+                        lambda *args, **kwargs: events.append("hear") or heard(*args, **kwargs))
+    run(stand, WORDS[:-1] + ', {"op": "retake", "bars": [2, 4], "seed": 9}]')
+    assert events == ["sing", "let go", "hear", "sing", "let go"]
+
+
+def test_a_take_sung_later_is_the_only_one_heard(stand, monkeypatch):
+    """Asking for one more take hears that one; the rest were heard when they were sung."""
+    seen = []
+    hearing(monkeypatch, {"was": "x", 40: "one two four", 41: "one two", 42: "one two four"},
+            seen)
+    run(stand, WORDS)
+    seen.clear()
+    later = payload(run(stand, WORDS.replace('"seed": 40', '"seed": 40, "takes": 3, "take": 2')))
+    assert [name for name, _clip in seen] == ["was", 42]
+    assert [take["heard"] for take in later["takes"]] == [[3, 3], [2, 3], [3, 3]]
+
+
+def test_without_the_speech_model_the_join_picks_and_the_node_says_why(stand, monkeypatch):
+    from yue2_comfy import download
+
+    def missing(settings, progress=None):
+        raise FileNotFoundError("Qwen3-ASR-1.7B is not on this machine yet.")
+
+    monkeypatch.setattr(edit_track, "_speech_folder", SPEECH_FOLDER)
+    monkeypatch.setattr(download, "ensure_asr", missing)
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, WORDS))
+    assert drawn["chosen"] == 1
+    assert all(take["heard"] is None for take in drawn["takes"])
+    assert said.count(("notice", edit_track.NO_EARS)) == 1
+
+
+def test_a_take_that_cannot_be_heard_is_left_to_the_join(stand, monkeypatch):
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    hearing(monkeypatch, {})
+
+    def deaf(*args, **kwargs):
+        raise RuntimeError("the card said no")
+
+    monkeypatch.setattr(asr_runtime, "hear", deaf)
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, WORDS))
+    assert drawn["chosen"] == 1
+    assert ("notice", edit_track.DEAF.format("the card said no")) in said
+
+
+def test_a_take_kept_that_is_heard_singing_few_of_its_words_is_said_to(stand, monkeypatch):
+    hearing(monkeypatch, {"was": "x", 40: "la la", 41: "one"})
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, WORDS))
+    assert drawn["chosen"] == 1
+    assert ("warn", edit_track.MUMBLED_SAID.format(1, 3)) in said
+
+
+def test_a_retake_is_not_heard_at_all(stand, monkeypatch):
+    """The same words sung again have nothing new to listen for: the join picks, as it did."""
+    seen = []
+    hearing(monkeypatch, {}, seen)
+    drawn = payload(run(stand, '[{"op": "retake", "bars": [2, 6], "seed": 9}]'))
+    assert seen == [] and drawn["chosen"] == 1
+    assert all(take["heard"] is None for take in drawn["takes"])
+
+
+def test_the_models_that_listened_are_let_go_unless_the_run_keeps_them(stand, monkeypatch):
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    gone = []
+    monkeypatch.setattr(asr_runtime, "unload", lambda: gone.append("speech"))
+    monkeypatch.setattr(asr_runtime, "unload_aligner", lambda: gone.append("aligner"))
+    run(stand, '[{"op": "retake", "bars": [2, 6], "seed": 9}]')
+    assert gone == [], "a run that listened to nothing lets go of nothing another node keeps"
+    hearing(monkeypatch, {"was": "x", 40: "one two four", 41: "one two", 50: "one two four",
+                          51: "one"})
+    lined(monkeypatch)
+    run(stand, WORDS)
+    assert sorted(gone) == ["aligner", "speech"]
+    gone.clear()
+    edit_track.YuE2EditTrack().edit(stand.audio, takes=2,
+                                    edits=WORDS.replace('"seed": 40', '"seed": 50'),
+                                    options={"keep_model_loaded": True})
+    assert gone == []
+
+
+def test_the_window_is_told_when_each_line_is_sung(stand, monkeypatch):
+    """Lines 4, 5 and 8 of the words are the sung ones; tags and blank lines have no time."""
+    lined(monkeypatch)
+    drawn = payload(run(stand))
+    assert drawn["lines"] == [[3, 0.0, 1.4], [4, 1.5, 2.9], [7, 3.0, 3.9]]
+
+
+def test_without_the_aligner_at_hand_the_window_places_lines_by_the_bars(stand):
+    assert payload(run(stand))["lines"] is None
+
+
+def test_every_take_carries_the_lines_of_the_song_it_makes(stand, monkeypatch):
+    """Switching takes swaps the track in the window, and its lines with it."""
+    calls = []
+    lined(monkeypatch, calls)
+    drawn = payload(run(stand, '[{"op": "retake", "bars": [2, 6], "seed": 9}]'))
+    kept = drawn["chosen"]
+    assert drawn["takes"][kept]["lines"] == drawn["lines"]
+    assert all(take["lines"] for take in drawn["takes"])
+    assert drawn["before"]["lines"] == [[3, 0.0, 1.4], [4, 1.5, 2.9], [7, 3.0, 3.9]]
+    assert sorted(fill for _key, _text, fill in calls) == [0.0, 0.1, 0.2], (
+        "the song, the other take and the song as it was, each heard once")
+    assert len({key for key, _text, _fill in calls}) == 3
+
+
+def test_the_song_as_it_was_is_numbered_as_the_words_the_window_shows(stand, monkeypatch):
+    """One line became two, so every line after them moved down by one."""
+    lined(monkeypatch)
+    drawn = payload(run(stand, WORDS.replace("one two four", "one two\\nfour")))
+    assert drawn["lines"] == [[3, 0.0, 0.9], [4, 1.0, 1.4], [5, 1.5, 2.9], [8, 3.0, 3.9]]
+    assert drawn["before"]["lines"] == [[3, 0.0, 1.4], [4, 0.0, 1.4], [5, 1.5, 2.9],
+                                        [8, 3.0, 3.9]]
+
+
+def test_the_lines_of_a_song_wait_beside_it_for_the_next_run(stand, monkeypatch, tmp_path):
+    monkeypatch.setattr(songs, "_store", songs.Store(str(tmp_path)))
+    name = songs.remember(stand.wave, RATE, stand.song)
+    calls = []
+    lined(monkeypatch, calls)
+    run(stand)
+    assert len(calls) == 1 and (tmp_path / (name + edit_track.WORDS_SUFFIX)).is_file()
+    run(stand)
+    assert len(calls) == 1, "read beside the song, not heard again"
+
+
+def test_a_song_whose_lines_cannot_be_found_is_still_drawn(stand, monkeypatch):
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    lined(monkeypatch)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("the card said no")
+
+    monkeypatch.setattr(asr_runtime, "word_times", broken)
+    drawn = payload(run(stand))
+    assert drawn["lines"] is None and drawn["peaks"]
+
+
+def test_a_switched_off_audio_is_not_even_worked_out():
+    """ComfyUI hands a joined input that is not worked out yet as None and leaves an unjoined one
+    out; only a joined one, switched on, is asked for, or the node above sings for nothing."""
+    node = edit_track.YuE2EditTrack()
+    assert edit_track.YuE2EditTrack.INPUT_TYPES()["optional"]["audio"][1]["lazy"] is True
+    assert node.check_lazy_status(audio=None, use_audio=True, takes=2) == ["audio"]
+    assert node.check_lazy_status(audio=None, use_audio=False, takes=2) == []
+    assert node.check_lazy_status(use_audio=True, takes=2) == [], (
+        "asking for an input with no link is an error in ComfyUI")
+    assert node.check_lazy_status(audio={"waveform": 1}, use_audio=True) == []
+
+
+def test_with_its_audio_switched_off_the_node_edits_the_song_chosen_by_key(stand, monkeypatch,
+                                                                           torch):
+    seen = []
+    a_decoder(monkeypatch, torch, seen)
+    answer = edit_track.YuE2EditTrack().edit(None, takes=2, song_key=stand.name, use_audio=False)
+    assert payload(answer)["was"] == stand.name and seen, "the song came back from its latents"
+    other = a_song(lyrics="[Verse]\nsomething else entirely")
+    songs.remember(a_wave(torch, fill=0.3), RATE, other)
+    kept = edit_track.YuE2EditTrack().edit(
+        {"waveform": a_wave(torch, fill=0.3), "sample_rate": RATE}, takes=2,
+        song_key=stand.name, use_audio=False)
+    assert payload(kept)["was"] == stand.name, "a joined song, switched off, is left alone"
+    with pytest.raises(ValueError, match="square beside it ticked"):
+        edit_track.YuE2EditTrack().edit(None, takes=2, song_key="", use_audio=False)
+
+
+def test_every_row_of_the_takes_list_has_the_same_keys(stand):
+    """The window reads a take, a take not sung yet and the song as it was the same way."""
+    drawn = payload(run(stand, '[{"op": "retake", "bars": [2, 6], "seed": 9, "takes": 2, '
+                               '"take": 1}]'))
+    rows = drawn["takes"] + [drawn["before"]]
+    assert [take["sung"] for take in drawn["takes"]] == [False, True]
+    assert all(set(row) == set(rows[0]) for row in rows)
+    assert {"lines", "heard", "said", "mumbled"} <= set(rows[0])

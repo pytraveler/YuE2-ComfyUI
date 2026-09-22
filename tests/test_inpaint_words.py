@@ -275,3 +275,94 @@ def test_a_planned_change_of_words_carries_the_lines_it_swapped():
                        span=(120, 190))
     assert (plain.was, plain.now) == ((), ()), "a retake swapped nothing"
 
+
+@pytest.mark.parametrize("said,found", [
+    ("I can smell the ocean drifting slow", 7),
+    ("Open door. I can smell the ocean drifting slow.", 7),
+    ("I can hear the city waking slow", 4),
+    ("slow drifting ocean the smell can I", 1),
+    ("", 0),
+])
+def test_a_take_is_scored_by_the_words_asked_for_that_are_heard_in_order(said, found):
+    """The stand's own measure: the line before, sung again as the run-up, costs nothing; words
+    out of their order are not words sung; and the old line shares words with the new one."""
+    assert lines.heard("I can smell the ocean drifting slow", said) == (found, 7)
+
+
+def test_what_is_heard_is_compared_without_case_punctuation_or_yo():
+    assert lines.heard("\u0401\u043b\u043a\u0430, \u043d\u0430\u0448\u0430!",
+                       "\u0435\u043b\u043a\u0430 \u041d\u0430\u0448\u0430") == (2, 2)
+    assert lines.heard("don't stop", "Don't stop.") == (2, 2)
+    assert lines.heard("", "anything at all") == (0, 0)
+
+
+def test_the_lines_before_a_change_of_words_keep_their_places_under_the_new_numbers():
+    """The song as it was is drawn beside the takes, while the words panel shows the words after.
+
+    A line the change did not touch is the same line under a new number; one
+    it rewrote is given the stretch of the line it replaced.
+    """
+    spans = [(1, 0.0, 1.0), (2, 1.2, 2.0), (5, 3.0, 4.0), (6, 4.5, 5.5)]
+    same = ops.change_words(SONG, 2, 3, "the night is gold").text
+    assert lines.carried(spans, 2, 3, same, 1) == spans
+    longer = ops.change_words(SONG, 2, 3, "the night" + LF + "is gold").text
+    assert lines.carried(spans, 2, 3, longer, 2) == [
+        (1, 0.0, 1.0), (2, 1.2, 2.0), (3, 1.2, 2.0), (6, 3.0, 4.0), (7, 4.5, 5.5)]
+    shorter = ops.change_words(SONG, 5, 7, "we rise").text
+    assert lines.carried(spans, 5, 7, shorter, 1) == [(1, 0.0, 1.0), (2, 1.2, 2.0), (5, 3.0, 5.5)]
+    two = ops.change_words(SONG, 1, 3, "the road" + LF + "the night").text
+    assert lines.carried(spans, 1, 3, two, 2) == spans, "as many lines on each side: one for one"
+
+
+def test_a_take_heard_singing_its_words_is_kept_over_one_that_joins_better():
+    """The join is the model's opinion of how the old song goes on; the words are the edit."""
+    core = pytest.importorskip("yue2_comfy.inpaint.core")
+
+    def take(join, heard=None):
+        return core.Take(seed=0, waveform=None, song=None, count=1, join=join, joins={},
+                         ended=False, timing={}, heard=heard)
+
+    assert core.best([take(-3.0, (8, 10)), take(-4.0, (10, 10))]) == 1
+    assert core.best([take(-4.0, (9, 10)), take(-3.0, (9, 10))]) == 1, "a tie goes to the join"
+    assert core.best([take(-4.0), take(-3.0)]) == 1, "nothing heard: the join, as before"
+    assert core.best([take(-3.0), take(-4.0, (1, 10))]) == 1, "a take heard beats one not heard"
+    assert core.best([None, take(None, (5, 10)), take(None, (6, 10))]) == 2
+    assert core.best([take(None), take(None)]) == 0
+
+
+def test_short_clips_are_heard_in_the_language_of_the_first(monkeypatch):
+    """The song as it was is heard first, and its language is the one every take is heard in."""
+    import sys
+    import types
+
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    asked, gone = [], []
+
+    def recognise(net, tokenizer, audio, language="", cancelled=None, progress=None):
+        asked.append((audio, language))
+        return {"language": language or "Russian", "text": "heard " + audio}
+
+    fake_model = types.SimpleNamespace(recognise=recognise)
+    monkeypatch.setitem(sys.modules, "yue2_comfy.asr.model", fake_model)
+    monkeypatch.setattr(sys.modules["yue2_comfy.asr"], "model", fake_model, raising=False)
+    net = types.SimpleNamespace(forget_steps=lambda: gone.append(1))
+    monkeypatch.setattr(asr_runtime, "acquire", lambda folder, device, progress=None: (net, "tok"))
+    monkeypatch.setattr(asr_runtime, "stamp", lambda folder: ("weights",))
+    monkeypatch.setattr(asr_runtime, "_HEARD", asr_runtime.collections.OrderedDict())
+    answers = asr_runtime.hear("f", "d", [("was", "a"), ("take 1", "b"), ("take 2", "c")])
+    assert asked == [("a", ""), ("b", "Russian"), ("c", "Russian")]
+    assert [answer["text"] for answer in answers] == ["heard a", "heard b", "heard c"]
+    assert gone == [1], "the captured step is let go once the clips are heard"
+    asked.clear()
+    again = asr_runtime.hear("f", "d", [("was", "a"), ("take 3", "d")])
+    assert asked == [("d", "Russian")], "a clip heard before is not heard again"
+    assert again[0]["text"] == "heard a"
+
+
+def test_hearing_stops_when_the_run_is_cancelled(monkeypatch):
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    monkeypatch.setattr(asr_runtime, "stamp", lambda folder: ("weights",))
+    with pytest.raises(InterruptedError):
+        asr_runtime.hear("f", "d", [("was", "a")], cancelled=lambda: True)

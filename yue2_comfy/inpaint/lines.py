@@ -14,13 +14,17 @@ resume inside the old line and the words ran late, while a region opening at
 the last word of the line before -- which the model then sings again, as a
 singer runs into a line -- came back with every word sung, 9 of 9.
 
+The same stand picked the best of several takes of new words by hearing
+them, and ``heard`` is how it counted: how many of the words asked for a
+recogniser hears sung, in their order.
+
 Standard library and the word rule the aligner counts by, so this runs
 wherever the edit list runs, with no model and no torch.
 """
 
 from __future__ import annotations
 
-from ..asr.align import words_of
+from ..asr.align import normal, words_of
 from . import ops
 
 EARLY = 0.08
@@ -104,3 +108,62 @@ def region(lyrics: str, times, first: int, stop: int):
     if closing is None:
         return start, None
     return start, max(start, closing - EARLY)
+
+
+def carried(spans, first: int, stop: int, lyrics: str, count: int) -> list:
+    """The spans of a song's lines before a change of words, numbered as the lines after it.
+
+    ``spans`` is ``placed`` on the words as they were, and lines ``first`` to
+    ``stop`` of those words became the ``count`` lines of new words that
+    stand at ``first`` in ``lyrics``. A line before the change keeps its
+    number and a line after it moves by however many lines the change added
+    or took away. A new line was never sung in the song as it was, so it is
+    given the place of the line it replaced: one for one when there are as
+    many sung lines on each side, and the whole stretch the old ones ran
+    otherwise.
+    """
+    shift = int(count) - (int(stop) - int(first))
+    fresh = [number for number, _words in sung_lines(lyrics)
+             if first <= number < first + int(count)]
+    old = [span for span in spans if first <= span[0] < stop]
+    found = []
+    for number, start, end in spans:
+        if number < first:
+            found.append((number, start, end))
+        elif number >= stop:
+            found.append((number + shift, start, end))
+    if old and len(old) == len(fresh):
+        found.extend((number, span[1], span[2]) for number, span in zip(fresh, old))
+    elif old:
+        whole = (min(span[1] for span in old), max(span[2] for span in old))
+        found.extend((number, whole[0], whole[1]) for number in fresh)
+    return sorted(found)
+
+
+def _plain(text: str) -> list:
+    return [word for word in (normal(word) for word in words_of(text)) if word]
+
+
+def heard(expected: str, said: str) -> tuple:
+    """``(found, wanted)``: how many of the ``wanted`` words of ``expected`` are in ``said``, in order.
+
+    ``said`` is what a recogniser heard sung and ``expected`` what the singing
+    was asked for. A word counts when it is heard where the order of the
+    words allows it -- the longest run of them in order, with anything
+    between -- which is how the stand scored takes of new words on
+    2026-09-19: a word heard besides them, like the last word of the line
+    before that a change of words sings again, costs nothing, and a word
+    heard out of its place is not one sung. Words are compared as
+    ``asr.align.normal`` leaves them, so case, "yo" and punctuation do not
+    count.
+    """
+    wanted = _plain(expected)
+    got = _plain(said)
+    row = [0] * (len(got) + 1)
+    for word in wanted:
+        before = 0
+        for index, other in enumerate(got, 1):
+            kept = row[index]
+            row[index] = before + 1 if word == other else max(row[index], row[index - 1])
+            before = kept
+    return row[-1], len(wanted)

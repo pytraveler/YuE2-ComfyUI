@@ -4,6 +4,7 @@ import { buttonRow, confirmed, element, frame, installStyle, panelWidget, setWid
     showWidget, sourceOf, widgetNamed } from "./yue2_controls.js";
 import * as list from "./yue2_editlist.js";
 import { openSongs } from "./yue2_songs.js";
+import { openScoreFor } from "./yue2_score.js";
 import * as roll from "./yue2_roll.js";
 import { parseLyrics } from "./yue2_sheet.js";
 
@@ -127,6 +128,7 @@ const WORDS_SHORT = 26;
 const WORDS_TALL = 190;
 
 const NEXT_WORDS = "Sing these words";
+const NEXT_NOTES = "Sing these notes";
 const NEXT_CUT = "Cut it";
 const NEXT_CHOOSE = "Keep this take";
 const NEXT_CATCHUP = "Catch up";
@@ -168,7 +170,7 @@ function typing(target) {
 }
 
 function singsAgain(op) {
-    return op === "retake" || op === "words";
+    return op === "retake" || op === "words" || op === "notes";
 }
 
 const WORDS_WHERE =
@@ -275,6 +277,26 @@ const WORDS_NO_SCORE =
 const RENDER_FIRST_CUT =
     "Press Render first: a cut not yet rendered moves every bar after it, so the track drawn "
     + "here is no longer where this edit would land.";
+
+const RENDER_FIRST_NOTES =
+    "Press Render first: the notes open on the song the track shows, and the list holds a cut or "
+    + "a change of notes the track has not sung yet.";
+
+const NOTES_WHY =
+    "Change the song's notes in the piano roll. Only the bars whose notes change are sung again, "
+    + "under the new score; bars changed far apart become an edit each. The roll opens at the "
+    + "selection, and changes that stay inside it sing the whole selection again.";
+
+const NOTES_SUNG =
+    "Sings the new notes there. The model follows most changed notes, not every one, so listen "
+    + "to the takes.";
+
+const NOTES_APART =
+    "Each place is sung by itself, one after the other, and keeps its best take; the track then "
+    + "offers the takes of the last one to compare.";
+
+const NO_NOTES_HERE =
+    "This song was sung with 'cot' set to 'off', so it has no score and no notes to change.";
 
 const RENDER_FIRST_SECONDS =
     "Press Render first: an edit not yet rendered moves the seconds after it, and this "
@@ -554,7 +576,8 @@ function heardFacts(take) {
 
 function wasFacts(was, kind) {
     const parts = ["the " + roll.clock(was.seconds || 0)
-        + (kind === "words" ? " the new words replaced" : " the retake replaced")];
+        + (kind === "words" ? " the new words replaced"
+            : kind === "notes" ? " the new notes replaced" : " the retake replaced")];
     if (typeof was.total === "number") parts.push("song " + roll.clock(was.total));
     parts.push("nothing sung for it");
     return parts.join(" \u00b7 ");
@@ -774,6 +797,10 @@ class TrackWindow {
             + "score and the words of a section the cut empties go with it.";
         this.cutButton.addEventListener("click", () => this.addEdit("cut"));
         chosen.appendChild(this.cutButton);
+        this.notesButton = element("button", "", "Notes\u2026");
+        this.notesButton.title = NOTES_WHY;
+        this.notesButton.addEventListener("click", () => this.openNotes());
+        chosen.appendChild(this.notesButton);
         this.undoButton = element("button", "", "Undo last edit");
         this.undoButton.title = "Take the last edit off the list. What it was made on is still in "
             + "memory, so this costs nothing.";
@@ -964,6 +991,7 @@ class TrackWindow {
         if (at) {
             const made = this.madeSpan();
             return (this.payload.kind === "words" ? "The new words are in the song, at "
+                : this.payload.kind === "notes" ? "The new notes are in the song, at "
                 : "The retake is in the song, at ") + list.spanText(made[0], made[1])
                 + ". Listen to the takes, or keep another one.";
         }
@@ -1166,6 +1194,8 @@ class TrackWindow {
         this.retakeButton.disabled = busy || !drawn || Boolean(why);
         this.cutButton.disabled = busy || !drawn || Boolean(why)
             || Boolean(list.whyNotCut(this.selection, this.hasScore()));
+        this.notesButton.disabled = busy || !drawn || !this.payload?.score;
+        this.notesButton.title = drawn && !this.payload?.score ? NO_NOTES_HERE : NOTES_WHY;
         this.undoButton.disabled = busy || !edits.length;
         this.songsButton.disabled = busy;
         this.renderButton.disabled = busy;
@@ -1205,6 +1235,24 @@ class TrackWindow {
             && list.sameEdits(drawn.slice(0, -1), edits.slice(0, -1));
     }
 
+    pendingNotes(drawn, edits) {
+        if (edits.length <= drawn.length + 1) return null;
+        if (!list.sameEdits(drawn, edits.slice(0, drawn.length))) return null;
+        const pending = edits.slice(drawn.length);
+        const score = pending[0].score;
+        return pending.every((edit) => edit.op === "notes" && edit.bars && edit.score === score)
+            ? pending : null;
+    }
+
+    aboutNotes(pending) {
+        const places = pending.map((edit) => list.barsText(edit.bars[0], edit.bars[1]));
+        const head = "New notes in " + places.join(" and ") + ": " + pending.length
+            + " edits, one a place";
+        const facts = pending.map((edit) => this.spanFact(edit)).filter(Boolean);
+        facts.push(NOTES_SUNG, NOTES_APART, this.takeFact(pending[pending.length - 1]), SUNG_ONCE);
+        return { head: head, facts: facts, label: NEXT_NOTES, why: RUN_WHY };
+    }
+
     aboutEdit(edit, at) {
         const head = list.describeEdit(edit, at).slice(3);
         if (edit.op === "cut") {
@@ -1219,9 +1267,11 @@ class TrackWindow {
             return { head: head, facts: said, label: NEXT_WORDS, why: RUN_WHY };
         }
         const facts = [this.spanFact(edit)];
+        if (edit.op === "notes") facts.push(NOTES_SUNG);
         facts.push(this.takeFact(edit));
         facts.push(SUNG_ONCE);
-        return { head: head, facts: facts.filter(Boolean), label: NEXT_RETAKE, why: RUN_WHY };
+        return { head: head, facts: facts.filter(Boolean),
+                 label: edit.op === "notes" ? NEXT_NOTES : NEXT_RETAKE, why: RUN_WHY };
     }
 
     takeFact(edit) {
@@ -1328,6 +1378,8 @@ class TrackWindow {
                 : null;
         }
         if (!list.sameEdits(drawn, edits)) {
+            const pending = this.pendingNotes(drawn, edits);
+            if (pending) return this.aboutNotes(pending);
             if (last && this.aheadOfTheTrack(drawn, edits)) {
                 return this.aboutEdit(last, edits.length - 1);
             }
@@ -1379,7 +1431,7 @@ class TrackWindow {
         const words = this.payload.kind === "words";
         const head = element("div", "yue2-t-takehead");
         head.appendChild(element("span", "", (words ? "Takes of the new words at "
-            : "Takes of the retake at ")
+            : this.payload.kind === "notes" ? "Takes of the new notes at " : "Takes of the retake at ")
             + (this.payload.at ? list.spanText(this.payload.at[0], this.payload.at[1]) : "")
             + " -- the one chosen is the track above, so playing compares them in place."));
         this.takesRow.appendChild(head);
@@ -2499,6 +2551,60 @@ class TrackWindow {
         this.selection = null;
         this.refresh();
         this.setStatus(list.describeEdit(made, edits.length).slice(3) + " is on the list. "
+            + BY_ITSELF);
+    }
+
+    whyNotNotes() {
+        if (!this.payload) return NOT_DRAWN;
+        if (!this.payload.score) return NO_NOTES_HERE;
+        const drawn = list.readEdits(this.payload.edits || "", nodeTakes(this.node));
+        const mine = nodeList(this.node);
+        if (drawn.error) return "";
+        if (mine.error) return mine.error;
+        const spelled = (edit) => list.writeEdits([{ ...edit, take: null }]);
+        let shared = 0;
+        while (shared < drawn.edits.length && shared < mine.edits.length
+            && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
+        const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
+        return apart.some((edit) => edit.op === "cut" || edit.op === "notes")
+            ? RENDER_FIRST_NOTES : "";
+    }
+
+    openNotes() {
+        const why = this.whyNotNotes();
+        if (why) {
+            this.setStatus(why, true);
+            return;
+        }
+        const selection = this.selection;
+        const focus = selection && selection.first !== null && selection.first !== undefined
+            ? { first: selection.first, stop: selection.stop } : null;
+        this.notesEditor = openScoreFor(this.payload.score, {
+            title: this.node.title || "YuE2 Edit Track",
+            focus,
+            apply: (score, changed) => this.notesChanged(score, changed, selection),
+        });
+    }
+
+    notesChanged(score, changed, selection) {
+        const { edits, error } = nodeList(this.node);
+        if (error) {
+            this.setStatus(error, true);
+            return;
+        }
+        const seeds = [this.knobs.seed];
+        for (let index = 1; index < Math.max(1, changed.length); index += 1) {
+            seeds.push(list.newSeed());
+        }
+        const made = list.notesFor(score, changed, nodeTakes(this.node), seeds, selection, {
+            vary: this.knobs.vary, guide: this.knobs.guide,
+        });
+        writeList(this.node, [...edits, ...made]);
+        paintSummary(this.node);
+        this.selection = null;
+        this.refresh();
+        this.setStatus(made.map((edit, index) => list.describeEdit(edit, edits.length + index)
+            .slice(3)).join("; ") + (made.length === 1 ? " is" : " are") + " on the list. "
             + BY_ITSELF);
     }
 

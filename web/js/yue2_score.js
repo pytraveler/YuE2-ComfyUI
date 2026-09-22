@@ -6,6 +6,7 @@ import {
 import * as roll from "./yue2_roll.js";
 import * as sounds from "./yue2_sounds.js";
 import { PITCHES } from "./yue2_piano.js";
+import { stretchesOf } from "./yue2_editlist.js";
 
 const RENDER = "YuE2RenderPlan";
 const GENERATE = "YuE2GenerateSong";
@@ -223,6 +224,33 @@ const SECTION_NOTICE =
 const DOUBLE_NOTICE =
     " A double click starts and stops the sound, as Space does: on the bar strip it plays from " +
     "the bar you clicked, and on the roll it leaves no note behind.";
+
+const TRACK_SUB =
+    "The notes the song is sung to. Change them here: only the bars whose notes change are sung "
+    + "again, under the new score, and the rest of the song stays as it was sung. Nothing is "
+    + "sung until the track window's blue button.";
+
+const TRACK_NOTE =
+    "YuE2 follows a changed note most of the time, not every time: measured on three songs, the "
+    + "new note was sung on 49 of 50 changed notes of a pop verse, 61 of 81 in a rap and 17 of 24 "
+    + "in a ballad, and none of them on the old score. Each change is sung as takes to choose "
+    + "from, and another seed is one more try.";
+
+const TRACK_APPLY = "Sing the changed bars";
+
+const TRACK_APPLY_WHY =
+    "Puts the change on the track's list: the bars whose notes changed, as one edit, or one edit "
+    + "a place when they lie far apart. Render sings them.";
+
+const TRACK_BACK = "Back to the song's notes";
+
+const TRACK_BACK_WHY = "Throw away the changes made here and show the notes the song has.";
+
+const TRACK_FIXED =
+    "The tempo, the number of bars and the sections belong to the whole song, which is kept as it "
+    + "was sung, so they stay as they are here. Only notes and chords change.";
+
+const TRACK_SAME = "No note has changed, so there is nothing to sing again.";
 
 const FINER = "finer";
 const FINER_LABEL = "Thirty-second notes (rewrites the score)";
@@ -700,16 +728,17 @@ function checkControl(label, checked, title) {
 }
 
 class ScoreEditor {
-    constructor(node) {
-        this.node = node;
-        const source = scoreSource(node);
+    constructor(node, track = null) {
+        this.track = track;
+        this.node = node || { title: track?.title || "", properties: {}, widgets: [] };
+        const source = track ? null : scoreSource(this.node);
         this.origin = source?.node ?? null;
         this.own = Boolean(source?.own);
-        this.source = sourceWords(node);
-        this.back = backLabel(node);
-        this.planScore = this.origin?.__yue2Score || null;
+        this.source = track ? null : sourceWords(this.node);
+        this.back = track ? TRACK_BACK : backLabel(this.node);
+        this.planScore = track ? String(track.text || "").trim() : this.origin?.__yue2Score || null;
         this.planWords = this.origin?.__yue2Words || null;
-        this.limit = limitFor(node);
+        this.limit = track ? null : limitFor(this.node);
         this.baseWords = null;
         this.player = new Player();
         this.sounds = rememberedSounds();
@@ -762,10 +791,11 @@ class ScoreEditor {
         this.close = close;
         handle.onEscape = () => this.escape();
 
-        panel.appendChild(element("h3", "", "Score \u2014 "
+        panel.appendChild(element("h3", "", (this.track ? "Notes \u2014 " : "Score \u2014 ")
             + (this.node.title || (this.source ? this.source.title : "YuE2 Render Plan"))));
-        panel.appendChild(element("p", "yue2-s-sub", (this.source ? "The notes this node sends on."
-            : "The notes this node sings.") + " Nothing is written to the node until Apply."));
+        panel.appendChild(element("p", "yue2-s-sub", this.track ? TRACK_SUB
+            : (this.source ? "The notes this node sends on." : "The notes this node sings.")
+                + " Nothing is written to the node until Apply."));
 
         const tabs = element("div", "yue2-s-bar");
         this.tabButtons = {};
@@ -875,15 +905,17 @@ class ScoreEditor {
 
         this.status = element("div", "yue2-s-status");
         panel.appendChild(this.status);
-        panel.appendChild(element("p", "yue2-s-hint",
-            this.source ? this.source.note : HONEST_NOTE + (this.own ? RETRY_HERE : RETRY_ON_PLAN)));
+        panel.appendChild(element("p", "yue2-s-hint", this.track ? TRACK_NOTE
+            : this.source ? this.source.note : HONEST_NOTE + (this.own ? RETRY_HERE : RETRY_ON_PLAN)));
 
         const foot = element("div", "yue2-s-foot");
         this.writeButton = element("button", "", "Write the score");
         this.writeButton.title = "Run only the plan node feeding this one: the score is written, nothing is sung.";
         this.writeButton.addEventListener("click", () => this.writeScore());
         this.resetButton = element("button", "", this.back);
-        this.resetButton.title = this.source
+        this.resetButton.title = this.track
+            ? TRACK_BACK_WHY
+            : this.source
             ? this.source.backTitle
             : this.own
             ? "Throw away the edits and load the score this node wrote on its last run."
@@ -891,7 +923,8 @@ class ScoreEditor {
         this.resetButton.addEventListener("click", () => this.reset());
         const cancel = element("button", "", "Cancel");
         cancel.addEventListener("click", () => this.escape());
-        this.applyButton = element("button", "yue2-s-go", "Apply");
+        this.applyButton = element("button", "yue2-s-go", this.track ? TRACK_APPLY : "Apply");
+        if (this.track) this.applyButton.title = TRACK_APPLY_WHY;
         this.applyButton.addEventListener("click", () => this.apply());
         this.saveButton = element("button", "", "Save as MIDI\u2026");
         this.saveButton.title = "Download the score as it stands in this window, edits included, as a MIDI file: "
@@ -939,6 +972,13 @@ class ScoreEditor {
     }
 
     open() {
+        if (this.track) {
+            this.fromBox = false;
+            this.opened = this.planScore;
+            this.baseWords = null;
+            this.load(this.opened);
+            return;
+        }
         const box = roll.splitMark(widgetNamed(this.node, SCORE)?.value ?? "");
         const base = this.node.properties?.yue2_score_base;
         this.fromBox = Boolean(box.score);
@@ -1065,7 +1105,7 @@ class ScoreEditor {
 
     tempoControl() {
         const holder = element("span", "yue2-s-tempo");
-        holder.title = TEMPO_TOOLTIP;
+        holder.title = this.track ? TRACK_FIXED : TEMPO_TOOLTIP;
         this.tempoSlider = document.createElement("input");
         this.tempoSlider.type = "range";
         this.tempoSlider.step = "1";
@@ -1108,8 +1148,8 @@ class ScoreEditor {
 
     showTempo() {
         const bpm = this.model && this.model.bpm;
-        this.tempoSlider.disabled = !bpm;
-        this.tempoBox.disabled = !bpm;
+        this.tempoSlider.disabled = !bpm || Boolean(this.track);
+        this.tempoBox.disabled = !bpm || Boolean(this.track);
         if (!bpm) {
             this.shownTempo = null;
             this.tempoBox.value = "";
@@ -1155,6 +1195,14 @@ class ScoreEditor {
                 + ": the notes keep their lengths, so the whole song is sung "
                 + (this.model.bpm > this.sheetTempo ? "faster" : "slower") + ". "
             : "";
+        if (this.track) {
+            if (!this.changed.length) return "No changes. These are the notes the song is sung to.";
+            const places = stretchesOf(this.changed);
+            return (this.changed.length === 1 ? "Bar " : "Bars ") + barList(this.changed)
+                + " will be sung again under the new notes"
+                + (places.length > 1 ? ", as " + places.length + " edits, one a place" : "")
+                + "; the rest of the song stays as it was sung.";
+        }
         if (!this.changed.length) {
             return retimed + (retimed ? "Nothing else changed." : "No changes. This is the score as it came in.")
                 + (this.cutTick() === null ? ""
@@ -1243,7 +1291,7 @@ class ScoreEditor {
         const preferred = choices.find((choice) => choice.name === prefer) || choices[0];
         this.snap = preferred ? preferred.ticks : 1;
         const options = choices.map((choice) => [String(choice.ticks), choice.name]);
-        if (sheet.unit < roll.FINEST) options.push([FINER, FINER_LABEL]);
+        if (sheet.unit < roll.FINEST && !this.track) options.push([FINER, FINER_LABEL]);
         this.snapHolder.replaceChildren(selectControl(options, String(this.snap),
             "The grid notes snap to while drawing, moving and stretching.", (value) => {
                 if (value === FINER) {
@@ -1256,6 +1304,10 @@ class ScoreEditor {
     }
 
     fillBars() {
+        if (this.track) {
+            this.barsHolder.replaceChildren();
+            return;
+        }
         const options = [[LONGER, LONGER_LABEL]].concat(
             ADD_BARS.map((count) => [String(count), "+ " + count + (count === 1 ? " bar" : " bars")]));
         this.barsHolder.replaceChildren(selectControl(options, LONGER,
@@ -1336,6 +1388,18 @@ class ScoreEditor {
         const ticks = last ? last.start + last.length : this.sheet.total;
         this.pxPerTick = Math.max(0.05, ((this.width || 1100) - KEYS_W) / Math.max(1, ticks));
         this.tick0 = 0;
+        const focus = this.track?.focus;
+        const count = this.sheet.bars.length;
+        if (focus && Number.isInteger(focus.first) && focus.first < count) {
+            const first = Math.max(0, focus.first - 1);
+            const stop = Math.min(count, Math.max(focus.stop + 1, first + 8));
+            const end = this.sheet.bars[stop - 1];
+            const from = this.sheet.bars[first].start;
+            this.pxPerTick = Math.max(0.05, ((this.width || 1100) - KEYS_W)
+                / Math.max(1, end.start + end.length - from));
+            this.tick0 = from;
+            this.playhead = this.sheet.bars[focus.first].start;
+        }
         this.clampView();
     }
 
@@ -1875,6 +1939,10 @@ class ScoreEditor {
             return;
         }
         if (event.button !== 0) return;
+        if (this.track) {
+            this.setStatus(TRACK_FIXED);
+            return;
+        }
         const edge = this.sectionEdgeAt(px);
         if (edge) {
             this.canvas.setPointerCapture(event.pointerId);
@@ -2491,6 +2559,13 @@ class ScoreEditor {
     }
 
     async reset() {
+        if (this.track) {
+            if (this.edited() && !(await confirmed("The notes in this window have been changed.",
+                { title: "Put back the notes the song has?", ok: "Put them back",
+                  cancel: "Keep the changes", danger: true }))) return;
+            this.load(this.planScore);
+            return;
+        }
         if (this.planScore) {
             if (this.edited() && !(await confirmed(
                 "The notes in this window have been edited.",
@@ -2569,6 +2644,21 @@ class ScoreEditor {
         if (this.readTimer) await this.readTyped();
         if (this.writePending) await this.write();
         if (this.isClosed) return;
+        if (this.track) {
+            const typed = roll.splitMark(this.textBox.value).score;
+            const text = (this.current || "").trim();
+            if (this.typedProblem && typed !== text) {
+                this.setStatus(this.typedProblem, true);
+                return;
+            }
+            if (!text || text === this.planScore) {
+                this.setStatus(TRACK_SAME, true);
+                return;
+            }
+            this.track.apply(text, this.base === this.planScore ? [...this.changed] : []);
+            this.close();
+            return;
+        }
         const typed = roll.splitMark(this.textBox.value).score;
         let text = (this.current || "").trim();
         if (this.typedProblem && typed !== text) {
@@ -2603,6 +2693,16 @@ function openScoreEditor(node) {
         console.error("[YuE2] the score editor failed to open:", error);
         warned("The score editor could not open: " + (error?.message || error)
             + "\n\nThe score_abc box is still on the node's properties panel.");
+    }
+}
+
+export function openScoreFor(text, track) {
+    try {
+        return new ScoreEditor(null, { ...track, text });
+    } catch (error) {
+        console.error("[YuE2] the score editor failed to open:", error);
+        warned("The score editor could not open: " + (error?.message || error));
+        return null;
     }
 }
 

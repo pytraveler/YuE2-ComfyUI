@@ -778,3 +778,98 @@ def test_random_cuts_leave_every_other_bar_as_it_was_written(name, text):
                 kept[start - 1] = kept[start - 1].rstrip()[:-1]
             assert after[part] == kept, (part, start, stop)
     assert done >= 4
+
+
+def edited(text, part, change):
+    """*text* with the notes of *part* passed through *change*, written the way the editor writes them."""
+    sheet = notation.read(text)
+    return notation.write(text, with_notes(sheet, part, change(notes(sheet, part))))["abc"]
+
+
+def moved(where):
+    """A change of notes: the note starting at each tick of *where* sung at the pitch it maps to."""
+    return lambda items: [(s, l, where.get(s, p)) for s, l, p in items]
+
+
+def test_the_bars_a_change_of_notes_sings_again_are_the_bars_whose_music_changed():
+    assert notation.changed(CUTTABLE, CUTTABLE) == []
+    assert notation.changed(CUTTABLE, edited(CUTTABLE, "Vocal", moved({72: 67}))) == [2]
+    assert notation.changed(CUTTABLE, edited(CUTTABLE, "Ins", moved({224: 55}))) == [7]
+    sheet = notation.read(CUTTABLE)
+    sheet["chords"] = [{"start": 160, "name": "Am"}]
+    assert notation.changed(CUTTABLE, notation.write(CUTTABLE, sheet)["abc"]) == [5]
+
+
+def test_a_note_tied_across_a_bar_line_takes_both_bars_along():
+    assert notation.changed(CUTTABLE, edited(CUTTABLE, "Vocal", moved({120: 74}))) == [3, 4]
+
+
+@pytest.mark.parametrize("after,message", [
+    (CUTTABLE.replace("Q:1/4=90", "Q:1/4=100"), "another tempo"),
+    (notation.without(CUTTABLE, 7, 8), "7 bars where the song has 8"),
+    (CUTTABLE.replace("% outro", "% ending"), "names its sections otherwise"),
+    (CUTTABLE.replace("K:C", "K:G"), "changes the key of bar 1"),
+])
+def test_a_new_score_that_moves_more_than_its_notes_is_refused(after, message):
+    with pytest.raises(ValueError, match=message):
+        notation.changed(CUTTABLE, after)
+    with pytest.raises(ValueError, match=message):
+        notation.taken(CUTTABLE, after, 0, 1)
+
+
+def test_one_stretch_of_a_change_of_notes_is_laid_on_the_song_by_itself():
+    both = edited(CUTTABLE, "Vocal", moved({72: 67, 176: 69}))
+    assert notation.changed(CUTTABLE, both) == [2, 5]
+    first = notation.taken(CUTTABLE, both, 2, 3)
+    assert first["bars"] == [2, 3]
+    assert notation.changed(CUTTABLE, first["abc"]) == [2]
+    assert notation.changed(first["abc"], both) == [5]
+    second = notation.taken(first["abc"], both, 5, 6)
+    assert second["abc"].strip() == both.strip() and second["abc"].endswith("|\n")
+
+
+def test_a_stretch_grows_until_no_note_is_held_across_its_edges():
+    tied = edited(CUTTABLE, "Vocal", moved({120: 74}))
+    assert notation.taken(CUTTABLE, tied, 4, 5)["bars"] == [3, 5]
+    assert notation.taken(CUTTABLE, tied, 3, 4)["bars"] == [3, 5]
+    assert notation.taken(CUTTABLE, CUTTABLE, 6, 7) == {"abc": CUTTABLE, "bars": [5, 7]}
+
+
+def test_a_stretch_with_no_change_in_it_is_the_song_as_it_was():
+    both = edited(CUTTABLE, "Vocal", moved({72: 67, 176: 69}))
+    assert notation.taken(CUTTABLE, both, 0, 2) == {"abc": CUTTABLE, "bars": [0, 2]}
+    wrapped = notation.taken("\n" + CUTTABLE + "\n", both, 2, 3)["abc"]
+    assert wrapped.startswith("\nX:1") and wrapped.endswith("|\n\n")
+    with pytest.raises(ValueError, match="not bars"):
+        notation.taken(CUTTABLE, both, 3, 9)
+
+
+@pytest.mark.parametrize("name,text", SCORES, ids=[name for name, _ in SCORES])
+def test_changes_far_apart_sung_one_stretch_at_a_time_end_as_the_whole_change(name, text):
+    """The bars ``changed`` names are the bars ``write`` rewrote, and laying each stretch in turn ends where the whole change does."""
+    rng = random.Random(name)
+    sheet = notation.read(text)
+    sung = sorted({number for number, bar in enumerate(sheet["bars"])
+                   if bar["editable"] and any(bar["start"] <= n["start"] < bar["start"] + bar["length"]
+                                              for n in sheet["notes"]["Vocal"])})
+    if len(sung) < 2:
+        pytest.skip("fewer than two sung bars")
+    chosen = sorted(rng.sample(sung, 2))
+    spans = [(sheet["bars"][n]["start"], sheet["bars"][n]["start"] + sheet["bars"][n]["length"])
+             for n in chosen]
+    items = [(s, l, min(127, p + 2) if any(a <= s < b for a, b in spans) else p)
+             for s, l, p in notes(sheet, "Vocal")]
+    try:
+        written = notation.write(text, with_notes(sheet, "Vocal", items))
+    except ValueError as error:
+        assert "changes key halfway" in str(error)
+        return
+    after = written["abc"]
+    assert notation.changed(text, after) == written["bars"]
+    current = text
+    for number in chosen:
+        laid = notation.taken(current, after, number, number + 1)
+        assert laid["bars"][0] <= number < laid["bars"][1]
+        current = laid["abc"]
+    assert notation.changed(current, after) == []
+    assert current.endswith(text[len(text.rstrip()):])

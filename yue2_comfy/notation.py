@@ -36,6 +36,11 @@ the notes keep their lengths in bars, and the song is sung faster or slower. A
 bar that changes key halfway through is left to the ABC text. The one exception
 to the grid is ``without``, which takes whole bars out of both parts for a cut
 of the song, and writes again only the lines that lose bars.
+
+``changed`` and ``taken`` compare two scores of one song for the track editor,
+which sings again only the bars whose notes changed: the first says which bars
+those are, and the second lays one stretch of a change on the song by itself,
+so that bars changed far apart can be sung as separate edits.
 """
 
 from __future__ import annotations
@@ -1080,3 +1085,104 @@ def without(text: str, start: int, stop: int) -> str:
     leading = raw[:len(raw) - len(raw.lstrip())]
     trailing = raw[len(raw.rstrip()):]
     return leading + result.strip() + trailing
+
+
+NOT_THE_BARS = (
+    "The new score {what}. Only its notes and chords can change while the rest of the song is "
+    "kept as it was sung: sing the song again for that, or change the notes alone."
+)
+
+SAME_NOTES = "The new score sings the same notes as the song in bars {first} to {stop}."
+
+
+def _same_bars(old, new) -> None:
+    """Two sheets from ``read`` that may differ in their notes and chords only, or a ValueError saying what else moved."""
+    if new["unit"] != old["unit"]:
+        raise ValueError(NOT_THE_BARS.format(what="is written on another note length"))
+    if new["bpm"] != old["bpm"]:
+        raise ValueError(NOT_THE_BARS.format(what="has another tempo"))
+    if len(new["bars"]) != len(old["bars"]):
+        raise ValueError(NOT_THE_BARS.format(what="has {} bars where the song has {}".format(
+            len(new["bars"]), len(old["bars"]))))
+    for number, (was, now) in enumerate(zip(old["bars"], new["bars"]), 1):
+        if (was["start"], was["length"], was["meter"]) != (now["start"], now["length"], now["meter"]):
+            raise ValueError(NOT_THE_BARS.format(what="changes the length of bar {}".format(number)))
+        if was["key"] != now["key"]:
+            raise ValueError(NOT_THE_BARS.format(what="changes the key of bar {}".format(number)))
+    if new["sections"] != old["sections"]:
+        raise ValueError(NOT_THE_BARS.format(what="names its sections otherwise"))
+
+
+def _changed_bars(old, new) -> set:
+    """The bars whose notes, in either part, or chords are not what they were, spread along ties as ``write`` spreads them."""
+    grid = [(bar["start"], bar["length"]) for bar in old["bars"]]
+    found = set()
+    for name in abc_tools.VOICES:
+        was = sorted((n["start"], n["length"], n["pitch"]) for n in old["notes"][name])
+        now = sorted((n["start"], n["length"], n["pitch"]) for n in new["notes"][name])
+        chords = ([(c["start"], c["name"]) for c in old["chords"]],
+                  [(c["start"], c["name"]) for c in new["chords"]]) if name == "Vocal" else ([], [])
+        found |= _dirty(grid, was, now, chords[0], chords[1])
+    return found
+
+
+def changed(before: str, after: str) -> list:
+    """The bars, counted from 0, whose music *after* changes in *before*: what singing the new notes sings again.
+
+    Both are scores of one song, and they must keep the same bars -- as many,
+    each as long, in the same meter and key, under the same tempo, note
+    length and section names -- because only the music inside the bars can
+    change while the sound around them stays as it was sung. A bar is changed
+    when a note sounding in it, in either part, or a chord starting in it is
+    not what it was, and a note tied into a neighbouring bar takes that bar
+    along, the way ``write`` spreads an edit. A ValueError says what else
+    moved.
+    """
+    old, new = read(before), read(after)
+    _same_bars(old, new)
+    return sorted(_changed_bars(old, new))
+
+
+def taken(before: str, after: str, first: int, stop: int) -> dict:
+    """``{"abc": text, "bars": [first, stop]}``: *before* with the music *after* has in bars *first* to *stop*.
+
+    This is one change of notes out of several made at once: *after* may
+    change bars far apart, and each stretch of them can be sung on its own,
+    each on the song the one before left. Everything outside the stretch
+    stays as *before* has it. A note held across either edge of the stretch,
+    in either score, takes the bar on the other side in too, so ``bars`` is
+    the stretch as it grew until nothing crossed its edges. Only the bars
+    whose music changed are written again (see ``write``), so a stretch
+    with no change in it comes back as *before* itself, character for
+    character, and so does what surrounds the score: the prompt a song was
+    sung under is read from that text, a final newline included.
+    """
+    old, new = read(before), read(after)
+    _same_bars(old, new)
+    count = len(old["bars"])
+    if not (_whole(first) and _whole(stop) and 0 <= first < stop <= count):
+        raise ValueError("Bars {} to {} are not bars of this score, which has {}.".format(
+            first + 1 if _whole(first) else first, stop, count))
+    starts = [bar["start"] for bar in old["bars"]] + [old["total"]]
+    held = [(n["start"], n["start"] + n["length"]) for sheet in (old, new)
+            for name in abc_tools.VOICES for n in sheet["notes"][name]]
+    while True:
+        low, high = starts[first], starts[stop]
+        earlier = first > 0 and any(begun < low < ended for begun, ended in held)
+        later = stop < count and any(begun < high < ended for begun, ended in held)
+        if not earlier and not later:
+            break
+        first, stop = first - earlier, stop + later
+
+    def inside(item):
+        return low <= item["start"] < high
+
+    sheet = {"notes": {name: [n for n in old["notes"][name] if not inside(n)]
+                       + [n for n in new["notes"][name] if inside(n)]
+                       for name in abc_tools.VOICES},
+             "chords": [c for c in old["chords"] if not inside(c)]
+             + [c for c in new["chords"] if inside(c)]}
+    raw = str(before or "")
+    leading = raw[:len(raw) - len(raw.lstrip())]
+    trailing = raw[len(raw.rstrip()):]
+    return {"abc": leading + write(before, sheet)["abc"].strip() + trailing, "bars": [first, stop]}

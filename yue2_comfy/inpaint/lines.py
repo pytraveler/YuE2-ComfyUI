@@ -17,7 +17,8 @@ singer runs into a line -- came back with every word sung, 9 of 9.
 The same stand picked the best of several takes of new words by hearing
 them, and ``heard`` is how it counted: how many of the words asked for a
 recogniser hears sung, in their order. A retake is heard the same way against
-the words the song sang there, ``within``.
+the words the song sang there, ``within``, and the letters those words are
+written in tell the recogniser which language to hear, ``language_of``.
 
 Standard library and the word rule the aligner counts by, so this runs
 wherever the edit list runs, with no model and no torch.
@@ -179,3 +180,53 @@ def heard(expected: str, said: str) -> tuple:
             row[index] = before + 1 if word == other else max(row[index], row[index - 1])
             before = kept
     return row[-1], len(wanted)
+
+
+SCRIPTS = (
+    ("Russian", ((0x0400, 0x052F),)),
+    ("Greek", ((0x0370, 0x03FF),)),
+    ("Korean", ((0x1100, 0x11FF), (0x3130, 0x318F), (0xAC00, 0xD7AF))),
+    ("Japanese", ((0x3040, 0x30FF),)),
+    ("Chinese", ((0x4E00, 0x9FFF),)),
+    ("Thai", ((0x0E00, 0x0E7F),)),
+    ("Hindi", ((0x0900, 0x097F),)),
+)
+"""The letters that name one language among those Qwen3-ASR hears, by where they sit in Unicode.
+
+Latin letters are left out, since a dozen of its languages share them, and so
+is the Arabic script, which Persian writes too. Cyrillic names Russian, the
+Cyrillic language it hears best; Han characters with kana among them are
+Japanese, and without, Chinese."""
+
+
+def language_of(text: str) -> str:
+    """The language to tell Qwen3-ASR it hears when the singing is meant to be ``text``; "" to let it name one.
+
+    Measured on 2026-09-23 on the Russian ballad of the inpainting stand: on
+    a few seconds of singing, the model left to name the language named
+    English on seven clips of seven, then wrote four of them as an English
+    translation -- "Snow falls on an empty perron" for "Sneg lozhitsya na
+    pustoy perron" -- which heard none of the words asked for, while told
+    Russian it wrote all seven in Russian. The words asked for are known,
+    so the letters they are written in say the language; the most letters
+    of one script decide, and Latin letters decide nothing.
+    """
+    counts = {}
+    latin = 0
+    for char in str(text or ""):
+        if not char.isalpha():
+            continue
+        point = ord(char)
+        if point < 0x0250:
+            latin += 1
+            continue
+        for name, ranges in SCRIPTS:
+            if any(low <= point <= high for low, high in ranges):
+                counts[name] = counts.get(name, 0) + 1
+                break
+    if counts.get("Japanese"):
+        counts["Japanese"] += counts.pop("Chinese", 0)
+    if not counts:
+        return ""
+    name, most = max(counts.items(), key=lambda item: item[1])
+    return name if most > latin else ""

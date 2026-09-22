@@ -6,9 +6,10 @@ the ones before it left. A retake sings a stretch again, as many takes as
 asked for, and keeps the one whose join the model likes best unless the window
 says otherwise -- or, with the speech models already on the machine, the one
 heard singing the most of the words there; a change of words does the same
-with other words, and keeps the take heard singing the most of them; a cut
-takes a stretch out and draws
-the two sides together. The sound that comes out is the song with those edits
+with other words, and keeps the take heard singing the most of them; a change
+of notes sings again, under the score the score editor left, only the bars
+whose notes it changed, and keeps a take as a retake does; a cut takes a
+stretch out and draws the two sides together. The sound that comes out is the song with those edits
 in it, and it is remembered like any other, so it can be saved, loaded and
 edited again. When the word aligner is on the machine, the node also finds
 when each line of the words is sung, so the window lights the words where the
@@ -216,9 +217,10 @@ USE_AUDIO_TOOLTIP = (
 )
 
 TAKES_TOOLTIP = (
-    "How many times a retake or a change of words sings the same stretch, so there is something "
-    "to choose between. New words keep the take heard singing the most of them, the join "
-    "deciding a tie. A retake does the same with the words the song sings there when Qwen3-ASR "
+    "How many times a retake, a change of words or a change of notes sings the same stretch, so "
+    "there is something to choose between. New words keep the take heard singing the most of "
+    "them, the join deciding a tie. A retake or a change of notes does the same with the words "
+    "the song sings there when Qwen3-ASR "
     "and the word aligner are already on the machine -- they come with the first change of "
     "words -- and otherwise keeps the take whose join the model likes best. The track window "
     "plays them all and lets you keep another, which costs nothing -- they are all already "
@@ -237,7 +239,9 @@ EDITS_TOOLTIP = (
     "'off', which has no score. A retake also takes a 'seed', how many 'takes' to sing, and "
     "which 'take' to keep. A change of words takes those too, and 'lines': [first, stop] of the "
     "words with the 'text' they become; without bars or seconds it is sung where those lines "
-    "are."
+    "are. A change of notes, 'notes', takes a seed and takes as well, and the whole 'score' the "
+    "song is to have, as the score editor leaves it: without bars it is sung over the bars whose "
+    "notes that score changes, and with bars only the music of those bars is taken from it."
 )
 
 OPTIONS_TOOLTIP = (
@@ -263,6 +267,9 @@ DESCRIPTION = (
     "(4.1 GB) to keep the one that sings the new words; both are Apache-2.0 and are downloaded "
     "the first time they are needed. With the aligner on the machine, every line of the words "
     "lights up where the song sings it.\n\n"
+    "Press 'Notes...' to change the song's notes in the piano roll: only the bars whose notes "
+    "changed are sung again, under the new score, and the rest of the song stays as it was "
+    "sung. Bars changed far apart are sung as separate edits.\n\n"
     "Finding where the score sits in the song listens to its voice, so the first edit of a song "
     "downloads the separator Vocals Only uses (0.85 GB, MIT) if it is not there yet."
 )
@@ -1141,7 +1148,7 @@ class YuE2EditTrack:
                     asked = ""
                     if step.kind == "words":
                         asked = chr(10).join(step.now)
-                    elif step.kind == "retake" and ears is not None:
+                    elif step.kind in ("retake", "notes") and ears is not None:
                         found_by = opens + (closes - opens) * TIMES_SHARE
                         asked = self._words_there(place, state, step, sound, rate, name, history,
                                                   Band(progress, opens, found_by), listened)
@@ -1153,7 +1160,7 @@ class YuE2EditTrack:
                     if asked:
                         self._heard(entry, seeds, step, sound, rate, settings, made, released,
                                     Band(progress, hears, closes), notices, listened, asked,
-                                    ears if step.kind == "retake" else None)
+                                    ears if step.kind in ("retake", "notes") else None)
                     ordered = [entry["takes"].get(seed) for seed in seeds]
                     pick = edit.take if edit.take is not None else core.best(ordered)
                     kept = ordered[pick]
@@ -1297,19 +1304,22 @@ class YuE2EditTrack:
         """Every take of an edit heard, and how many of the words ``asked`` for each sings kept on it.
 
         ``asked`` is the new words of a change of words, or the words the song
-        sings where a retake sings again. Only a take not heard yet is heard,
+        sings where a retake or a change of notes sings again. Only a take not heard yet is heard,
         so asking for one more take hears that one alone. The stretch as the
         song sang it before is heard first: its language is the surest, and
         every take is then heard in it, so the takes are heard alike. For a
-        retake it is also counted like a take, since it sings the same words.
+        retake or a change of notes it is also counted like a take, since it
+        sings the same words.
         The singing model is let go before the speech model loads --
         ``release`` does it, and the next edit loads it again -- so a card
         that holds one of them holds the other. The takes stay as they are
         when nothing can hear them, and the join picks.
 
         ``ears`` is the speech model already on the machine, which is all a
-        retake is heard with; a change of words fetches it when it is missing
-        and downloading is on.
+        retake or a change of notes is heard with; a change of words fetches
+        it when it is missing and downloading is on. Every clip is heard in
+        the language the letters of ``asked`` name (``lines.language_of``),
+        or, when they name none, in the one the model names for the first.
         """
         from . import devices
         from .asr import runtime as asr_runtime
@@ -1335,7 +1345,8 @@ class YuE2EditTrack:
         began = time.perf_counter()
         try:
             answers = asr_runtime.hear(folder, devices.resolve(settings["device"]), clips,
-                                       cancelled=interrupted, progress=progress)
+                                       language=lines.language_of(asked), cancelled=interrupted,
+                                       progress=progress)
         except InterruptedError:
             raise
         except Exception as error:
@@ -1344,7 +1355,7 @@ class YuE2EditTrack:
             return
         entry["said"] = answers[0]["text"]
         entry["asked"] = asked
-        if step.kind == "retake":
+        if step.kind in ("retake", "notes"):
             entry["was_heard"] = lines.heard(asked, answers[0]["text"])
             log.info("[yue2_comfy.edit_track] the song as it was is heard singing %d of the %d "
                      "words there: %s", entry["was_heard"][0], entry["was_heard"][1],
@@ -1483,7 +1494,8 @@ class YuE2EditTrack:
                 region = ops.retake(step.start, step.stop, state.frames, len(song.prefix))
                 fresh = core.retakes(loaded(), song, waveform, region, missing, settings, band,
                                      interrupted, natural=entry["natural"] is None,
-                                     lyrics=step.lyrics if step.kind == "words" else None)
+                                     lyrics=step.lyrics if step.kind == "words" else None,
+                                     score=step.score if step.kind == "notes" else None)
                 for take in fresh:
                     entry["takes"][take.seed] = take
                 if fresh and fresh[0].natural is not None:
@@ -1506,7 +1518,8 @@ class YuE2EditTrack:
         handed one of its other names.
         ``seconds`` is the length of the result; ``peaks`` and ``rms`` its wave,
         at most ``PEAKS`` values from 0 to 1 each; ``grid`` is ``grid.layout`` of the score on
-        the result, None for a song without one; ``lyrics`` the words it sings now,
+        the result, None for a song without one, and ``score`` that score's text, which the
+        window opens the score editor on for a change of notes; ``lyrics`` the words it sings now,
         which the window shows beside the track and a cut takes sections out
         of; ``lines`` when each sung line of them is sung, ``[[line, start,
         stop]]`` by the line's number in ``lyrics``, or None when the song was
@@ -1541,7 +1554,7 @@ class YuE2EditTrack:
         payload = {"song": keyed, "was": name, "sung": _sampled(settings), "hears": bool(hears),
                    "seconds": round(state.frames * FRAME_SECONDS, 3), "sample_rate": rate,
                    "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": None,
-                   "lyrics": state.lyrics, "lines": timed.get("song"), "takes": [],
+                   "score": state.score or "", "lyrics": state.lyrics, "lines": timed.get("song"), "takes": [],
                    "chosen": None,
                    "edits": track.written(
                        [dataclasses.replace(edit, take=pick)

@@ -4,7 +4,11 @@ export const MAX_TAKES = 4;
 
 export const SEED_CEILING = 2147483648;
 
-export const OPS = ["retake", "cut", "words"];
+export const OPS = ["retake", "cut", "words", "notes"];
+
+export const LONGEST_SCORE = 200000;
+
+export const NOTES_APART = 2;
 
 export const NOT_A_LIST =
     "The edits field does not hold a JSON list. 'Reset track' on the node clears it.";
@@ -14,6 +18,8 @@ export const SECONDS_CUT =
     + "cut with it. Let go of Alt and select bars.";
 
 export const PAST_THE_END = "The song stops before that, so there is nothing there to edit.";
+
+const PY_SPACE = /^[\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u;
 
 function whole(value) {
     return typeof value === "number" && Number.isInteger(value);
@@ -56,8 +62,12 @@ function asked(item, name, fallback) {
 function rangeOf(item, where, op) {
     const bars = given(item, "bars");
     const seconds = given(item, "seconds");
-    if (op === "words" && bars === null && seconds === null) {
+    if ((op === "words" || op === "notes") && bars === null && seconds === null) {
         return { bars: null, seconds: null };
+    }
+    if (op === "notes" && seconds !== null) {
+        throw new Error(where + " changes notes, which go by bars, and it selects seconds. Select "
+            + "bars, or none: the bars whose notes changed are the ones sung again.");
     }
     if ((bars === null) === (seconds === null)) {
         throw new Error(where + " selects neither bars nor seconds, or both at once. It takes one "
@@ -98,12 +108,12 @@ function editOf(item, index, takes) {
     const op = given(item, "op");
     if (!OPS.includes(op)) {
         throw new Error(where + " asks for '" + op + "', which is not something an edit does. It "
-            + "is 'retake', 'cut' or 'words'.");
+            + "is 'retake', 'cut', 'words' or 'notes'.");
     }
     const span = rangeOf(item, where, op);
     if (op === "cut") {
         return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
-                 vary: null, guide: null, lines: null, text: null,
+                 vary: null, guide: null, lines: null, text: null, score: null,
                  fade: measure(item, "fade", where, "the fade", FADE) };
     }
     const seed = asked(item, "seed", 0);
@@ -144,10 +154,20 @@ function editOf(item, index, takes) {
         lines = [chosen[0], chosen[1]];
         said = words;
     }
+    let score = null;
+    if (op === "notes") {
+        score = given(item, "score");
+        if (typeof score !== "string" || PY_SPACE.test(score)) {
+            throw new Error(where + " holds no score to sing.");
+        }
+        if (score.length > LONGEST_SCORE && [...score].length > LONGEST_SCORE) {
+            throw new Error(where + " holds a score far longer than any song.");
+        }
+    }
     return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
              vary: measure(item, "vary", where, "the variety", VARY),
              guide: measure(item, "guide", where, "the guide", GUIDE), fade: null,
-             lines, text: said };
+             lines, text: said, score };
 }
 
 export function readEdits(text, takes = 1) {
@@ -182,7 +202,8 @@ export function writeEdits(edits) {
             item.lines = [edit.lines[0], edit.lines[1]];
             item.text = edit.text;
         }
-        if (edit.op === "retake" || edit.op === "words") {
+        if (edit.op === "notes") item.score = edit.score;
+        if (edit.op === "retake" || edit.op === "words" || edit.op === "notes") {
             item.seed = edit.seed;
             item.takes = edit.takes;
             if (edit.take !== null && edit.take !== undefined) item.take = edit.take;
@@ -299,13 +320,14 @@ export function linesText(first, stop) {
 }
 
 export function describeEdit(edit, index) {
-    const named = { cut: "Cut", words: "New words", retake: "Retake" };
+    const named = { cut: "Cut", words: "New words", retake: "Retake", notes: "New notes" };
     const what = named[edit.op] || "Retake";
     let where = "";
     if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
     else if (edit.seconds) where = spanText(edit.seconds[0], edit.seconds[1]);
-    else where = linesText(edit.lines[0], edit.lines[1]);
-    const joiner = edit.op === "words" ? " for " : " of ";
+    else if (edit.lines) where = linesText(edit.lines[0], edit.lines[1]);
+    else where = "the bars they change";
+    const joiner = edit.op === "words" ? " for " : edit.op === "notes" ? " in " : " of ";
     const kept = edit.op !== "cut" && edit.take !== null && edit.take !== undefined
         ? ", take " + (edit.take + 1) + " of " + edit.takes : "";
     const extra = [];
@@ -320,7 +342,7 @@ export function wordsFor(lines, said, takes, seed, selection = null, knobs = {})
     const edit = { op: "words", bars: null, seconds: null, seed,
                    takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
                    vary: null, guide: null, fade: null,
-                   lines: [lines[0], lines[1]], text: String(said) };
+                   lines: [lines[0], lines[1]], text: String(said), score: null };
     if (selection && selection.first !== null && selection.first !== undefined) {
         edit.bars = [selection.first, selection.stop];
     } else if (selection) {
@@ -331,9 +353,40 @@ export function wordsFor(lines, said, takes, seed, selection = null, knobs = {})
     return edit;
 }
 
+export function stretchesOf(changed, apart = NOTES_APART) {
+    const bars = [...new Set((changed || []).filter((bar) => whole(bar) && bar >= 0))]
+        .sort((a, b) => a - b);
+    const found = [];
+    for (const bar of bars) {
+        const last = found[found.length - 1];
+        if (last && bar - last[1] < apart) last[1] = bar + 1;
+        else found.push([bar, bar + 1]);
+    }
+    return found;
+}
+
+export function notesFor(score, changed, takes, seeds, selection = null, knobs = {}) {
+    const stretches = stretchesOf(changed);
+    const inside = selection && selection.first !== null && selection.first !== undefined
+        && stretches.length
+        && stretches.every(([first, stop]) => first >= selection.first && stop <= selection.stop);
+    const wanted = inside ? [[selection.first, selection.stop]]
+        : stretches.length ? stretches : [null];
+    return wanted.map((bars, index) => {
+        const edit = { op: "notes", bars: bars ? [bars[0], bars[1]] : null, seconds: null,
+                       seed: seeds[index],
+                       takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
+                       vary: null, guide: null, fade: null, lines: null, text: null,
+                       score: String(score) };
+        if (typeof knobs.vary === "number") edit.vary = knobs.vary;
+        if (typeof knobs.guide === "number") edit.guide = knobs.guide;
+        return edit;
+    });
+}
+
 export function editFor(selection, op, takes, seed, knobs = {}) {
     const edit = { op, bars: null, seconds: null, seed: 0, takes: 1, take: null,
-                   vary: null, guide: null, fade: null, lines: null, text: null };
+                   vary: null, guide: null, fade: null, lines: null, text: null, score: null };
     if (selection.first === null) {
         edit.seconds = [Number(selection.from.toFixed(3)), Number(selection.to.toFixed(3))];
     } else {

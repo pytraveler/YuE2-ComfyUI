@@ -9,6 +9,7 @@ window writes::
     [{"op": "retake", "bars": [12, 16], "seed": 831001, "takes": 2, "take": 0},
      {"op": "cut", "bars": [20, 24]},
      {"op": "words", "lines": [7, 8], "text": "and the night comes down", "seed": 4},
+     {"op": "notes", "score": "X:1 ...", "bars": [4, 6], "seed": 12},
      {"op": "retake", "seconds": [48.0, 64.0], "seed": 7}]
 
 Bars count from 0 and the second number is not included: [12, 16] is bars 13
@@ -23,7 +24,11 @@ has neither, being the same cut however often it is made. A change of words
 carries the lines it rewrites and what they become; it is sung like a retake,
 and where it is sung is the stretch those lines are sung in -- which the node
 finds from the song's own word times when the list names no bars and no
-seconds.
+seconds. A change of notes carries the whole score the song is to have, as
+the score editor leaves it; it is sung like a retake too, over the bars whose
+notes that score changes, or over the bars it names -- and then only the
+music of those bars is taken from it, so a score changed in two places far
+apart is sung as two edits, each a stretch of its own.
 
 What an edit does to the words and the score is worked out here as well, so
 the window can show it and the node can sing it without either of them
@@ -45,7 +50,7 @@ from . import grid, ops
 MAX_TAKES = 4
 """The most takes one edit may ask for at a time. Suno offers two; four is room to choose without a long wait."""
 
-OPS = ("retake", "cut", "words")
+OPS = ("retake", "cut", "words", "notes")
 
 NOT_A_LIST = ("The edits field does not hold a JSON list. The track window writes it -- open the "
               "track, or clear the field to start again.")
@@ -65,6 +70,14 @@ NO_TIMES = ("This edit leaves the stretch to sing to the words themselves, and w
 FITS = ("The new words come to {} syllables where the old came to {}. The tune stays as the song "
         "sang it, so words that do not fit it are hurried, held or lost.")
 
+NO_NOTES = ("This song was sung with 'cot' set to 'off', so it has no score and no notes to change. "
+            "Select the seconds to retake instead.")
+
+SECONDS_NOTES = ("{} changes notes, which go by bars, and it selects seconds. Select bars, or none: "
+                 "the bars whose notes changed are the ones sung again.")
+
+SAME_SCORE = "The new score sings the same notes as the song, so there is nothing to sing again."
+
 
 @dataclasses.dataclass(frozen=True)
 class Edit:
@@ -82,6 +95,10 @@ class Edit:
     ``lines`` and ``text`` belong to a change of words: which lines of the
     lyrics it rewrites, counted from 0 with the second number not included,
     and what they become. Both are None for anything else.
+
+    ``score`` belongs to a change of notes: the whole score the song is to
+    have, from which the music of ``bars`` is taken, or of every bar it
+    changes when ``bars`` is None. It is None for anything else.
     """
 
     op: str
@@ -95,6 +112,7 @@ class Edit:
     fade: float | None = None
     lines: tuple | None = None
     text: str | None = None
+    score: str | None = None
 
     def seeds(self) -> tuple:
         """The seed of every take this edit asks for, counted on from its own."""
@@ -180,12 +198,15 @@ def _range(item, index: int, op: str = "retake"):
     """The bars or the seconds one edit selects, exactly one of the two.
 
     A change of words may select neither, and then the stretch it is sung in
-    is the one its own lines are sung in; see ``needs_times``.
+    is the one its own lines are sung in; see ``needs_times``. So may a
+    change of notes, which is then sung over the bars whose notes changed.
     """
     where = "Edit {}".format(index + 1)
     bars, seconds = item.get("bars"), item.get("seconds")
-    if op == "words" and bars is None and seconds is None:
+    if op in ("words", "notes") and bars is None and seconds is None:
         return None, None
+    if op == "notes" and seconds is not None:
+        raise ValueError(SECONDS_NOTES.format(where))
     if (bars is None) == (seconds is None):
         raise ValueError("{} selects neither bars nor seconds, or both at once. It takes one of "
                          "them.".format(where))
@@ -247,6 +268,20 @@ def _rewrite(item, where: str):
     return (first, stop), words
 
 
+def _new_score(item, where: str) -> str:
+    """The score a change of notes carries, checked for being text a score could be.
+
+    Whether it is a score of this song is ``notation.changed``'s business,
+    which reads it against the one the song has.
+    """
+    score = item.get("score")
+    if not isinstance(score, str) or not score.strip():
+        raise ValueError("{} holds no score to sing.".format(where))
+    if len(score) > notation.LONGEST:
+        raise ValueError("{} holds a score far longer than any song.".format(where))
+    return score
+
+
 def _edit(item, index: int, takes: int) -> Edit:
     where = "Edit {}".format(index + 1)
     if not isinstance(item, dict):
@@ -254,7 +289,7 @@ def _edit(item, index: int, takes: int) -> Edit:
     op = item.get("op")
     if op not in OPS:
         raise ValueError("{} asks for '{}', which is not something an edit does. It is 'retake', "
-                         "'cut' or 'words'.".format(where, op))
+                         "'cut', 'words' or 'notes'.".format(where, op))
     bars, seconds = _range(item, index, op)
     if op == "cut":
         return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None,
@@ -272,13 +307,15 @@ def _edit(item, index: int, takes: int) -> Edit:
         take = _whole(take, "{}: the take kept".format(where))
         if not 0 <= take < wanted:
             raise ValueError("{} keeps take {} of {}.".format(where, take + 1, wanted))
-    lines, words = None, None
+    lines, words, score = None, None, None
     if op == "words":
         lines, words = _rewrite(item, where)
+    if op == "notes":
+        score = _new_score(item, where)
     return Edit(op=op, bars=bars, seconds=seconds, seed=seed, takes=wanted, take=take,
                 vary=_measure(item, "vary", where, "the variety", VARY),
                 guide=_measure(item, "guide", where, "the guide", GUIDE),
-                lines=lines, text=words)
+                lines=lines, text=words, score=score)
 
 
 def read(text, takes: int = 1) -> tuple:
@@ -315,7 +352,9 @@ def written(edits) -> str:
         if edit.op == "words":
             item["lines"] = [edit.lines[0], edit.lines[1]]
             item["text"] = edit.text
-        if edit.op in ("retake", "words"):
+        if edit.op == "notes":
+            item["score"] = edit.score
+        if edit.op in ("retake", "words", "notes"):
             item["seed"] = edit.seed
             item["takes"] = edit.takes
             if edit.take is not None:
@@ -378,6 +417,38 @@ def _frames(state: State, edit: Edit, span=None):
     return grid.retake_frames(state.sheet, state.clock, marks, first, stop, state.frames)
 
 
+def _notes(state: State, edit: Edit) -> Step:
+    """A change of notes worked out: the stretch it sings again, and the score the song has after it.
+
+    The stretch is the bars the edit names, or else the first to the last
+    bar whose notes its score changes, grown over any note held across its
+    edges (``notation.taken``). It opens where either score's phrases say --
+    the edited notes may start their phrase earlier than the old ones did --
+    and closes where the old score's say, because what follows is the song
+    as it was sung.
+    """
+    if state.sheet is None or state.clock is None:
+        raise ValueError(NO_NOTES)
+    if edit.bars is None:
+        found = notation.changed(state.score, edit.score)
+        if not found:
+            raise ValueError(SAME_SCORE)
+        first, stop = found[0], found[-1] + 1
+    else:
+        first, stop = edit.bars
+    laid = notation.taken(state.score, edit.score, first, stop)
+    first, stop = laid["bars"]
+    if edit.bars is not None and not notation.changed(state.score, laid["abc"]):
+        raise ValueError(notation.SAME_NOTES.format(first=first + 1, stop=stop))
+    sheet = notation.read(laid["abc"])
+    start, end = grid.retake_frames(state.sheet, state.clock, grid.seams(state.sheet), first, stop,
+                                    state.frames)
+    earlier, _end = grid.retake_frames(sheet, state.clock, grid.seams(sheet), first, stop,
+                                       state.frames)
+    return Step(kind="notes", start=min(start, earlier), stop=end, bars=(first, stop),
+                lyrics=state.lyrics, score=laid["abc"], dropped=(), notices=())
+
+
 def needs_times(edit: Edit) -> bool:
     """Whether the stretch this edit sings has to be found from the song's own word times."""
     return edit.op == "words" and edit.bars is None and edit.seconds is None
@@ -387,8 +458,10 @@ def plan(state: State, edit: Edit, span=None) -> Step:
     """What ``edit`` does to the song ``state`` describes: its frames, and the words and score after it.
 
     ``span`` is the pair of frames found for an edit that names no bars and no
-    seconds; see ``_frames``.
+    seconds; see ``_frames``. A change of notes finds its own; see ``_notes``.
     """
+    if edit.op == "notes":
+        return _notes(state, edit)
     start, stop = _frames(state, edit, span)
     if edit.op == "words":
         rewrite = ops.change_words(state.lyrics, edit.lines[0], edit.lines[1], edit.text)
@@ -432,6 +505,8 @@ def after(state: State, step: Step, count: int) -> State:
     A cut is ``count`` 0. The bars of the score move with the sound: a cut
     takes its own out and pulls the rest back, and a retake that came out
     longer or shorter than what it replaced pushes everything after it along.
+    A change of notes leaves the bars where a retake would, and its notes in
+    them.
     """
     frames = state.frames - (step.stop - step.start) + count
     if step.kind == "cut" and step.bars is not None:
@@ -441,8 +516,8 @@ def after(state: State, step: Step, count: int) -> State:
         return State(lyrics=step.lyrics, score=step.score, sheet=sheet, clock=clock, frames=frames)
     clock = state.clock if state.clock is None else grid.after_retake(
         state.clock, step.start, step.stop, count)
-    return State(lyrics=step.lyrics, score=step.score, sheet=state.sheet, clock=clock,
-                 frames=frames)
+    sheet = notation.read(step.score) if step.kind == "notes" else state.sheet
+    return State(lyrics=step.lyrics, score=step.score, sheet=sheet, clock=clock, frames=frames)
 
 
 def _spelled(edit: Edit, seed) -> dict:
@@ -457,6 +532,8 @@ def _spelled(edit: Edit, seed) -> dict:
     if edit.op == "words":
         item["lines"] = list(edit.lines)
         item["text"] = edit.text
+    if edit.op == "notes":
+        item["score"] = edit.score
     for key, value in (("vary", edit.vary), ("guide", edit.guide)):
         if value is not None:
             item[key] = value

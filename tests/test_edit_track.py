@@ -121,16 +121,19 @@ def stand(torch, monkeypatch):
     monkeypatch.setattr("yue2_comfy.staged.session", _no_models)
     calls = []
     words = []
+    scores = []
 
     def retakes(models, old, waveform, region, seeds, settings, progress=None, cancelled=None,
                 noise_seeds=None, natural=False, lyrics=None, score=None):
         calls.append(("retake", region.start, region.stop, tuple(seeds)))
         words.append(lyrics)
+        scores.append(score)
         made = []
         for index, seed in enumerate(seeds):
             frames = old.frames - region.removed + region.length
             made.append(core.Take(seed=seed, waveform=a_wave(torch, frames, 0.1 * (index + 1)),
-                                  song=a_song(frames, lyrics=lyrics or LYRICS), count=region.length,
+                                  song=a_song(frames, score_text=score or RAP,
+                                              lyrics=lyrics or LYRICS), count=region.length,
                                   join=-4.0 + index, joins={}, ended=False, timing={},
                                   natural=-3.0 if natural else None))
         return made
@@ -146,7 +149,7 @@ def stand(torch, monkeypatch):
     monkeypatch.setattr(core, "retakes", retakes)
     monkeypatch.setattr(core, "cut", cut)
     return types.SimpleNamespace(song=song, wave=wave, name=name, calls=calls, words=words,
-                                 audio={"waveform": wave, "sample_rate": RATE})
+                                 scores=scores, audio={"waveform": wave, "sample_rate": RATE})
 
 
 class _no_models:
@@ -1442,3 +1445,68 @@ def test_every_row_of_the_takes_list_has_the_same_keys(stand):
     assert [take["sung"] for take in drawn["takes"]] == [False, True]
     assert all(set(row) == set(rows[0]) for row in rows)
     assert {"lines", "heard", "said", "mumbled"} <= set(rows[0])
+
+
+def notes_of(where, bars=None, seed=9):
+    """A change of notes of ``RAP`` as the window writes it: the sung note at each tick of ``where`` moved to the pitch it maps to."""
+    sheet = notation.read(RAP)
+    for note in sheet["notes"]["Vocal"]:
+        note["pitch"] = where.get(note["start"], note["pitch"])
+    item = {"op": "notes", "score": notation.write(RAP, sheet)["abc"], "seed": seed}
+    if bars is not None:
+        item["bars"] = list(bars)
+    return item
+
+
+def test_a_change_of_notes_sings_only_the_bars_it_changed_under_the_new_score(stand):
+    """One note of bar 6 moved: bar 6 is sung again, as a retake of it would be, with the new score in the prompt."""
+    item = notes_of({86: 64})
+    drawn = payload(run(stand, json.dumps([item])))
+    run(stand, '[{"op": "retake", "bars": [5, 6], "seed": 9}]')
+    assert stand.calls[0][1:3] == stand.calls[1][1:3]
+    assert stand.scores == [item["score"] + "\n", None]
+    assert drawn["kind"] == "notes" and drawn["score"] == item["score"] + "\n"
+    assert json.loads(drawn["edits"]) == [dict(item, takes=2, take=1)]
+
+
+def test_the_window_is_handed_the_score_it_opens_the_notes_on(stand):
+    assert payload(run(stand))["score"] == RAP
+
+
+def test_a_change_of_notes_is_heard_like_a_retake_of_its_bars(stand, monkeypatch):
+    """The words do not change, so the takes are heard against the words the song sings there."""
+    lined(monkeypatch, first=4.6, gap=1.0)
+    hearing(monkeypatch, {"was": SUNG, 9: SUNG, 10: "one"})
+    drawn = payload(run(stand, json.dumps([notes_of({36: 67})])))
+    there = sung_there(drawn["at"])
+    assert there and drawn["asked"] == " ".join(there)
+    assert drawn["chosen"] == 0
+    assert drawn["before"]["heard"] == [len(there), len(there)]
+
+
+def test_a_change_of_notes_that_moves_the_tempo_is_refused_before_anything_is_sung(stand):
+    item = notes_of({86: 64})
+    item["score"] = item["score"].replace("Q:1/4=120", "Q:1/4=100")
+    with pytest.raises(Exception, match="another tempo"):
+        run(stand, json.dumps([item]))
+    assert stand.calls == []
+
+
+def test_takes_are_heard_in_the_language_their_words_are_written_in(stand, monkeypatch):
+    """Left to name it, Qwen3-ASR named Russian singing English and wrote it as a translation."""
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    snow = "\u0421\u043d\u0435\u0433 \u043b\u043e\u0436\u0438\u0442\u0441\u044f"
+    languages = []
+    hearing(monkeypatch, {"was": snow, 40: snow, 41: snow})
+    heard = asr_runtime.hear
+
+    def told(folder, device, clips, language="", cancelled=None, progress=None):
+        languages.append(language)
+        return heard(folder, device, clips, language, cancelled, progress)
+
+    monkeypatch.setattr(asr_runtime, "hear", told)
+    item = json.loads(WORDS)[0]
+    run(stand, json.dumps([dict(item, text=snow)]))
+    run(stand, WORDS)
+    assert languages == ["Russian", ""]

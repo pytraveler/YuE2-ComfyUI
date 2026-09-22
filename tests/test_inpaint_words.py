@@ -375,3 +375,22 @@ def test_hearing_stops_when_the_run_is_cancelled(monkeypatch):
     monkeypatch.setattr(asr_runtime, "stamp", lambda folder: ("weights",))
     with pytest.raises(InterruptedError):
         asr_runtime.hear("f", "d", [("was", "a")], cancelled=lambda: True)
+
+
+SNOW = "\u0421\u043d\u0435\u0433 \u043b\u043e\u0436\u0438\u0442\u0441\u044f"
+""""Sneg lozhitsya", the Russian ballad's first words, which Qwen3-ASR once wrote in English."""
+
+
+@pytest.mark.parametrize("text,language", [
+    (SNOW, "Russian"),
+    ("Hold on, hold on, the summer's coming home", ""),
+    ("", ""),
+    ("\u591c\u7a7a\u306e\u661f", "Japanese"),
+    ("\u591c\u7a7a\u661f\u661f", "Chinese"),
+    ("\uc0ac\ub791\ud574", "Korean"),
+    (SNOW + " and the city lights are burning", ""),
+    ("ok \u043e\u043a", ""),
+])
+def test_the_letters_of_the_words_asked_name_the_language_they_are_heard_in(text, language):
+    """Latin letters name nothing: a dozen of the recogniser's languages write with them."""
+    assert lines.language_of(text) == language

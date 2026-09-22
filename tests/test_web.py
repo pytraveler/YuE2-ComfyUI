@@ -1218,6 +1218,17 @@ EDIT_LISTS = [
     '[{"op": "words", "lines": [1.5, 8], "text": "new"}]',
     '[{"op": "words", "lines": [7, 8], "text": "new", "bars": [1, 2], "seconds": [1.0, 2.0]}]',
     '[{"op": "retake", "lines": [7, 8], "text": "new", "bars": [1, 2]}]',
+    '[{"op": "notes", "score": "X:1", "seed": 5, "takes": 2, "take": 1}]',
+    '[{"op": "notes", "score": "X:1", "bars": [4, 6], "seed": 5, "vary": 1.5}]',
+    '[{"op": "notes", "score": "X:1", "lines": [1, 2], "text": "new"}]',
+    '[{"op": "notes", "score": "X:1", "seconds": [1.0, 2.0]}]',
+    '[{"op": "notes", "score": "X:1", "bars": [1, 2], "seconds": [1.0, 2.0]}]',
+    '[{"op": "notes", "score": "X:1", "bars": [2, 2]}]',
+    '[{"op": "notes", "seed": 1}]',
+    '[{"op": "notes", "score": " \\u3000\\n"}]',
+    '[{"op": "notes", "score": "\\u001c"}]',
+    '[{"op": "notes", "score": 5}]',
+    '[{"op": "retake", "bars": [1, 2], "score": "X:1"}]',
     '["retake"]',
     "[null]",
 ]
@@ -1247,7 +1258,8 @@ def spelled(edit):
             "seconds": None if edit.seconds is None else list(edit.seconds),
             "seed": edit.seed, "takes": edit.takes, "take": edit.take,
             "vary": edit.vary, "guide": edit.guide, "fade": edit.fade,
-            "lines": None if edit.lines is None else list(edit.lines), "text": edit.text}
+            "lines": None if edit.lines is None else list(edit.lines), "text": edit.text,
+            "score": edit.score}
 
 
 @needs_node
@@ -1290,12 +1302,12 @@ def test_what_the_window_writes_is_what_the_node_sings():
     assert [spelled(edit) for edit in edits] == [
         {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3,
          "take": 2, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None},
+         "text": None, "score": None},
         {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None,
-         "vary": None, "guide": None, "fade": None, "lines": None, "text": None},
+         "vary": None, "guide": None, "fade": None, "lines": None, "text": None, "score": None},
         {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
          "take": None, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None},
+         "text": None, "score": None},
     ]
     assert json.loads(track.written(edits)) == json.loads(written[0])
     assert len(track.read(written[1], 1)) == 2
@@ -1363,12 +1375,48 @@ def test_the_window_writes_a_seed_the_node_takes_as_it_is():
     assert normalize_seed(seeds[1]) == seeds[1]
 
 
+@needs_node
+def test_notes_changed_far_apart_are_written_as_an_edit_a_place():
+    """Two or more bars left alone between two changes is two edits, each sung by itself; the
+    node takes only its own bars' music from the score each carries. Changes inside a selection
+    of bars sing that selection whole."""
+    from yue2_comfy.inpaint import track
+
+    got = run_edits("""
+        const apart = e.notesFor("X:1", [9, 2, 3, 6], 2, [11, 12, 13]);
+        const near = e.notesFor("X:1", [2, 4], 3, [7]);
+        const chosen = e.notesFor("X:1", [2, 4], 2, [8], {first: 1, stop: 6, from: 0, to: 1});
+        const outside = e.notesFor("X:1", [2, 9], 2, [8, 9], {first: 1, stop: 6, from: 0, to: 1});
+        const typed = e.notesFor("X:1", [], 2, [4], {first: 1, stop: 6, from: 0, to: 1});
+        console.log(JSON.stringify({
+            stretches: e.stretchesOf([9, 2, 3, 6, 6, -1]),
+            apart: apart.map((edit) => [edit.bars, edit.seed, edit.takes]),
+            near: near.map((edit) => edit.bars), chosen: chosen.map((edit) => edit.bars),
+            outside: outside.map((edit) => edit.bars), typed: typed.map((edit) => edit.bars),
+            written: e.writeEdits(apart), said: e.describeEdit(apart[0], 0),
+            bare: e.describeEdit({...apart[0], bars: null}, 1),
+        }));
+    """)
+    assert got["stretches"] == [[2, 4], [6, 7], [9, 10]]
+    assert got["apart"] == [[[2, 4], 11, 2], [[6, 7], 12, 2], [[9, 10], 13, 2]]
+    assert got["near"] == [[2, 5]]
+    assert got["chosen"] == [[1, 6]]
+    assert got["outside"] == [[2, 3], [9, 10]]
+    assert got["typed"] == [None], "bars the window cannot know are the node's to find"
+    assert [edit.score for edit in track.read(got["written"], 1)] == ["X:1"] * 3
+    assert got["said"] == "1. New notes in bars 3-4"
+    assert got["bare"] == "2. New notes in the bars they change"
+
+
 def test_the_two_sides_offer_the_same_number_of_takes():
     from yue2_comfy import edit_track
     from yue2_comfy.inpaint import track
 
+    from yue2_comfy import notation
+
     source = EDITLIST.read_text(encoding="utf-8")
     assert "export const MAX_TAKES = {};".format(track.MAX_TAKES) in source
+    assert "export const LONGEST_SCORE = {};".format(notation.LONGEST) in source
     assert edit_track.YuE2EditTrack.INPUT_TYPES()["required"]["takes"][1]["max"] == track.MAX_TAKES
 
 
@@ -2099,9 +2147,9 @@ def test_lines_light_up_where_the_song_sings_them_once_their_times_are_known():
 
 def test_a_change_of_words_offers_its_takes_as_a_retake_does():
     """The takes of new words were sung and compared but never shown: none could be heard side by
-    side, none kept but the join's, and More takes was not there."""
+    side, none kept but the join's, and More takes was not there. A change of notes has takes too."""
     source = TRACK.read_text(encoding="utf-8")
-    assert 'return op === "retake" || op === "words";' in source
+    assert 'return op === "retake" || op === "words" || op === "notes";' in source
     assert source.count('op === "retake"') == 1
     for pattern in ('op !== "retake"', 'kind === "retake"', 'kind !== "retake"'):
         assert pattern not in source, pattern

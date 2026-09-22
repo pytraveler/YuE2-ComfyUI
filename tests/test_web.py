@@ -2125,6 +2125,27 @@ def test_a_take_of_new_words_says_how_much_of_them_was_heard():
     assert 'edit.op === "words"' in fact, "the blue block says how the take will be picked"
 
 
+def test_a_retake_heard_on_this_machine_says_so_and_shows_the_song_as_it_was_heard():
+    """A retake is heard only when the speech models are already there, so the window asks the node.
+
+    The song as it was is heard against the same words, which is what a take's
+    count means anything against.
+    """
+    source = TRACK.read_text(encoding="utf-8")
+    fact = source[source.index("    takeFact(edit) {"):source.index("    editSpan(edit) {")]
+    assert "this.payload?.hears" in fact
+    takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
+    assert "heardFacts(was)" in takes and "HEARD_BEFORE" in takes
+    assert "words ? HEARD_WHY : HEARD_AGAIN" in takes
+    assert "words ? PICK_WORDS : heardAny ? PICK_HEARD : PICK_JOIN" in takes
+    assert "this.payload.asked" in takes, "what the takes were heard against is shown too"
+    from yue2_comfy import edit_track
+
+    doc = edit_track.YuE2EditTrack._payload.__doc__
+    for key in ("hears", "asked"):
+        assert "``" + key + "``" in doc, key
+
+
 def test_the_audio_input_is_switched_off_by_a_square_beside_it():
     """The MiniMax rewriter's way: a square drawn by the input, its state a widget of the node.
 

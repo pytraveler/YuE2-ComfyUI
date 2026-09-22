@@ -16,7 +16,8 @@ singer runs into a line -- came back with every word sung, 9 of 9.
 
 The same stand picked the best of several takes of new words by hearing
 them, and ``heard`` is how it counted: how many of the words asked for a
-recogniser hears sung, in their order.
+recogniser hears sung, in their order. A retake is heard the same way against
+the words the song sang there, ``within``.
 
 Standard library and the word rule the aligner counts by, so this runs
 wherever the edit list runs, with no model and no torch.
@@ -138,6 +139,17 @@ def carried(spans, first: int, stop: int, lyrics: str, count: int) -> list:
         whole = (min(span[1] for span in old), max(span[2] for span in old))
         found.extend((number, whole[0], whole[1]) for number in fresh)
     return sorted(found)
+
+
+def within(times, start: float, stop: float) -> str:
+    """The words sung between ``start`` and ``stop`` seconds, by the aligner's ``times``: what a retake there sings again.
+
+    A word belongs to the stretch its middle lies in. A retake opens at a
+    pickup and closes at the next, so a word cut across either end is the
+    rare one, and the middle gives it to the side that sings most of it.
+    """
+    return " ".join(str(word) for word, begun, ended in times
+                    if start <= (float(begun) + float(ended)) / 2.0 < stop)
 
 
 def _plain(text: str) -> list:

@@ -4,8 +4,10 @@ The node takes the song's audio, finds the song behind it in the pack's memory
 (see ``songs``) and works through a list of edits, each one made on the song
 the ones before it left. A retake sings a stretch again, as many takes as
 asked for, and keeps the one whose join the model likes best unless the window
-says otherwise; a change of words does the same with other words, and keeps
-the take heard singing the most of them; a cut takes a stretch out and draws
+says otherwise -- or, with the speech models already on the machine, the one
+heard singing the most of the words there; a change of words does the same
+with other words, and keeps the take heard singing the most of them; a cut
+takes a stretch out and draws
 the two sides together. The sound that comes out is the song with those edits
 in it, and it is remembered like any other, so it can be saved, loaded and
 edited again. When the word aligner is on the machine, the node also finds
@@ -76,7 +78,7 @@ in a single pass, and the answer is kept beside the song, so the second line
 rewritten pays nothing at all."""
 
 HEARD_SHARE = 0.12
-"""The share of one change of words' bar that goes on hearing its takes.
+"""The share of one edit's bar that goes on hearing its takes: a change of words, or a retake when the machine can hear it.
 
 Measured 2026-09-22 on a 5090: 1.7 s to load Qwen3-ASR, then 0.2-0.4 s a
 take for the seven seconds of a line, so it is loading the model that the
@@ -100,7 +102,12 @@ MUMBLED = 0.75
 On the stand a take that sang the new line was heard singing 0.8-1.0 of it,
 while the old line sung where the new one was asked for still scored 0.5-0.6:
 lines that are rewritten keep some of their words, and a word they share is
-heard either way."""
+heard either way.
+
+A retake is held to the song as it was as well. Qwen3-ASR missed a tenth to
+a quarter of the words of sung Russian that were sung right (measured
+2026-09-15), so a retake heard below this share is only worth a word when the
+song as it was is heard singing more of them there."""
 
 CACHE_BYTES = 1 << 30
 """How much of the session's memory the takes already sung may hold: 1 GiB.
@@ -210,9 +217,12 @@ USE_AUDIO_TOOLTIP = (
 
 TAKES_TOOLTIP = (
     "How many times a retake or a change of words sings the same stretch, so there is something "
-    "to choose between. A retake keeps the take whose join the model likes best; new words keep "
-    "the take heard singing the most of them, the join deciding a tie. The track window plays "
-    "them all and lets you keep another, which costs nothing -- they are all already sung.\n\n"
+    "to choose between. New words keep the take heard singing the most of them, the join "
+    "deciding a tie. A retake does the same with the words the song sings there when Qwen3-ASR "
+    "and the word aligner are already on the machine -- they come with the first change of "
+    "words -- and otherwise keeps the take whose join the model likes best. The track window "
+    "plays them all and lets you keep another, which costs nothing -- they are all already "
+    "sung.\n\n"
     "They are sung once and kept in this session's memory. A workflow opened in a fresh "
     "ComfyUI sings only the take its list kept, however many it once compared; the window "
     "shows the others and sings one on request, a seed always giving back the same take.\n\n"
@@ -243,7 +253,8 @@ DESCRIPTION = (
     "Open 'Edit track...' to see the song's bars and sections, select a stretch, and press "
     "Retake or Cut. It works on songs this pack has sung: wire it after a song node, or load a "
     "FLAC saved from one.\n\n"
-    "A retake sings two takes by default and keeps the one that joins the old song best. A cut "
+    "A retake sings two takes by default and keeps the one that joins the old song best, or, "
+    "once the speech models below are on the machine, the one heard singing its words. A cut "
     "takes whole bars, moves both ends back to the same place in the singing so that a pickup "
     "is not left behind, and takes the words of any section it empties out of the lyrics.\n\n"
     "Click a line of the words beside the track to give it other words: the tune stays, and the "
@@ -304,6 +315,9 @@ DEAF = ("The takes of the new words could not be heard ({}), so the one whose jo
 MUMBLED_SAID = ("The take kept is heard singing {} of the {} new words. Ask for more takes, or "
                 "write words that fit the tune more closely.")
 
+MUMBLED_AGAIN = ("The take kept is heard singing {} of the {} words there, where the song as it "
+                 "was sang {}. Ask for more takes, or keep the song as it was.")
+
 
 def _said_once(notices, kind: str, text: str) -> None:
     """Add a notice unless the run has already said it: a run with two changes of words says it once."""
@@ -333,6 +347,27 @@ def _aligner_at_hand(settings):
         return folder, download.aligner_tokenizer(folder, {"download": "off"}), device
     except Exception:
         log.debug("[yue2_comfy.edit_track] the aligner is not at hand to light the words",
+                  exc_info=True)
+        return None
+
+
+def _ears_at_hand(settings):
+    """Qwen3-ASR's folder when the takes of a retake can be heard without asking for anything; None otherwise.
+
+    A retake sings words the song already has, so hearing its takes makes a
+    better pick rather than the edit itself: it is never worth a download of
+    4.1 GB, nor the CPU. The model comes with the first change of words, and
+    from then on retakes are heard too. Never fatal.
+    """
+    from . import devices, discovery
+
+    try:
+        device = devices.resolve(settings["device"])
+        if getattr(device, "type", "cpu") == "cpu":
+            return None
+        return discovery.find_asr() or None
+    except Exception:
+        log.debug("[yue2_comfy.edit_track] the speech model is not at hand to hear a retake",
                   exc_info=True)
         return None
 
@@ -723,14 +758,21 @@ def _flagged(take) -> bool:
             and take.join < take.natural - JOIN_SLACK)
 
 
-def _mumbled(take) -> bool:
-    """Whether a take of new words was heard singing too few of them to leave unsaid; see ``MUMBLED``."""
+def _mumbled(take, was=None) -> bool:
+    """Whether a take was heard singing too few of its words to leave unsaid; see ``MUMBLED``.
+
+    ``was`` is how the song as it was is heard there, for a retake: the same
+    words, so a take heard singing as many of them as the song did is not
+    mumbling whatever the share, the recogniser missing the same words in both.
+    """
     heard = getattr(take, "heard", None)
-    return heard is not None and heard[1] > 0 and heard[0] < MUMBLED * heard[1]
+    if heard is None or heard[1] <= 0 or heard[0] >= MUMBLED * heard[1]:
+        return False
+    return was is None or heard[0] < was[0]
 
 
 def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step,
-                lines=None) -> dict:
+                lines=None, was=None) -> dict:
     """One take as the window shows it: how it scored, how long it came out, and the song it makes.
 
     ``seconds`` is the take itself and ``total`` the song with it in, which is
@@ -740,9 +782,10 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
     so switching takes swaps the track, its bars and its sound under the
     cursor without the node running again. ``lines`` is when each line of the
     words is sung in that song, for the same reason. ``heard`` and ``said``
-    are what was heard of a take of new words (see ``core.Take``). ``prior``
-    is the song's state before this edit and ``step`` the edit's plan. See
-    ``TAKE_FILES`` for what the files cost.
+    are what was heard of the take (see ``core.Take``), and ``was`` how the
+    song as it was is heard there, which a retake is measured against.
+    ``prior`` is the song's state before this edit and ``step`` the edit's
+    plan. See ``TAKE_FILES`` for what the files cost.
     """
     from .inpaint import grid, track
 
@@ -760,11 +803,12 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
             "join": None if take.join is None else round(take.join, 4),
             "natural": None if take.join is None or take.natural is None else round(take.natural, 4),
             "heard": None if heard is None else [int(heard[0]), int(heard[1])],
-            "said": getattr(take, "said", None), "mumbled": _mumbled(take),
+            "said": getattr(take, "said", None), "mumbled": _mumbled(take, was),
             "ended": bool(take.ended), "flagged": _flagged(take), "audio": entry}
 
 
-def _was_facts(waveform, rate: int, prior, step, name: str, lines=None, said=None) -> dict:
+def _was_facts(waveform, rate: int, prior, step, name: str, lines=None, said=None,
+               heard=None) -> dict:
     """The song as it stood before the edit, as a row the takes list shows first.
 
     Shaped like a take, so the window draws, plays and compares it the same
@@ -772,7 +816,9 @@ def _was_facts(waveform, rate: int, prior, step, name: str, lines=None, said=Non
     what the edit replaced. ``seconds`` is the stretch as it was, against a
     take's own length, ``grid`` the bars before the edit moved them and
     ``lines`` the lines where it sang them. ``said`` is what was heard there
-    before new words were sung over it, when the takes were heard.
+    when the takes were heard, and ``heard`` how many of a retake's words
+    that is -- the same words the takes are counted on, so the row says what
+    the takes are up against.
     """
     from .inpaint import grid
 
@@ -785,8 +831,9 @@ def _was_facts(waveform, rate: int, prior, step, name: str, lines=None, said=Non
             "seconds": round((step.stop - step.start) * FRAME_SECONDS, 3),
             "total": round(int(waveform.shape[-1]) / float(rate), 3),
             "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": laid, "lines": lines,
-            "join": None, "natural": None, "heard": None, "said": said, "mumbled": False,
-            "ended": False, "flagged": False, "audio": entry}
+            "join": None, "natural": None,
+            "heard": None if heard is None else [int(heard[0]), int(heard[1])],
+            "said": said, "mumbled": False, "ended": False, "flagged": False, "audio": entry}
 
 
 def _moved(marks, step, count: int) -> list:
@@ -1048,7 +1095,7 @@ class YuE2EditTrack:
 
         history, notices, picks, shown, marks = [], [], [], None, []
         clock, state, current, sound = None, None, song, waveform
-        keyed, timed = name, {}
+        keyed, timed, ears, place = name, {}, None, None
         try:
             with stack:
                 stack.callback(_ears_off, settings, listened)
@@ -1070,6 +1117,7 @@ class YuE2EditTrack:
                                      else progress)
                 state = track.opened(song, clock, sheet)
                 place = _aligner_at_hand(settings)
+                ears = _ears_at_hand(settings)
                 top = 1.0 - LINES_SHARE if place is not None else 1.0
                 for index, edit in enumerate(wanted):
                     if interrupted():
@@ -1090,14 +1138,22 @@ class YuE2EditTrack:
                         raise _Refused("Edit {}: {}".format(index + 1, error))
                     notices.extend(step.notices)
                     made = track.name(name, history, edit)
-                    hears = (closes - (closes - opens) * HEARD_SHARE if step.kind == "words"
-                             else closes)
+                    asked = ""
+                    if step.kind == "words":
+                        asked = chr(10).join(step.now)
+                    elif step.kind == "retake" and ears is not None:
+                        found_by = opens + (closes - opens) * TIMES_SHARE
+                        asked = self._words_there(place, state, step, sound, rate, name, history,
+                                                  Band(progress, opens, found_by), listened)
+                        opens = found_by
+                    hears = closes - (closes - opens) * HEARD_SHARE if asked else closes
                     entry = self._sung(loaded, current, sound, state, step, edit, made,
                                        settings, Band(progress, opens, hears))
                     seeds = (0,) if step.kind == "cut" else edit.seeds()
-                    if step.kind == "words":
+                    if asked:
                         self._heard(entry, seeds, step, sound, rate, settings, made, released,
-                                    Band(progress, hears, closes), notices, listened)
+                                    Band(progress, hears, closes), notices, listened, asked,
+                                    ears if step.kind == "retake" else None)
                     ordered = [entry["takes"].get(seed) for seed in seeds]
                     pick = edit.take if edit.take is not None else core.best(ordered)
                     kept = ordered[pick]
@@ -1115,7 +1171,7 @@ class YuE2EditTrack:
                                   "seed": None if step.kind == "cut" else int(kept.seed),
                                   "took": round((step.stop - step.start) * FRAME_SECONDS, 3),
                                   "was": "\n".join(step.was), "now": "\n".join(step.now)})
-                    shown = (step, ordered, pick, made, prior, seeds, earlier, entry.get("said"))
+                    shown = (step, ordered, pick, made, prior, seeds, earlier, entry)
                 released()
                 if wanted:
                     keyed = _remember(sound, _stamped(current, sound, name, song, marks))
@@ -1133,16 +1189,19 @@ class YuE2EditTrack:
             refuse(unique_id, str(stop))
 
         payload = self._payload(name, keyed, sound, rate, state, wanted, picks, shown,
-                                settings, timed)
+                                settings, timed, ears is not None and place is not None)
         if shown is not None and _flagged(shown[1][shown[2]]):
             kept = shown[1][shown[2]]
             notices.append(("warn", "The join of the take kept scores {:.2f} where the song's own "
                                     "join there scores {:.2f}, so it may be heard. Ask for more "
                                     "takes, or open the selection wider.".format(
                                         kept.join, kept.natural)))
-        if shown is not None and _mumbled(shown[1][shown[2]]):
+        was = None if shown is None else shown[7].get("was_heard")
+        if shown is not None and _mumbled(shown[1][shown[2]], was):
             kept = shown[1][shown[2]]
-            notices.append(("warn", MUMBLED_SAID.format(kept.heard[0], kept.heard[1])))
+            notices.append(("warn", MUMBLED_SAID.format(kept.heard[0], kept.heard[1])
+                            if was is None else
+                            MUMBLED_AGAIN.format(kept.heard[0], kept.heard[1], was[0])))
         announce(unique_id, notices)
         log.info("[yue2_comfy.edit_track] %d edit%s on %.1f s of song, %.1f s out, in %.1f s",
                  len(wanted), "" if len(wanted) == 1 else "s", song.frames * FRAME_SECONDS,
@@ -1199,17 +1258,58 @@ class YuE2EditTrack:
         return (int(round(start / FRAME_SECONDS)),
                 state.frames if stop is None else int(round(stop / FRAME_SECONDS)))
 
-    def _heard(self, entry, seeds, step, before, rate: int, settings, made: str, release,
-               progress, notices, listened):
-        """Every take of a change of words heard, and how much of the new words each sings kept on it.
+    def _words_there(self, place, state, step, sound, rate: int, name: str, history, progress,
+                     listened) -> str:
+        """The words the song sings in the stretch a retake sings again, or "" when they cannot be known.
 
-        Only a take not heard yet is heard, so asking for one more take hears
-        that one alone. The stretch as the song sang it before is heard first:
-        its language is the surest, and every take is then heard in it, so the
-        takes are heard alike. The singing model is let go before the speech
-        model loads -- ``release`` does it, and the next edit loads it again --
-        so a card that holds one of them holds the other. The takes stay as
-        they are when nothing can hear them, and the join picks.
+        They are what the takes are heard against, and only the song's own
+        word times can say which words those are: the score has a note for
+        every syllable but no idea which line the singer was on. The times
+        are read beside the song when it was timed before, and heard with the
+        aligner otherwise when it is at hand -- the same pass that lights the
+        lines of the song as it was, so it is paid once. A stretch nothing is
+        sung in has no words, and its takes are left to the join. Never fatal
+        but for a cancel.
+        """
+        from .inpaint import lines
+
+        text = lines.heard_text(state.lyrics)
+        if not text.strip():
+            progress.ratio(1.0)
+            return ""
+        try:
+            times = self._times_of(place, track.sound_name(name, history),
+                                   name if not history else "", sound, rate, text, progress,
+                                   listened)
+        except InterruptedError:
+            raise
+        except Exception:
+            log.warning("[yue2_comfy.edit_track] the words of the retake could not be found, so "
+                        "its takes are left to the join", exc_info=True)
+            return ""
+        progress.ratio(1.0)
+        if times is None:
+            return ""
+        return lines.within(times, step.start * FRAME_SECONDS, step.stop * FRAME_SECONDS)
+
+    def _heard(self, entry, seeds, step, before, rate: int, settings, made: str, release,
+               progress, notices, listened, asked: str, ears=None):
+        """Every take of an edit heard, and how many of the words ``asked`` for each sings kept on it.
+
+        ``asked`` is the new words of a change of words, or the words the song
+        sings where a retake sings again. Only a take not heard yet is heard,
+        so asking for one more take hears that one alone. The stretch as the
+        song sang it before is heard first: its language is the surest, and
+        every take is then heard in it, so the takes are heard alike. For a
+        retake it is also counted like a take, since it sings the same words.
+        The singing model is let go before the speech model loads --
+        ``release`` does it, and the next edit loads it again -- so a card
+        that holds one of them holds the other. The takes stay as they are
+        when nothing can hear them, and the join picks.
+
+        ``ears`` is the speech model already on the machine, which is all a
+        retake is heard with; a change of words fetches it when it is missing
+        and downloading is on.
         """
         from . import devices
         from .asr import runtime as asr_runtime
@@ -1220,7 +1320,7 @@ class YuE2EditTrack:
         if not fresh:
             progress.ratio(1.0)
             return
-        folder = _speech_folder(settings, progress, notices)
+        folder = ears or _speech_folder(settings, progress, notices)
         if folder is None:
             return
         release()
@@ -1242,12 +1342,17 @@ class YuE2EditTrack:
             log.warning("[yue2_comfy.edit_track] the takes could not be heard", exc_info=True)
             _said_once(notices, "notice", DEAF.format(str(error).rstrip(".") or "no reason given"))
             return
-        wanted = chr(10).join(step.now)
         entry["said"] = answers[0]["text"]
+        entry["asked"] = asked
+        if step.kind == "retake":
+            entry["was_heard"] = lines.heard(asked, answers[0]["text"])
+            log.info("[yue2_comfy.edit_track] the song as it was is heard singing %d of the %d "
+                     "words there: %s", entry["was_heard"][0], entry["was_heard"][1],
+                     entry["said"])
         for take, answer in zip(fresh, answers[1:]):
-            take.heard = lines.heard(wanted, answer["text"])
+            take.heard = lines.heard(asked, answer["text"])
             take.said = answer["text"]
-            log.info("[yue2_comfy.edit_track] take %d is heard singing %d of %d new words: %s",
+            log.info("[yue2_comfy.edit_track] take %d is heard singing %d of %d words: %s",
                      take.seed, take.heard[0], take.heard[1], take.said)
         log.info("[yue2_comfy.edit_track] %d take%s heard in %.1f s", len(fresh),
                  "" if len(fresh) == 1 else "s", time.perf_counter() - began)
@@ -1305,21 +1410,15 @@ class YuE2EditTrack:
         remembered by. Never fatal but for a cancel: the lines are a picture,
         and a song that cannot be timed is still the song.
         """
-        from .asr import runtime as asr_runtime
         from .inpaint import lines
 
         text = lines.heard_text(lyrics)
         if not text.strip():
             return []
         try:
-            times = _times_read(disk, text) if disk else None
+            times = self._times_of(place, label, disk, waveform, rate, text, progress, listened)
             if times is None:
-                folder, reader, device = place
-                listened.add("aligner")
-                times = asr_runtime.word_times(folder, reader, device, waveform, rate, text,
-                                               label, progress, interrupted)
-                if disk:
-                    _times_keep(disk, text, times)
+                return None
             return [[number, round(start, 3), round(stop, 3)]
                     for number, start, stop in lines.placed(lyrics, times)]
         except InterruptedError:
@@ -1328,6 +1427,28 @@ class YuE2EditTrack:
             log.warning("[yue2_comfy.edit_track] when the lines are sung could not be found, so "
                         "the window places them by the bars", exc_info=True)
             return None
+
+    def _times_of(self, place, label: str, disk: str, waveform, rate: int, text: str, progress,
+                  listened):
+        """The aligner's ``(word, start, stop)`` for ``text`` in ``waveform``; None when they cannot be had.
+
+        Read beside the song ``disk`` names when it was timed on these words
+        before, and heard with the aligner in ``place`` otherwise, then kept
+        there. ``label`` names the sound for this session's own memory of
+        times, so a sound timed once in a run is not timed twice. Without the
+        aligner at hand and with nothing on the disk, there is nothing to say.
+        """
+        from .asr import runtime as asr_runtime
+
+        times = _times_read(disk, text) if disk else None
+        if times is None and place is not None:
+            folder, reader, device = place
+            listened.add("aligner")
+            times = asr_runtime.word_times(folder, reader, device, waveform, rate, text, label,
+                                           progress, interrupted)
+            if disk:
+                _times_keep(disk, text, times)
+        return times
 
     def _sung(self, loaded, song, waveform, state, step, edit, name, settings, band):
         """The takes of one edit: the ones already sung under this name, and the ones still missing.
@@ -1375,7 +1496,7 @@ class YuE2EditTrack:
         return entry
 
     def _payload(self, name: str, keyed: str, sound, rate: int, state, wanted, picks,
-                 shown, settings, timed=None) -> dict:
+                 shown, settings, timed=None, hears=False) -> dict:
         """Everything the track window draws.
 
         ``song`` is the key the result is remembered under, empty when it could
@@ -1392,14 +1513,18 @@ class YuE2EditTrack:
         not heard for it (see ``_timed``); ``edits`` the list as it was read,
         with the take kept written into every retake, and ``sung`` the
         temperature and the guide the song itself was sung with, which is where
-        the window's own knobs start. After at least one edit there are also
+        the window's own knobs start. ``hears`` says whether a retake's takes
+        are heard on this machine (``_ears_at_hand``) or left to the join, so
+        the window says which before anything is sung. After at least one edit there are also
         ``kind``, ``at`` (the seconds the last edit took in hand, on the song as
         it was before it), ``dropped`` (the section tags a cut took out),
-        ``chosen`` and ``takes``: an entry a take, with seed, index, kept, sung,
-        seconds, total, peaks, rms, grid and lines (that take's own, since its
-        length moves the bars and the lines after the edit), join, natural,
-        heard, said and mumbled (what was heard of a take of new words, see
-        ``_take_facts``), ended, flagged and ``audio``, the temp file of the
+        ``asked`` (the words the takes were heard against: the new words, or
+        the words the song sings where a retake sings again; None when they
+        were not heard), ``chosen`` and ``takes``: an entry a take, with seed,
+        index, kept, sung, seconds, total, peaks, rms, grid and lines (that
+        take's own, since its length moves the bars and the lines after the
+        edit), join, natural, heard, said and mumbled (what was heard of the
+        take, see ``_take_facts``), ended, flagged and ``audio``, the temp file of the
         whole song that take makes, None when it could not be written. A take
         the list asks for that this session has not sung is ``sung`` false and
         empty otherwise, see ``_take_gap``. After a retake or a change of words
@@ -1413,7 +1538,7 @@ class YuE2EditTrack:
 
         timed = timed or {}
         drawn = _wave(sound)
-        payload = {"song": keyed, "was": name, "sung": _sampled(settings),
+        payload = {"song": keyed, "was": name, "sung": _sampled(settings), "hears": bool(hears),
                    "seconds": round(state.frames * FRAME_SECONDS, 3), "sample_rate": rate,
                    "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": None,
                    "lyrics": state.lyrics, "lines": timed.get("song"), "takes": [],
@@ -1425,19 +1550,21 @@ class YuE2EditTrack:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
         if shown is None:
             return payload
-        step, ordered, pick, made, prior, seeds, earlier, said = shown
+        step, ordered, pick, made, prior, seeds, earlier, entry = shown
+        was = entry.get("was_heard")
         payload["chosen"] = pick
         payload["kind"] = step.kind
         payload["at"] = [round(step.start * FRAME_SECONDS, 3), round(step.stop * FRAME_SECONDS, 3)]
         payload["dropped"] = list(step.dropped)
+        payload["asked"] = entry.get("asked")
         timings = timed.get("takes") or {}
         payload["takes"] = [
-            _take_facts(take, index, pick, made, rate, prior, step, timings.get(index))
+            _take_facts(take, index, pick, made, rate, prior, step, timings.get(index), was)
             if take is not None else _take_gap(seeds[index], index)
             for index, take in enumerate(ordered)]
         if step.kind != "cut":
             payload["before"] = _was_facts(earlier, rate, prior, step, made,
-                                           timed.get("before"), said)
+                                           timed.get("before"), entry.get("said"), was)
         return payload
 
 

@@ -192,12 +192,25 @@ const HEARD_WHY =
     + "the old line shares with the new one is heard either way, so a take that sang the old "
     + "line still scores a few.";
 
+const HEARD_AGAIN =
+    "How many of the words the song sings there the speech model hears this take sing, in "
+    + "their order. It misses a word now and then even when it is sung right, so compare with "
+    + "'As it was', heard the same way.";
+
+const HEARD_BEFORE =
+    "How many of the words the song sings there the speech model hears in the song as it was: "
+    + "what the takes are up against, since it misses the odd word however well it is sung.";
+
 const PICK_JOIN =
     "The take whose join the model scored best; it is the one the node keeps unless the list "
     + "says otherwise.";
 
 const PICK_WORDS =
     "The take heard singing the most of the new words, the join deciding a tie; it is the one "
+    + "the node keeps unless the list says otherwise.";
+
+const PICK_HEARD =
+    "The take heard singing the most of the words there, the join deciding a tie; it is the one "
     + "the node keeps unless the list says otherwise.";
 
 const WORDS_KNOBS =
@@ -1218,7 +1231,10 @@ class TrackWindow {
         return "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
             + (edit.op === "words"
                 ? ", hears every take, and keeps the one heard singing the most of the new words."
-                : ", and keeps the take whose join the model likes best.");
+                : this.payload?.hears
+                    ? ", hears every take, and keeps the one heard singing the most of the words "
+                        + "there."
+                    : ", and keeps the take whose join the model likes best.");
     }
 
     editSpan(edit) {
@@ -1384,8 +1400,16 @@ class TrackWindow {
             row.appendChild(box);
             row.appendChild(element("span", "yue2-t-takename", WAS_NAME));
             row.appendChild(element("span", "yue2-t-dim", wasFacts(was, this.payload.kind)));
+            const heard = heardFacts(was);
+            if (heard) {
+                const tag = element("span", "yue2-t-heard", heard);
+                tag.title = HEARD_BEFORE + (was.said ? "\n\nHeard: " + was.said : "")
+                    + (this.payload.asked ? "\n\nThe words there: " + this.payload.asked : "");
+                row.appendChild(tag);
+            }
             this.takesRow.appendChild(row);
         }
+        const heardAny = takes.some((take) => Array.isArray(take.heard));
         for (const take of takes) {
             const gone = take.sung === false;
             const row = element(gone ? "div" : "label", "yue2-t-take");
@@ -1405,12 +1429,15 @@ class TrackWindow {
             const heard = heardFacts(take);
             if (heard) {
                 const tag = element("span", take.mumbled ? "yue2-t-warn" : "yue2-t-heard", heard);
-                tag.title = HEARD_WHY + (take.said ? "\n\nHeard: " + take.said : "");
+                tag.title = (words ? HEARD_WHY : HEARD_AGAIN)
+                    + (take.said ? "\n\nHeard: " + take.said : "")
+                    + (!words && this.payload.asked
+                        ? "\n\nThe words there: " + this.payload.asked : "");
                 row.appendChild(tag);
             }
             if (take.kept) {
                 const mark = element("span", "yue2-t-dim", "the model's pick");
-                mark.title = words ? PICK_WORDS : PICK_JOIN;
+                mark.title = words ? PICK_WORDS : heardAny ? PICK_HEARD : PICK_JOIN;
                 row.appendChild(mark);
             }
             if (take.flagged) {

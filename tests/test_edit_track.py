@@ -104,6 +104,7 @@ def no_ears_of_the_machine(monkeypatch):
     """
     monkeypatch.setattr(edit_track, "_aligner_at_hand", lambda settings: None)
     monkeypatch.setattr(edit_track, "_speech_folder", lambda settings, progress, notices: None)
+    monkeypatch.setattr(edit_track, "_ears_at_hand", lambda settings: None)
 
 
 @pytest.fixture
@@ -1051,6 +1052,7 @@ def hearing(monkeypatch, said, seen=None):
     from yue2_comfy.asr import runtime as asr_runtime
 
     monkeypatch.setattr(edit_track, "_speech_folder", lambda settings, progress, notices: "speech")
+    monkeypatch.setattr(edit_track, "_ears_at_hand", lambda settings: "speech")
     monkeypatch.setattr(edit_track, "_clip", lambda waveform, rate, start, stop: (
         round(float(waveform.flatten()[0]), 2), round(start, 2), round(stop, 2)))
 
@@ -1065,8 +1067,8 @@ def hearing(monkeypatch, said, seen=None):
     monkeypatch.setattr(asr_runtime, "hear", hear)
 
 
-def lined(monkeypatch, calls=None):
-    """The aligner stood in and at hand: every word of the text sung half a second after the last."""
+def lined(monkeypatch, calls=None, first=0.0, gap=0.5):
+    """The aligner stood in and at hand: the first word at ``first`` seconds, each next ``gap`` after the last."""
     from yue2_comfy.asr import runtime as asr_runtime
 
     monkeypatch.setattr(edit_track, "_aligner_at_hand",
@@ -1076,10 +1078,10 @@ def lined(monkeypatch, calls=None):
                    cancelled=None):
         if calls is not None:
             calls.append((key, text, round(float(waveform.flatten()[0]), 2)))
-        found, at = [], 0.0
+        found, at = [], first
         for word in text.split():
-            found.append((word, at, round(at + 0.4, 3)))
-            at += 0.5
+            found.append((word, round(at, 3), round(at + 0.4, 3)))
+            at += gap
         return found
 
     monkeypatch.setattr(asr_runtime, "word_times", word_times)
@@ -1200,13 +1202,130 @@ def test_a_take_kept_that_is_heard_singing_few_of_its_words_is_said_to(stand, mo
     assert ("warn", edit_track.MUMBLED_SAID.format(1, 3)) in said
 
 
-def test_a_retake_is_not_heard_at_all(stand, monkeypatch):
-    """The same words sung again have nothing new to listen for: the join picks, as it did."""
+RETAKE = '[{"op": "retake", "bars": [2, 4], "seed": 9}]'
+"""A retake of the verse, bars 3 and 4, from the pickup at the end of bar 2."""
+
+SUNG = "one two three four five six seven eight"
+"""Every word of ``LYRICS``, in order, as the aligner is given them."""
+
+
+def sung_there(at, first=4.6, gap=1.0):
+    """The words of ``SUNG`` whose middle lies in ``at``, timed as ``lined(first=4.6, gap=1.0)`` times them."""
+    return [word for index, word in enumerate(SUNG.split())
+            if at[0] <= first + index * gap + 0.2 < at[1]]
+
+
+def test_a_retake_keeps_the_take_heard_singing_the_words_there(stand, monkeypatch):
+    """Take 2 joins better; take 1 is heard singing the verse. The words are what is listened to."""
+    lined(monkeypatch, first=4.6, gap=1.0)
+    hearing(monkeypatch, {"was": SUNG, 9: SUNG, 10: "one"})
+    drawn = payload(run(stand, RETAKE))
+    there = sung_there(drawn["at"])
+    assert 2 <= len(there) < 8, "the words of the stretch, not of the song"
+    assert drawn["asked"] == " ".join(there)
+    assert drawn["chosen"] == 0
+    count = len(there)
+    assert [take["heard"] for take in drawn["takes"]] == [[count, count],
+                                                          [int("one" in there), count]]
+    assert [take["mumbled"] for take in drawn["takes"]] == [False, True]
+    assert drawn["before"]["heard"] == [count, count], "the song as it was, heard the same way"
+    assert drawn["before"]["said"] == SUNG
+    assert drawn["hears"] is True
+
+
+def test_a_retake_is_heard_after_the_singing_model_is_let_go(stand, monkeypatch):
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    events = []
+
+    class watched(_no_models):
+        def __enter__(self):
+            events.append("sing")
+            return super().__enter__()
+
+        def __exit__(self, *exc):
+            events.append("let go")
+            return False
+
+    monkeypatch.setattr("yue2_comfy.staged.session", watched)
+    lined(monkeypatch, first=4.6, gap=1.0)
+    hearing(monkeypatch, {"was": SUNG, 9: SUNG, 10: SUNG})
+    heard = asr_runtime.hear
+    monkeypatch.setattr(asr_runtime, "hear",
+                        lambda *args, **kwargs: events.append("hear") or heard(*args, **kwargs))
+    run(stand, RETAKE)
+    assert events == ["sing", "let go", "hear"]
+
+
+def test_a_retake_is_left_to_the_join_when_its_words_cannot_be_placed(stand, monkeypatch):
+    """Without the aligner, and nothing timed beside the song, nobody knows which words are there."""
     seen = []
     hearing(monkeypatch, {}, seen)
-    drawn = payload(run(stand, '[{"op": "retake", "bars": [2, 6], "seed": 9}]'))
+    drawn = payload(run(stand, RETAKE))
     assert seen == [] and drawn["chosen"] == 1
     assert all(take["heard"] is None for take in drawn["takes"])
+    assert drawn["asked"] is None and drawn["hears"] is False
+
+
+def test_a_retake_is_heard_by_the_word_times_kept_beside_the_song(stand, monkeypatch, tmp_path):
+    """The aligner timed this song in an earlier session; its times are enough without it."""
+    from yue2_comfy.inpaint import lines
+
+    monkeypatch.setattr(songs, "_store", songs.Store(str(tmp_path)))
+    name = songs.remember(stand.wave, RATE, stand.song)
+    text = lines.heard_text(LYRICS)
+    edit_track._times_keep(name, text, [(word, 4.6 + index, 5.0 + index)
+                                        for index, word in enumerate(text.split())])
+    seen = []
+    hearing(monkeypatch, {"was": SUNG, 9: SUNG, 10: "one"}, seen)
+    drawn = payload(run(stand, RETAKE))
+    assert [clip for clip, _cut in seen] == ["was", 9, 10]
+    assert drawn["chosen"] == 0 and drawn["asked"] == " ".join(sung_there(drawn["at"]))
+
+
+def test_a_retake_without_the_speech_model_is_left_to_the_join_without_a_word(stand,
+                                                                             monkeypatch):
+    """Hearing a retake is a better pick, not the edit: nothing is fetched and nothing is said."""
+    from yue2_comfy import download
+
+    lined(monkeypatch, first=4.6, gap=1.0)
+    fetched = []
+    monkeypatch.setattr(download, "ensure_asr",
+                        lambda settings, progress=None: fetched.append(1) or "speech")
+    monkeypatch.setattr(edit_track, "_speech_folder", SPEECH_FOLDER)
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, RETAKE))
+    assert drawn["chosen"] == 1 and fetched == [] and said == []
+    assert drawn["hears"] is False
+
+
+def test_a_retake_where_nothing_is_sung_is_not_heard(stand, monkeypatch):
+    seen = []
+    lined(monkeypatch, first=4.6, gap=1.0)
+    hearing(monkeypatch, {}, seen)
+    drawn = payload(run(stand, '[{"op": "retake", "bars": [8, 10], "seed": 9}]'))
+    assert seen == [] and drawn["chosen"] == 1 and drawn["asked"] is None
+
+
+def test_a_retake_heard_as_well_as_the_song_it_replaces_is_not_mumbling(stand, monkeypatch):
+    """The recogniser misses the same words in the song and in its takes."""
+    lined(monkeypatch, first=4.6, gap=1.0)
+    hearing(monkeypatch, {"was": "one", 9: "one", 10: "one"})
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, RETAKE))
+    assert "one" in sung_there(drawn["at"]) and drawn["before"]["heard"][0] == 1
+    assert [take["mumbled"] for take in drawn["takes"]] == [False, False]
+    assert [text for kind, text in said if kind == "warn"] == []
+
+
+def test_a_retake_kept_that_is_heard_singing_less_than_the_song_did_is_said_to(stand,
+                                                                               monkeypatch):
+    lined(monkeypatch, first=4.6, gap=1.0)
+    hearing(monkeypatch, {"was": SUNG, 9: "one", 10: "one"})
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, RETAKE))
+    count = len(sung_there(drawn["at"]))
+    assert ("warn", edit_track.MUMBLED_AGAIN.format(1, count, count)) in said
 
 
 def test_the_models_that_listened_are_let_go_unless_the_run_keeps_them(stand, monkeypatch):

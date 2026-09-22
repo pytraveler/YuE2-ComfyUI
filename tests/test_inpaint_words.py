@@ -296,6 +296,15 @@ def test_what_is_heard_is_compared_without_case_punctuation_or_yo():
     assert lines.heard("", "anything at all") == (0, 0)
 
 
+def test_a_retake_is_heard_against_the_words_whose_middle_it_holds():
+    """A word cut across an end of the stretch belongs to the side that sings most of it."""
+    times = [("we", 0.0, 0.4), ("rise", 0.5, 1.5), ("up", 1.6, 2.0), ("again", 2.2, 3.4)]
+    assert lines.within(times, 0.9, 2.9) == "rise up again"
+    assert lines.within(times, 1.1, 2.7) == "up", "rise is sung mostly before, again after"
+    assert lines.within(times, 5.0, 9.0) == "", "nothing is sung there"
+    assert lines.within([], 0.0, 9.0) == ""
+
+
 def test_the_lines_before_a_change_of_words_keep_their_places_under_the_new_numbers():
     """The song as it was is drawn beside the takes, while the words panel shows the words after.
 

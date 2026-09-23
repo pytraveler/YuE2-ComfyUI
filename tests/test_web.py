@@ -1269,6 +1269,13 @@ EDIT_LISTS = [
     '[{"op": "break", "to": 13, "bars": [13, 17]}]',
     '[{"op": "break", "to": 13, "seconds": [1.0, 2.0]}]',
     '[{"op": "break", "to": 13, "takes": 9}]',
+    '[{"op": "break", "to": 13, "length": 4, "at": -6, "seed": 5}]',
+    '[{"op": "break", "to": 13, "at": 2.0}]',
+    '[{"op": "break", "to": 13, "at": 0}]',
+    '[{"op": "break", "to": 13, "at": null}]',
+    '[{"op": "break", "to": 13, "at": 1.5}]',
+    '[{"op": "break", "to": 13, "at": "2"}]',
+    '[{"op": "break", "to": 13, "at": true}]',
     '[{"op": "retake", "bars": [1, 2], "length": 4}]',
     '["retake"]',
     "[null]",
@@ -1300,7 +1307,7 @@ def spelled(edit):
             "seed": edit.seed, "takes": edit.takes, "take": edit.take,
             "vary": edit.vary, "guide": edit.guide, "fade": edit.fade,
             "lines": None if edit.lines is None else list(edit.lines), "text": edit.text,
-            "score": edit.score, "to": edit.to, "length": edit.length}
+            "score": edit.score, "to": edit.to, "length": edit.length, "at": edit.at}
 
 
 @needs_node
@@ -1343,13 +1350,16 @@ def test_what_the_window_writes_is_what_the_node_sings():
     assert [spelled(edit) for edit in edits] == [
         {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3,
          "take": 2, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None, "score": None, "to": None, "length": None},
+         "text": None, "score": None, "to": None, "length": None,
+         "at": None},
         {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None,
          "vary": None, "guide": None, "fade": None, "lines": None, "text": None, "score": None,
-         "to": None, "length": None},
+         "to": None, "length": None,
+         "at": None},
         {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
          "take": None, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None, "score": None, "to": None, "length": None},
+         "text": None, "score": None, "to": None, "length": None,
+         "at": None},
     ]
     assert json.loads(track.written(edits)) == json.loads(written[0])
     assert len(track.read(written[1], 1)) == 2
@@ -2333,17 +2343,23 @@ def test_the_break_the_window_writes_is_the_break_the_node_plays():
     from yue2_comfy.inpaint import track
 
     got = run_edits("""
-        const made = [e.breakFor(13, 4, 3, 831001, {vary: 1.5}), e.breakFor(2, 99, 9, 5)];
+        const made = [e.breakFor(13, 4, 3, 831001, {vary: 1.5}), e.breakFor(2, 99, 9, 5),
+                      e.breakFor(13, 4, 2, 7, {}, -6), e.breakFor(13, 4, 2, 7, {}, 1),
+                      e.breakFor(13, 4, 2, 7, {}, 0)];
         console.log(JSON.stringify({written: e.writeEdits(made),
             said: made.map((edit, index) => e.describeEdit(edit, index, 40))}));
     """)
-    first, second = track.read(got["written"], 1)
-    assert (first.op, first.to, first.length, first.takes, first.seed, first.vary) == (
-        "break", 13, 4, 3, 831001, 1.5)
+    first, second, ahead, into, down = track.read(got["written"], 1)
+    assert (first.op, first.to, first.length, first.takes, first.seed, first.vary, first.at) == (
+        "break", 13, 4, 3, 831001, 1.5, None)
     assert (second.to, second.length, second.takes) == (2, 16, 4), (
         "the window keeps a break to the bars and takes the node plays")
+    assert (ahead.at, into.at, down.at) == (-6, 1, 0), "the beat the arrows chose goes to the node"
     assert got["said"] == ["1. A break of 4 bars before bar 14, variety 1.50",
-                          "2. A break of 16 bars before bar 3"]
+                          "2. A break of 16 bars before bar 3",
+                          "3. A break of 4 bars before bar 14, 6 beats ahead of it",
+                          "4. A break of 4 bars before bar 14, 1 beat into it",
+                          "5. A break of 4 bars before bar 14, on its downbeat"]
 
 
 @needs_node
@@ -2360,6 +2376,14 @@ def test_the_track_offers_a_break_beside_going_on_and_says_why_it_cannot():
     takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
     assert "voiceFacts(take)" in takes and "PICK_BREAK" in takes and "VOICE_LEFT_WHY" in takes
     assert "if (this.stopBreaking())" in source, "Escape puts the break box away"
+    box = source[source.index("    breakBox() {"):source.index("    paintBreakFact() {")]
+    assert box.index('"\\u2190"') < box.index('"\\u2192"') < box.index("const bars = "), (
+        "the arrows come before the bars, where the person asked for them")
+    assert "this.nudgeBreak(-1)" in box and "this.nudgeBreak(1)" in box
+    said = source[source.index("    saidSpan() {"):source.index("    rawLines() {")]
+    assert "this.breakPlace()" in said, "the green mark is where the node puts the break in"
+    put = source[source.index("    putBreak() {"):source.index("    whyNotBreak() {")]
+    assert "this.breaking.at)" in put, "the beat chosen goes on the list"
     for method in ("    whyNotMore(selection) {", "    whyNotNotes() {", "    whyNotGoOn() {",
                    "    whyNotBreak() {"):
         start = source.index(method)

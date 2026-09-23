@@ -177,31 +177,68 @@ def test_repaint_keeps_held_frames_and_draws_the_rest_again(models, song):
     assert not torch.equal(result[40:60], known[40:60])
 
 
-def test_an_edit_across_two_acoustic_chunks_is_refused_and_a_chunk_without_one_is_not_run(models, song,
-                                                                                         monkeypatch):
+def held_but(*runs):
+    held = torch.ones(FRAMES, dtype=torch.bool)
+    for low, high in runs:
+        held[low:high] = False
+    return held
+
+
+def test_windows_reach_past_the_edit_and_share_when_close(monkeypatch):
+    monkeypatch.setattr(core, "WINDOW", 10)
+    assert core.windows_of(held_but((40, 60)), 1000) == [(30, 70)]
+    assert core.windows_of(held_but((5, 8), (110, 118)), 1000) == [(0, 18), (100, 120)]
+    assert core.windows_of(held_but((40, 45), (60, 65)), 1000) == [(30, 75)]
+    assert core.windows_of(held_but((40, 45), (66, 70)), 1000) == [(30, 55), (56, 80)]
+    assert core.windows_of(held_but(), 1000) == []
+
+
+def test_a_window_fits_the_acoustic_stage_and_never_holds_another_windows_frames(monkeypatch):
+    monkeypatch.setattr(core, "WINDOW", 10)
+    assert core.windows_of(held_but((40, 50)), 16) == [(37, 53)]
+    assert core.windows_of(held_but((40, 45), (50, 55)), 12) == [(37, 49), (47, 59)]
+    assert core.windows_of(held_but((2, 12)), 14) == [(0, 14)]
+    with pytest.raises(ValueError, match="holds at most"):
+        core.windows_of(held_but((40, 60)), 12)
+
+
+def test_an_edit_is_drawn_in_a_window_as_upstream_draws_a_chunk_of_it(models, song, monkeypatch):
     made, _sound = song
-    prefix = list(made.prefix)
-    monkeypatch.setattr(core, "CONTEXT", len(prefix) + 3 + FRAMES)
+    prefix, codec = list(made.prefix), list(made.codec)
+    monkeypatch.setattr(core, "WINDOW", 10)
     known = core.latents_of(made)
     noise = core.noise_of(made.noise)
-    across = torch.ones(FRAMES, dtype=torch.bool)
-    across[55:65] = False
-    with pytest.raises(ValueError, match="boundary between two parts"):
-        core.repaint(models, prefix, list(made.codec), noise, known, across, 4)
-    runs = []
+    drawn = []
     original = nar.CachedNAR
 
     class Counted(original):
         def __init__(self, model, chunk, *args, **kwargs):
-            runs.append(len(chunk.noise))
+            drawn.append((list(chunk.ar_tokens), chunk.noise.clone()))
             super().__init__(model, chunk, *args, **kwargs)
 
     monkeypatch.setattr(nar, "CachedNAR", Counted)
-    inside = torch.ones(FRAMES, dtype=torch.bool)
-    inside[70:80] = False
-    result = core.repaint(models, prefix, list(made.codec), noise, known, inside, 4)
-    assert runs == [60]
-    assert torch.equal(result[:60], known[:60])
+    held = held_but((70, 80))
+    result = core.repaint(models, prefix, codec, noise, known, held, 4)
+    assert [len(tokens) for tokens, _noise in drawn] == [len(prefix) + 30 + 1]
+    tokens, window_noise = drawn[0]
+    assert tokens == prefix + [value + CODEC_OFFSET for value in codec[60:90]] + [MUSIC_END]
+    assert torch.equal(window_noise, noise[60:90])
+    assert torch.equal(result[held], known[held])
+    assert not torch.equal(result[70:80], known[70:80])
+    engine = original(models.lm, nar.Chunk(tokens, noise[60:90].contiguous()), "sdpa", None)
+    assert torch.equal(result[60:90], core._solved(engine, 4, noise[60:90], known[60:90], held[60:90]))
+
+
+def test_an_edit_across_the_old_chunk_boundary_is_drawn(models, song, monkeypatch):
+    made, _sound = song
+    prefix = list(made.prefix)
+    monkeypatch.setattr(core, "CONTEXT", len(prefix) + 3 + FRAMES)
+    monkeypatch.setattr(core, "WINDOW", 10)
+    known = core.latents_of(made)
+    across = held_but((55, 65))
+    result = core.repaint(models, prefix, list(made.codec), core.noise_of(made.noise), known, across, 4)
+    assert torch.equal(result[across], known[across])
+    assert not torch.equal(result[55:65], known[55:65])
 
 
 def test_the_sampler_is_told_the_tokens_sung_before_the_edit(monkeypatch):

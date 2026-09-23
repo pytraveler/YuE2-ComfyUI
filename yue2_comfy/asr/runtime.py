@@ -22,6 +22,11 @@ those answers are kept too, by the clip's name.
 
 The model is kept only when 'keep_model_loaded' asks for it, and the Unload
 Models button lets it go (see ``memory``).
+
+With 'low_vram' both are loaded for a small card -- the speech model's layers
+packed, the audio's convolutions in parts -- and they take turns: loading one
+lets the other go. What is kept is kept apart by it too, because the packed
+model can hear a few words differently.
 """
 
 from __future__ import annotations
@@ -35,13 +40,22 @@ import threading
 log = logging.getLogger(__name__)
 
 KEEP_RESULTS = 8
-ROOM_BYTES = 6 * 1024 ** 3
-"""Free VRAM wanted before loading: 3.8 GB of weights, a song's cache, the audio encoder's activations and a margin."""
+ROOM_BYTES = int(6.5 * 1024 ** 3)
+"""Free VRAM wanted before loading: 3.8 GiB of weights, the audio encoder's convolutions and a margin.
+
+Measured on 2026-09-23: over six minutes of audio the convolutions took 2.36
+GiB above the weights, more than decoding the answer did (1.58 with its
+cache); that is their ceiling, a longer recording goes through them in parts.
+"""
+SMALL_ROOM_BYTES = int(4.5 * 1024 ** 3)
+"""The same with 'low_vram': 2.49 GiB of packed weights and 1.58 GiB for decoding six minutes, measured, and a margin."""
 SHORTEST_PIECE = 1600
 """A section shorter than a tenth of a second at 16 kHz is not worth hearing on its own."""
 
-ALIGNER_ROOM_BYTES = 3 * 1024 ** 3
-"""Free VRAM wanted before the aligner is loaded: 1.2 GB of weights, one pass over a long song, and a margin."""
+ALIGNER_ROOM_BYTES = int(4.5 * 1024 ** 3)
+"""Free VRAM wanted before the aligner is loaded: 1.75 GiB of weights, 2.34 GiB for a pass over six minutes, a margin."""
+SMALL_ALIGNER_ROOM_BYTES = int(2.75 * 1024 ** 3)
+"""The same with 'low_vram', whose pass over six minutes took 0.65 GiB above the weights."""
 
 KEEP_TIMES = 48
 """How many songs' word times are kept: a list of words each, and a window asks for one a take."""
@@ -104,11 +118,13 @@ def _free_bytes(device) -> int:
         return 1 << 62
 
 
-def _make_room(device, room: int = ROOM_BYTES) -> None:
+def _make_room(device, room: int = ROOM_BYTES, other=None) -> None:
     """Room on the card for the model, taken only when it is short: first ComfyUI's models, then this pack's other kept ones.
 
     A card with room to spare keeps everything where it is, so a run that
-    follows a song does not pay to reload the song model afterwards.
+    follows a song does not pay to reload the song model afterwards. ``other``
+    is the other listener kept here, ``(name, is_loaded, unload)``: it goes
+    first, being the quickest to load again.
     """
     if getattr(device, "type", "cpu") != "cuda":
         return
@@ -126,34 +142,45 @@ def _make_room(device, room: int = ROOM_BYTES) -> None:
         from ..sheetsage import runtime as sheetsage_runtime
         from ..vocals import runtime as vocals_runtime
 
-        for name, keeper in (("SheetSage2", sheetsage_runtime), ("Mel-Band RoFormer", vocals_runtime),
-                             ("YuE2", loader)):
+        keepers = [other] if other is not None else []
+        keepers += [(name, keeper.is_loaded, keeper.unload) for name, keeper in (
+            ("SheetSage2", sheetsage_runtime), ("Mel-Band RoFormer", vocals_runtime), ("YuE2", loader))]
+        for name, loaded, let_go in keepers:
             if _free_bytes(device) >= room:
                 break
-            if keeper.is_loaded():
+            if loaded():
                 log.info("[yue2_comfy.asr] unloading the kept %s model to make room", name)
-                keeper.unload()
+                let_go()
     except Exception:
         log.debug("[yue2_comfy.asr] the pack's other models left in place", exc_info=True)
 
 
-def acquire(folder: str, device, progress=None) -> tuple:
-    """The network and tokenizer for this folder on this device, loading them when they are not already."""
-    key = (stamp(folder), str(device))
+def acquire(folder: str, device, progress=None, low_vram: bool = False) -> tuple:
+    """The network and tokenizer for this folder on this device, loading them when they are not already.
+
+    With ``low_vram`` the model is the one packed for a small card
+    (``model.load``), and the word aligner leaves the card before it comes:
+    on a small card the two listen one at a time.
+    """
+    key = (stamp(folder), str(device), bool(low_vram))
     with _LOCK:
         if _STATE["key"] == key and _STATE["net"] is not None:
             return _STATE["net"], _STATE["tokenizer"]
         unload()
-        _make_room(device)
+        if low_vram:
+            unload_aligner()
+        _make_room(device, SMALL_ROOM_BYTES if low_vram else ROOM_BYTES,
+                   ("Qwen3-ForcedAligner", aligner_loaded, unload_aligner))
         if progress is not None:
             progress.text("Loading Qwen3-ASR", force=True)
         from . import model
         from .tokenizer import Tokenizer
 
         tokenizer = Tokenizer(os.path.join(folder, "tokenizer.json"))
-        net = model.load(folder, device)
+        net = model.load(folder, device, low_vram=bool(low_vram))
         _STATE.update(key=key, net=net, tokenizer=tokenizer)
-        log.info("[yue2_comfy.asr] loaded %s on %s", os.path.basename(folder), device)
+        log.info("[yue2_comfy.asr] loaded %s on %s%s", os.path.basename(folder), device,
+                 ", packed for a small card" if low_vram else "")
         return net, tokenizer
 
 
@@ -185,49 +212,58 @@ def unload_aligner() -> None:
             log.debug("[yue2_comfy.asr] no cache to empty", exc_info=True)
 
 
-def acquire_aligner(folder: str, tokenizer_path: str, device, progress=None):
-    """The forced aligner for this folder on this device, loaded when it is not already held."""
-    key = (stamp(folder), os.path.normcase(os.path.abspath(tokenizer_path)), str(device))
+def acquire_aligner(folder: str, tokenizer_path: str, device, progress=None, low_vram: bool = False):
+    """The forced aligner for this folder on this device, loaded when it is not already held.
+
+    With ``low_vram`` it is loaded for a small card (``aligner.load``) and the
+    speech model leaves the card before it comes.
+    """
+    key = (stamp(folder), os.path.normcase(os.path.abspath(tokenizer_path)), str(device), bool(low_vram))
     with _LOCK:
         if _ALIGNER["key"] == key and _ALIGNER["held"] is not None:
             return _ALIGNER["held"]
         unload_aligner()
-        _make_room(device, ALIGNER_ROOM_BYTES)
+        if low_vram:
+            unload()
+        _make_room(device, SMALL_ALIGNER_ROOM_BYTES if low_vram else ALIGNER_ROOM_BYTES,
+                   ("Qwen3-ASR", is_loaded, unload))
         if progress is not None:
             progress.text("Loading the word aligner", force=True)
         from . import aligner as aligner_module
 
-        held = aligner_module.load(folder, tokenizer_path, device)
+        held = aligner_module.load(folder, tokenizer_path, device, low_vram=bool(low_vram))
         _ALIGNER.update(key=key, held=held)
         log.info("[yue2_comfy.asr] loaded %s on %s", os.path.basename(folder), device)
         return held
 
 
 def word_times(folder: str, tokenizer_path: str, device, waveform, rate: int, text: str, key,
-               progress=None, cancelled=None) -> list:
+               progress=None, cancelled=None, low_vram: bool = False) -> list:
     """``[(word, start, stop)]`` for ``text`` sung in ``waveform``, measured once and kept.
 
     ``key`` names the sound the times belong to -- the song's key, or whatever
     stands for the sound an edit has made -- and the words go into the same
-    name, because other words are other times.
+    name, because other words are other times. ``low_vram`` times them with
+    the aligner as a small card holds it.
     """
     import hashlib
 
     said = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
-    full_key = (stamp(folder), str(key), said)
+    full_key = (stamp(folder), str(key), said, bool(low_vram))
     found = _get(_TIMES, full_key)
     if found is not None:
         return found
     from . import aligner as aligner_module, model
 
-    held = acquire_aligner(folder, tokenizer_path, device, progress)
+    held = acquire_aligner(folder, tokenizer_path, device, progress, low_vram=low_vram)
     audio = model.mono_16k(waveform, rate)
     times = aligner_module.align(held, audio, text, cancelled=cancelled, progress=progress)
     _put(_TIMES, full_key, times, KEEP_TIMES)
     return times
 
 
-def hear(folder: str, device, clips, language: str = "", cancelled=None, progress=None) -> list:
+def hear(folder: str, device, clips, language: str = "", cancelled=None, progress=None,
+         low_vram: bool = False) -> list:
     """``[{"language", "text"}]``, one for each ``(name, samples)`` in ``clips``, heard one by one.
 
     A clip is ``[samples]`` of mono 16 kHz audio, a few seconds of a song, and
@@ -236,6 +272,7 @@ def hear(folder: str, device, clips, language: str = "", cancelled=None, progres
     the model names it, is the one the rest are heard in, so that a run of
     takes is heard alike; the caller puts first the clip whose language is
     surest. The captured decoding step is let go however this ends.
+    ``low_vram`` hears them with the model packed for a small card.
     """
     weights = stamp(folder)
     answers = []
@@ -244,13 +281,13 @@ def hear(folder: str, device, clips, language: str = "", cancelled=None, progres
         for index, (name, samples) in enumerate(clips):
             if cancelled is not None and cancelled():
                 raise InterruptedError("Cancelled while the takes were being heard")
-            key = (weights, str(name), language)
+            key = (weights, str(name), language, bool(low_vram))
             found = _get(_HEARD, key)
             if found is None:
                 from . import model
 
                 if net is None:
-                    net, tokenizer = acquire(folder, device, progress)
+                    net, tokenizer = acquire(folder, device, progress, low_vram=low_vram)
                 answer = model.recognise(net, tokenizer, samples, language=language,
                                          cancelled=cancelled)
                 found = {"language": answer["language"] or language, "text": answer["text"]}
@@ -305,19 +342,21 @@ def guide_language(language) -> str:
         return ""
 
 
-def recognise(folder: str, device, waveform, rate: int, timed: list, key, progress=None, cancelled=None) -> dict:
+def recognise(folder: str, device, waveform, rate: int, timed: list, key, progress=None, cancelled=None,
+              low_vram: bool = False) -> dict:
     """``{"language", "text", "parts"}``: the whole song's words, and those words cut into ``timed``'s sections.
 
     The captured decoding step and its cache are let go however the
     recognition ends, so a cancelled run leaves nothing on the card.
+    ``low_vram`` hears them with the model packed for a small card.
     """
-    full_key = tuple(key) + (plan(timed),)
+    full_key = tuple(key) + (plan(timed), bool(low_vram))
     found = _get(_RESULTS, full_key)
     if found is not None:
         if progress is not None:
             progress.text("Words reused: the recording has not changed", force=True)
         return found
-    net, tokenizer = acquire(folder, device, progress)
+    net, tokenizer = acquire(folder, device, progress, low_vram=low_vram)
     try:
         result = _recognise(net, tokenizer, waveform, rate, timed, progress, cancelled)
     finally:

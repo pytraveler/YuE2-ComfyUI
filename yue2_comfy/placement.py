@@ -392,13 +392,23 @@ _STAGING = {}
 
 
 def _staging(device):
-    """The two pinned buffers and the copy stream for one card, made on first use."""
+    """The two pinned buffers and the copy stream for one card, made on first use.
+
+    Made outside inference mode whatever the first use is inside: a tensor
+    made in it can never again be written outside it, and these are written
+    at every move. Found on 2026-09-24 on a card left 4 GiB free: the first
+    move, the AR half onto the card for an edit's join, made them inside
+    inference mode, and a change of words failed at the next, the NAR half's
+    for the flow matching, outside it. On a large card nothing moves, so
+    nothing was seen.
+    """
     import torch
 
     held = _STAGING.get(device)
     if held is None:
-        held = ([torch.empty(STAGE_BYTES, dtype=torch.uint8, pin_memory=True)
-                 for _ in range(2)], torch.cuda.Stream(device))
+        with torch.inference_mode(False):
+            held = ([torch.empty(STAGE_BYTES, dtype=torch.uint8, pin_memory=True)
+                     for _ in range(2)], torch.cuda.Stream(device))
         _STAGING[device] = held
     return held
 

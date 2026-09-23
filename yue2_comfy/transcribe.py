@@ -411,7 +411,8 @@ class YuE2Transcribe:
         try:
             words = asr_runtime.recognise(folder, devices.resolve(settings["device"]), track["samples"],
                                           track["rate"], timed, key=(recording, asr_runtime.stamp(folder)),
-                                          progress=band, cancelled=interrupted)
+                                          progress=band, cancelled=interrupted,
+                                          low_vram=bool(settings.get("low_vram")))
         except InterruptedError:
             translate_interrupt()
             raise

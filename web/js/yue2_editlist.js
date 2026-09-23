@@ -140,7 +140,8 @@ function editOf(item, index, takes) {
     if (op === "cut") {
         return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
                  vary: null, guide: null, lines: null, text: null, score: null,
-                 fade: measure(item, "fade", where, "the fade", FADE), to: null, length: null };
+                 fade: measure(item, "fade", where, "the fade", FADE), to: null, length: null,
+                 at: null };
     }
     if (op === "move") {
         const to = given(item, "to");
@@ -155,7 +156,7 @@ function editOf(item, index, takes) {
         }
         return { op, bars: span.bars, seconds: null, seed: 0, takes: 1, take: null, vary: null,
                  guide: null, fade: null, lines: null, text: null, score: null, to,
-                 length: null };
+                 length: null, at: null };
     }
     const seed = asked(item, "seed", 0);
     if (!whole(seed)) throw new Error(where + ": the seed is not a whole number.");
@@ -218,6 +219,7 @@ function editOf(item, index, takes) {
     }
     let to = null;
     let length = null;
+    let at = null;
     if (op === "break") {
         to = given(item, "to");
         if (to === null) {
@@ -237,11 +239,15 @@ function editOf(item, index, takes) {
             throw new Error(where + " asks for a break of " + length + " bars; it has "
                 + BREAK_BARS[0] + " to " + BREAK_BARS[1] + ".");
         }
+        at = given(item, "at");
+        if (at !== null && !whole(at)) {
+            throw new Error(where + ": the beat the break goes in at is not a whole number.");
+        }
     }
     return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
              vary: measure(item, "vary", where, "the variety", VARY),
              guide: measure(item, "guide", where, "the guide", GUIDE), fade: null,
-             lines, text: said, score, to, length };
+             lines, text: said, score, to, length, at };
 }
 
 export function readEdits(text, takes = 1) {
@@ -282,6 +288,7 @@ export function writeEdits(edits) {
         if (edit.op === "break") {
             item.to = edit.to;
             item.length = edit.length;
+            if (whole(edit.at)) item.at = edit.at;
         }
         if (edit.op === "retake" || edit.op === "words" || edit.op === "notes"
             || edit.op === "extend" || edit.op === "break") {
@@ -424,7 +431,7 @@ export function describeEdit(edit, index, count = 0) {
     if (edit.op === "move") {
         where = barsText(edit.bars[0], edit.bars[1]) + (count && edit.to >= count ? " to the end"
             : " before bar " + (edit.to + 1));
-    } else if (edit.op === "break") where = "before bar " + (edit.to + 1);
+    } else if (edit.op === "break") where = "before bar " + (edit.to + 1) + beatsFrom(edit.at);
     else if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
     else if (edit.seconds) where = spanText(edit.seconds[0], edit.seconds[1]);
     else if (edit.lines) where = linesText(edit.lines[0], edit.lines[1]);
@@ -540,11 +547,19 @@ export function editFor(selection, op, takes, seed, knobs = {}) {
     return edit;
 }
 
-export function breakFor(to, length, takes, seed, knobs = {}) {
+export function beatsFrom(at) {
+    if (!whole(at)) return "";
+    if (at === 0) return ", on its downbeat";
+    const count = Math.abs(at);
+    return ", " + count + (count === 1 ? " beat " : " beats ") + (at < 0 ? "ahead of it" : "into it");
+}
+
+export function breakFor(to, length, takes, seed, knobs = {}, at = null) {
     const edit = { op: "break", bars: null, seconds: null, seed,
                    takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
                    vary: null, guide: null, fade: null, lines: null, text: null, score: null, to,
-                   length: Math.max(BREAK_BARS[0], Math.min(BREAK_BARS[1], Math.round(length))) };
+                   length: Math.max(BREAK_BARS[0], Math.min(BREAK_BARS[1], Math.round(length))),
+                   at: whole(at) ? at : null };
     if (typeof knobs.vary === "number") edit.vary = knobs.vary;
     if (typeof knobs.guide === "number") edit.guide = knobs.guide;
     return edit;

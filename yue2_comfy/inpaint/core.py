@@ -15,8 +15,9 @@ what they do there.
    three seconds of the old song follow, and the best count wins. An edit that
    reaches the end of the song has nothing after it to join, so there the model
    may end the song itself once it has sung the shortest length allowed.
-3. The acoustic stage runs over the whole song with every old frame held on
-   the line from its own noise to its own latent (RePaint), so that those
+3. The acoustic stage runs over a window of the song, the edit and
+   ``WINDOW`` frames on each side of it, with every old frame held on the
+   line from its own noise to its own latent (RePaint), so that those
    frames end as the old latents to the bit and only the new frames and
    ``ops.MARGIN`` of the old ones on each side are drawn again.
 4. A window around the edit is decoded and laid into the old sound, with a
@@ -27,8 +28,8 @@ what they do there.
 A cut is stages 3 and 4 alone: nothing new is sung, and the two sides meet at
 the seam, under the prompt with the cut's score and lyrics. A move
 (``moved``) lays pieces of the old song one after another, sings the last bar
-before each seam again as stages 1 and 2 would, and then draws the audio of
-the whole song once, under the prompt with the moved score and lyrics.
+before each seam again as stages 1 and 2 would, and then draws the audio
+around every seam, under the prompt with the moved score and lyrics.
 
 A song that goes on (``extended``) has a stage before the first: the model
 writes the rest of the score from where the singing ends, for the lyrics with
@@ -52,7 +53,8 @@ This is the inpainting stand of 2026-09-19 carried into the pack. On its three
 songs by three seeds, retakes sang their words every time, the join landed
 within two frames of the length the bars asked for, and a retake took 6.5-14 s
 on an RTX 5090 against 34-43 s for the whole song -- the acoustic stage over
-the whole song being most of it.
+the whole song being most of it, 22 s of a retake's 28 on a user's song of
+222 s. Drawn over a window instead (see ``WINDOW``), it takes 4 to 9 s there.
 """
 
 from __future__ import annotations
@@ -95,8 +97,8 @@ PIECE_FLOOR = 256
 class Stages:
     """Where each stage of an edit sits on a 0..100 bar, and what it is called.
 
-    The acoustic stage runs over the whole song and is most of the time; the
-    shares are the ones the stand measured on a 100-second song.
+    The shares are the ones the stand measured on a 100-second song, whose
+    acoustic window is the whole song.
     """
 
     NATURAL = (0.0, 3.0, "Scoring the song's own join")
@@ -578,35 +580,104 @@ def _solved(engine, steps: int, noise, known, held, cancelled=None, on_step=None
     return result
 
 
+WINDOW = 1000
+"""Held frames drawn with an edit on each side of it: 40 s.
+
+The frames an edit draws again hear every frame of the window they are
+drawn in, and nothing outside it. A window is drawn the way upstream draws
+one chunk of a song too long for the context -- the prompt, the window's
+codec tokens and the end of the music, and the window's frames alone -- so a
+song of up to 80 s and the edit is drawn whole, exactly as before.
+
+Measured on 2026-09-23 on twenty edits: a retake, a cut, a move, a break and
+a new ending on the stand's three songs and a user's. The frames drawn again
+are free: any second draw of them, under other noise, lands 0.7 to 3.3 dB
+apart from the first in the mean level of 64 mel bands. Drawn over windows,
+they came within that of the whole song's draw in 20 edits of 20 with 40 s
+a side, in 15 with 20 s and in 10 with 10 s; the level of what was drawn
+stayed within 0.75 dB of it at 40 s, where 10 and 20 s left a new ending of
+the ballad 1.4 and 1.5 dB quieter. Qwen3-ASR heard the whole song's draw's
+words in the windowed draws as often as in a second draw (72 and 67 of 84),
+and the step in the sound at the edges of what was drawn stayed within a
+fifth of the whole song's draw's. On the user's song of 222 s, the acoustic
+stage of one take went from 22 s to 4.3-6.4 s, and 8.7 s for a move, which
+draws a window at each of its seams.
+
+Keeping the whole song's frames at their places while drawing only a window
+of them (the prefill still over the whole song) was worse, up to 15 dB
+apart -- most likely because the acoustic half always sees its frames between
+marks of their own start and end, and a window cut out of a longer run has
+neither."""
+
+TOO_LONG = ("This edit draws {:.0f} s of new sound at once, and the acoustic stage holds at most "
+            "{:.0f} s. Edit a shorter stretch at a time.")
+
+
+def _chunk_frames(prompt_tokens: int) -> int:
+    """The most frames upstream's acoustic stage draws at once under a prompt this long."""
+    from ..vendor.yue2.protocol import chunk_ranges
+
+    return chunk_ranges(CONTEXT, prompt_tokens, CONTEXT)[0][1]
+
+
+def windows_of(held, size: int) -> list:
+    """``[(first, stop)]``: the windows of frames the acoustic stage draws for an edit, in order.
+
+    Runs of frames that are not ``held`` closer than two ``WINDOW`` share one
+    window, as long as it fits in ``size`` frames; each window reaches
+    ``WINDOW`` frames past its runs on either side, or less where the song
+    ends, where the next window's frames begin, or where it would not fit.
+    A window never holds a frame another window draws.
+    """
+    frames = int(held.shape[0])
+    loose = []
+    for frame in (~held).nonzero().flatten().tolist():
+        if loose and frame == loose[-1][1]:
+            loose[-1][1] = frame + 1
+        else:
+            loose.append([frame, frame + 1])
+    runs = []
+    for low, high in loose:
+        if high - low > size:
+            raise ValueError(TOO_LONG.format((high - low) * FRAME_SECONDS, size * FRAME_SECONDS))
+        if runs and low - runs[-1][1] <= 2 * WINDOW and high - runs[-1][0] <= size:
+            runs[-1][1] = high
+        else:
+            runs.append([low, high])
+    out = []
+    for index, (low, high) in enumerate(runs):
+        floor = runs[index - 1][1] if index else 0
+        ceiling = runs[index + 1][0] if index + 1 < len(runs) else frames
+        left, right = min(WINDOW, low - floor), min(WINDOW, ceiling - high)
+        room = size - (high - low)
+        if left + right > room:
+            left = min(left, max(room // 2, room - right))
+            right = min(right, room - left)
+        out.append((low - left, high + right))
+    return out
+
+
 def repaint(models, prefix, codec, noise, known, held, steps: int, progress=None, band=None,
             cancelled=None) -> torch.Tensor:
     """Latents for ``codec`` under ``prefix``, with the ``held`` frames kept on ``known``.
 
-    The song is cut into upstream's acoustic chunks as the song itself was
-    (``protocol.chunk_ranges``). A chunk with every frame held is the known
-    latents already and is not run at all; a song this pack sings fits one
-    chunk unless its prompt is very long. An edit whose redrawn frames reach
-    across two chunks is refused: each chunk would draw its side of the seam
-    without hearing the other.
+    Only the windows ``windows_of`` gives are drawn; every frame outside them
+    is its known latent already. Each window is drawn as upstream draws one
+    chunk of a song (``protocol.chunk_ranges``): the prompt, the window's codec
+    tokens and the end of the music, and the window's own noise, so a window
+    that is the whole song is the song's own acoustic stage.
 
-    Each chunk runs the way ``nar.synthesize`` runs one -- its prefill with the
-    AR half, its flow matching with the NAR half -- inside
+    Each window runs the way ``nar.synthesize`` runs a chunk -- its prefill
+    with the AR half, its flow matching with the NAR half -- inside
     ``placement.acoustic``, which is what moves the halves.
     """
     from ..vendor.yue2 import nar
-    from ..vendor.yue2.protocol import CODEC_OFFSET, MUSIC_END, chunk_ranges
+    from ..vendor.yue2.protocol import CODEC_OFFSET, MUSIC_END
 
-    frames = len(codec)
-    ranges = chunk_ranges(frames, len(prefix), CONTEXT)
-    loose = [(low, high) for low, high in ranges if not bool(held[low:high].all())]
-    if len(loose) > 1:
-        raise ValueError(
-            "This edit falls across the boundary between two parts the acoustic stage draws "
-            "one at a time, at {:.1f} s. Edit up to that point, or from it."
-            .format(loose[0][1] * FRAME_SECONDS))
+    windows = windows_of(held, _chunk_frames(len(prefix)))
     result = known.clone()
-    total = len(loose) * steps
-    for position, (low, high) in enumerate(loose):
+    total = len(windows) * steps
+    for position, (low, high) in enumerate(windows):
         chunk = nar.Chunk(list(prefix) + [int(value) + CODEC_OFFSET for value in codec[low:high]]
                           + [MUSIC_END], noise[low:high].contiguous())
 
@@ -1320,7 +1391,7 @@ def moved(models, song, waveform, pieces, count: int, lyrics, score, settings, p
     the grid's eighth note in seconds: where the beat can be read on both
     sides of a seam (``beat.jump``), only the lengths that put it back
     (``beat.counts_on_beat``) are open to the join. The seams are sung in
-    order, each after the ones before it, and the audio of the whole song
+    order, each after the ones before it, and the audio around all of them
     is drawn once at the end.
 
     Windows around what changed are decoded and laid into the old sound in

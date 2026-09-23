@@ -1074,7 +1074,7 @@ def test_a_words_edit_with_no_bars_is_placed_by_hearing_the_song(stand, monkeypa
     asked = {}
 
     def word_times(folder, reader, device, waveform, rate, text, key, progress=None,
-                   cancelled=None):
+                   cancelled=None, low_vram=False):
         asked.update(folder=folder, reader=reader, text=text, key=key)
         found, at = [], 0.0
         for word in text.split():
@@ -1135,7 +1135,7 @@ def hearing(monkeypatch, said, seen=None):
     monkeypatch.setattr(edit_track, "_clip", lambda waveform, rate, start, stop: (
         round(float(waveform.flatten()[0]), 2), round(start, 2), round(stop, 2)))
 
-    def hear(folder, device, clips, language="", cancelled=None, progress=None):
+    def hear(folder, device, clips, language="", cancelled=None, progress=None, low_vram=False):
         answers = []
         for name, clip in clips:
             if seen is not None:
@@ -1151,10 +1151,10 @@ def lined(monkeypatch, calls=None, first=0.0, gap=0.5):
     from yue2_comfy.asr import runtime as asr_runtime
 
     monkeypatch.setattr(edit_track, "_aligner_at_hand",
-                        lambda settings: ("aligner", "tokenizer", "cuda"))
+                        lambda settings: ("aligner", "tokenizer", "cuda", bool(settings.get("low_vram"))))
 
     def word_times(folder, reader, device, waveform, rate, text, key, progress=None,
-                   cancelled=None):
+                   cancelled=None, low_vram=False):
         if calls is not None:
             calls.append((key, text, round(float(waveform.flatten()[0]), 2)))
         found, at = [], first
@@ -1427,6 +1427,45 @@ def test_the_models_that_listened_are_let_go_unless_the_run_keeps_them(stand, mo
     assert gone == []
 
 
+def test_a_small_card_listens_small_and_clears_the_card_before_the_song_model_sings(stand, monkeypatch):
+    """'low_vram' reaches both listeners, and both leave the card before the song model is loaded.
+
+    The song model makes its room from what is free and sends nothing else
+    away, while the aligner is loaded first in a run, to light the words: on a
+    small card it would sit beside the song model as it sings. On a card with
+    room nothing is sent away, and a kept listener waits for the next run.
+    """
+    from yue2_comfy.asr import runtime as asr_runtime
+
+    events = []
+    monkeypatch.setattr(asr_runtime, "unload", lambda: events.append("speech away"))
+    monkeypatch.setattr(asr_runtime, "unload_aligner", lambda: events.append("aligner away"))
+    hearing(monkeypatch, {"was": "x", 40: "one two four", 41: "one two", 50: "one two four", 51: "one"})
+    lined(monkeypatch)
+    heard, timed = asr_runtime.hear, asr_runtime.word_times
+    monkeypatch.setattr(asr_runtime, "hear", lambda *args, **kwargs: events.append(
+        ("hear", kwargs["low_vram"])) or heard(*args, **kwargs))
+    monkeypatch.setattr(asr_runtime, "word_times", lambda *args, **kwargs: events.append(
+        ("times", kwargs["low_vram"])) or timed(*args, **kwargs))
+
+    def session(settings, unique_id, progress):
+        events.append("sing")
+        return _no_models()
+
+    monkeypatch.setattr("yue2_comfy.staged.session", session)
+    edit_track.YuE2EditTrack().edit(stand.audio, takes=2, edits=WORDS,
+                                    options={"low_vram": True, "keep_model_loaded": True})
+    sing = events.index("sing")
+    assert events[sing - 2:sing] == ["speech away", "aligner away"]
+    assert ("times", True) in events and ("hear", True) in events
+    assert ("times", False) not in events and ("hear", False) not in events
+    events.clear()
+    edit_track.YuE2EditTrack().edit(stand.audio, takes=2, edits=WORDS.replace('"seed": 40', '"seed": 50'),
+                                    options={"keep_model_loaded": True})
+    assert "speech away" not in events and "aligner away" not in events
+    assert ("hear", False) in events
+
+
 def test_the_window_is_told_when_each_line_is_sung(stand, monkeypatch):
     """Lines 4, 5 and 8 of the words are the sung ones; tags and blank lines have no time."""
     lined(monkeypatch)
@@ -1577,9 +1616,9 @@ def test_takes_are_heard_in_the_language_their_words_are_written_in(stand, monke
     hearing(monkeypatch, {"was": snow, 40: snow, 41: snow})
     heard = asr_runtime.hear
 
-    def told(folder, device, clips, language="", cancelled=None, progress=None):
+    def told(folder, device, clips, language="", cancelled=None, progress=None, low_vram=False):
         languages.append(language)
-        return heard(folder, device, clips, language, cancelled, progress)
+        return heard(folder, device, clips, language, cancelled, progress, low_vram)
 
     monkeypatch.setattr(asr_runtime, "hear", told)
     item = json.loads(WORDS)[0]

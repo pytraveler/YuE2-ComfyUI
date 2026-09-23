@@ -356,7 +356,7 @@ def test_short_clips_are_heard_in_the_language_of_the_first(monkeypatch):
     monkeypatch.setitem(sys.modules, "yue2_comfy.asr.model", fake_model)
     monkeypatch.setattr(sys.modules["yue2_comfy.asr"], "model", fake_model, raising=False)
     net = types.SimpleNamespace(forget_steps=lambda: gone.append(1))
-    monkeypatch.setattr(asr_runtime, "acquire", lambda folder, device, progress=None: (net, "tok"))
+    monkeypatch.setattr(asr_runtime, "acquire", lambda folder, device, progress=None, low_vram=False: (net, "tok"))
     monkeypatch.setattr(asr_runtime, "stamp", lambda folder: ("weights",))
     monkeypatch.setattr(asr_runtime, "_HEARD", asr_runtime.collections.OrderedDict())
     answers = asr_runtime.hear("f", "d", [("was", "a"), ("take 1", "b"), ("take 2", "c")])

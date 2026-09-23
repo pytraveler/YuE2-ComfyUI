@@ -219,3 +219,71 @@ def test_the_grid_after_a_break_moves_what_comes_after_it_by_what_came_in():
     assert after.frames == state.frames + count + 3
     assert (after.score, after.lyrics) == (broken, step.lyrics)
     assert after.sheet["sections"][2]["name"] == "interlude"
+
+
+def test_a_break_can_go_in_at_a_beat_of_its_own():
+    state = pickup_state()
+    beat = state.sheet["per_quarter"]
+    down = state.sheet["bars"][4]["start"]
+    for at in (-6, 0, 2):
+        step = track.plan(state, a_break(4, 2, at=at))
+        assert step.start == step.stop == state.clock.moment(4, -at * beat)
+        assert step.seam == down + at * beat
+    edit = a_break(4, 2, at=-6)
+    assert track.read(track.written([edit]))[0].at == -6
+    assert "at" not in json.loads(track.written([a_break(4, 2)]))[0], (
+        "a break that names no beat goes where a retake of its section would open")
+    assert track.name("song", [], edit) != track.name("song", [], a_break(4, 2)), (
+        "takes put in at another beat are other takes")
+
+
+@pytest.mark.parametrize("at", [-9, 5])
+def test_a_break_goes_no_further_than_two_bars_ahead_of_its_section_or_one_into_it(at):
+    with pytest.raises(ValueError, match="from -8 to 4 beats"):
+        track.plan(pickup_state(), a_break(4, 2, at=at))
+
+
+def test_a_break_stays_between_the_sections_on_either_side():
+    short = score(("intro", ["z16"]), ("verse", ["C4D4E4F4"]), ("chorus", ["E8z8", "F16"]),
+                  ("outro", ["z16"]))
+    sheet = notation.read(short)
+    clock = grid.Grid(offset=0.5, rate=1.0, tick=grid.tick_seconds(sheet), starts=grid.starts_of(sheet))
+    state = track.opened(type("Song", (), {"score": short, "lyrics": LYRICS, "frames": 500})(), clock)
+    with pytest.raises(ValueError, match="from -4 to 4 beats"):
+        track.plan(state, a_break(2, 2, at=-5))
+    assert track.plan(state, a_break(2, 2, at=-4)).seam == sheet["bars"][1]["start"], (
+        "as far back as the verse's first downbeat, and no further")
+
+
+@pytest.mark.parametrize("at", [-6, 2])
+def test_what_is_sung_from_the_beat_a_break_goes_in_at_goes_on_after_it(at):
+    state = pickup_state()
+    step = track.plan(state, a_break(4, 2, at=at))
+    broken = notation.interluded(PICKUP, step.score + PLAYED, 4, 2, step.seam)
+    after = notation.read(broken)
+    shift = 2 * state.sheet["bars"][4]["length"]
+    assert notes(after) == ([note for note in notes(state.sheet) if note[0] < step.seam]
+                            + [(start + shift, length, pitch)
+                               for start, length, pitch in notes(state.sheet) if start >= step.seam])
+    assert notes(notation.read(step.score[:-len("% interlude\n")])) == [
+        note for note in notes(state.sheet) if note[0] < min(step.seam, state.sheet["bars"][4]["start"])]
+
+
+def test_the_window_is_told_every_beat_a_break_may_go_in_at_and_where_it_goes_by_itself():
+    state = pickup_state()
+    found = {item["bar"]: item["places"] for item in track.break_places(state)}
+    assert sorted(found) == [2, 4, 6], "every section but the first"
+    places = found[4]
+    auto = [place for place in places if place["at"] is None]
+    assert len(auto) == 1 and auto[0]["beats"] == -1.5, "the rest before the pickup, as a retake opens"
+    assert auto[0]["second"] == pytest.approx(track.plan(state, a_break(4, 2)).start * FRAME_SECONDS)
+    assert [place["at"] for place in places if place["at"] is not None] == list(range(-8, 5))
+    assert [place["beats"] for place in places] == sorted(place["beats"] for place in places)
+    for place in places[::3]:
+        planned = track.plan(state, a_break(4, 2, at=place["at"]))
+        assert place["second"] == pytest.approx(planned.start * FRAME_SECONDS)
+    cut_short = type("Song", (), {"score": PICKUP, "lyrics": LYRICS, "frames": 330})()
+    ends = {item["bar"]: item["places"] for item in track.break_places(track.opened(cut_short, state.clock))}
+    assert max(place["second"] for place in ends[6]) < 330 * FRAME_SECONDS, "only places the song reaches"
+    unscored = type("Song", (), {"score": "", "lyrics": LYRICS, "frames": 500})()
+    assert track.break_places(track.opened(unscored, None)) == []

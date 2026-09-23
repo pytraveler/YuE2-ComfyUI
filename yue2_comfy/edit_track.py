@@ -260,40 +260,13 @@ OPTIONS_TOOLTIP = (
 )
 
 DESCRIPTION = (
-    "Sings part of a song again, or takes part of it out, and hands back the whole song with "
-    "the change in it. Everything outside the edit is the sound that was there before, sample "
-    "for sample.\n\n"
-    "Open 'Edit track...' to see the song's bars and sections, select a stretch, and press "
-    "Retake or Cut. It works on songs this pack has sung: wire it after a song node, or load a "
-    "FLAC saved from one.\n\n"
-    "A retake sings two takes by default and keeps the one that joins the old song best, or, "
-    "once the speech models below are on the machine, the one heard singing its words. A cut "
-    "takes whole bars, moves both ends back to the same place in the singing so that a pickup "
-    "is not left behind, and takes the words of any section it empties out of the lyrics.\n\n"
-    "Click a line of the words beside the track to give it other words: the tune stays, and the "
-    "new words are sung over the stretch that line was sung in. That stretch is found by hearing "
-    "the song with Qwen3-ForcedAligner (1.8 GB), and the takes are heard with Qwen3-ASR "
-    "(4.1 GB) to keep the one that sings the new words; both are Apache-2.0 and are downloaded "
-    "the first time they are needed. With the aligner on the machine, every line of the words "
-    "lights up where the song sings it.\n\n"
-    "Press 'Notes...' to change the song's notes in the piano roll: only the bars whose notes "
-    "changed are sung again, under the new score, and the rest of the song stays as it was "
-    "sung. Bars changed far apart are sung as separate edits.\n\n"
-    "Press 'Go on...' to make the song longer: write the lines it goes on with -- another "
-    "chorus, a bridge -- or none, for a new ending alone. The model writes the tune of the new "
-    "part itself, from where the singing ends, sings it and ends the song its own way; the old "
-    "ending goes.\n\n"
-    "Drag a section along the strip above the track to move it: its sound, its words and its "
-    "bars go where you drop it, and the last bar before each seam where it now meets other "
-    "sections is sung again, so that the song runs on across the seam in time. The sections "
-    "themselves are not sung again.\n\n"
-    "Press 'Break...' to put bars of playing between two sections: choose the section it goes "
-    "before and how many bars it plays. The model writes the break's tune itself and plays it "
-    "with no voice, and the section after comes in later, as it was sung. Every take is "
-    "listened to for a voice left in the break, and one with none is kept; a rap keeps its "
-    "ad-libs even there.\n\n"
-    "Finding where the score sits in the song listens to its voice, so the first edit of a song "
-    "downloads the separator Vocals Only uses (0.85 GB, MIT) if it is not there yet."
+    "Changes part of a finished song and hands back the whole song; everything outside the "
+    "edit stays as it was.\n\n"
+    "Open 'Edit track...', select a stretch and press Retake, Cut, Notes..., Go on... or "
+    "Break...; click a line of the words to sing it with other words, or drag a section to "
+    "move it. Works on songs this pack has sung.\n\n"
+    "Hearing the words takes Qwen3-ASR and its word aligner, and finding the bars takes the "
+    "voice separator; each is downloaded the first time it is needed."
 )
 
 class _Refused(Exception):
@@ -563,7 +536,7 @@ def _said_once(notices, kind: str, text: str) -> None:
 
 
 def _aligner_at_hand(settings):
-    """The aligner's folder, the file it reads words with and the device, when it can light the words; None otherwise.
+    """The aligner's folder, the file it reads words with, the device and 'low_vram', when it can light the words; None otherwise.
 
     Finding when each line is sung is worth a second of card and nothing more:
     it lights the window's words where the song sings them. So it is never
@@ -581,7 +554,8 @@ def _aligner_at_hand(settings):
         folder = discovery.find_aligner()
         if not folder:
             return None
-        return folder, download.aligner_tokenizer(folder, {"download": "off"}), device
+        return (folder, download.aligner_tokenizer(folder, {"download": "off"}), device,
+                bool(settings.get("low_vram")))
     except Exception:
         log.debug("[yue2_comfy.edit_track] the aligner is not at hand to light the words",
                   exc_info=True)
@@ -656,6 +630,27 @@ def _ears_off(settings, listened) -> None:
             asr_runtime.unload_aligner()
     except Exception:
         log.debug("[yue2_comfy.edit_track] the models that listened could not be let go",
+                  exc_info=True)
+
+
+def _ears_away(settings) -> None:
+    """With 'low_vram', let both listeners go before the song model sings, kept or not. Never fatal.
+
+    The song model makes its room from what is free on the card and does not
+    send anything else away, and the word aligner is loaded first in a run, to
+    light the words: on a small card its 1.75 GiB would sit beside the song
+    model's 3.1 while it sings. Either comes back in a second or two when it
+    is next asked.
+    """
+    if not settings.get("low_vram"):
+        return
+    try:
+        from .asr import runtime as asr_runtime
+
+        asr_runtime.unload()
+        asr_runtime.unload_aligner()
+    except Exception:
+        log.debug("[yue2_comfy.edit_track] the listeners could not make way for the song model",
                   exc_info=True)
 
 
@@ -1111,6 +1106,15 @@ def _goes_on(state):
     return {"bar": int(found["bar"]), "second": round(found["start"] * FRAME_SECONDS, 3)}
 
 
+def _breaks(state) -> list:
+    """Where the window may put a break before each section, as ``track.break_places`` gives it; never fatal."""
+    try:
+        return track.break_places(state)
+    except (ValueError, IndexError, KeyError):
+        log.debug("[yue2_comfy.edit_track] no break places for this song", exc_info=True)
+        return []
+
+
 def _moved(marks, step, count: int, sung=()) -> list:
     """Where the marks of the edits already made sit in the song after this one.
 
@@ -1369,6 +1373,7 @@ class YuE2EditTrack:
 
         def loaded():
             if models[0] is None:
+                _ears_away(settings)
                 held = contextlib.ExitStack()
                 stack.callback(held.close)
                 models[0] = held.enter_context(session(settings, unique_id, progress))
@@ -1574,7 +1579,8 @@ class YuE2EditTrack:
             except (FileNotFoundError, download.DownloadError) as error:
                 raise _Refused(str(error))
             began = time.perf_counter()
-            times = self._times_of((folder, reader, devices.resolve(settings["device"])), sound,
+            times = self._times_of((folder, reader, devices.resolve(settings["device"]),
+                                    bool(settings.get("low_vram"))), sound,
                                    saved, waveform, rate, text, progress, listened, went)
             log.info("[yue2_comfy.edit_track] %d words timed in %.1f s", len(times),
                      time.perf_counter() - began)
@@ -1667,7 +1673,7 @@ class YuE2EditTrack:
         try:
             answers = asr_runtime.hear(folder, devices.resolve(settings["device"]), clips,
                                        language=lines.language_of(asked), cancelled=interrupted,
-                                       progress=progress)
+                                       progress=progress, low_vram=bool(settings.get("low_vram")))
         except InterruptedError:
             raise
         except Exception as error:
@@ -1800,10 +1806,10 @@ class YuE2EditTrack:
                                         record, progress, listened, went)
         times = _times_read(disk, text) if disk else None
         if times is None and place is not None:
-            folder, reader, device = place
+            folder, reader, device, low_vram = place
             listened.add("aligner")
             times = asr_runtime.word_times(folder, reader, device, waveform, rate, text, label,
-                                           progress, interrupted)
+                                           progress, interrupted, low_vram=low_vram)
             if disk:
                 _times_keep(disk, text, times)
         return times
@@ -1840,11 +1846,12 @@ class YuE2EditTrack:
         if added.strip():
             if place is None:
                 return None
-            folder, reader, device = place
+            folder, reader, device, low_vram = place
             listened.add("aligner")
             first = max(0, min(int(round(since * rate)), int(waveform.shape[-1]) - rate))
             found = asr_runtime.word_times(folder, reader, device, waveform[..., first:], rate,
-                                           added, (label, first), halves[1], interrupted)
+                                           added, (label, first), halves[1], interrupted,
+                                           low_vram=low_vram)
         times = lines.went_on(earlier, found, first / rate)
         if disk:
             _times_keep(disk, text, times, since)
@@ -1940,7 +1947,8 @@ class YuE2EditTrack:
         temperature and the guide the song itself was sung with, which is where
         the window's own knobs start. ``goes_on`` is where the song would go on
         from, the bar and the second, None for a song with no score (see
-        ``_goes_on``). ``hears`` says whether a retake's takes
+        ``_goes_on``), and ``breaks`` where a break may go in before each
+        section (see ``track.break_places``). ``hears`` says whether a retake's takes
         are heard on this machine (``_ears_at_hand``) or left to the join, so
         the window says which before anything is sung. After at least one edit there are also
         ``kind``, ``at`` (the seconds the last edit took in hand, on the song as
@@ -1977,6 +1985,7 @@ class YuE2EditTrack:
         if state.sheet is not None and state.clock is not None:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
         payload["goes_on"] = _goes_on(state)
+        payload["breaks"] = _breaks(state)
         if shown is None:
             return payload
         step, ordered, pick, made, prior, seeds, earlier, entry = shown

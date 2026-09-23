@@ -51,6 +51,42 @@ ROOM_STEP = 1024
 """The cache is sized in whole steps of this, so requests of nearby lengths share one cache and one graph."""
 CONV_CHUNKS = 320
 """Chunks, a second of audio each, the audio encoder's convolutions take at once: a longer recording goes in parts."""
+SMALL_CONV_CHUNKS = 40
+"""The same with 'low_vram' on: forty seconds at a time, whatever the length.
+
+The convolutions' peak is cuDNN's workspace as much as their output: 1.72 GiB
+above the weights for the user's 236-second song and 2.36 for six minutes,
+measured on 2026-09-23, where the first two outputs are 0.7 and 0.17. In parts
+of 40 it was 0.33 and 0.37. What that changes is the kernel cuDNN picks for the
+smaller batch, so a few words: on twelve recordings the whole-song text was
+the same on nine and within 1.5 percent on the rest, the clips all the same,
+and the word aligner put 1502 of 1519 words within 80 ms of where it had.
+"""
+QUERY_BLOCK = 512
+"""Positions of a request whose attention is worked out at once; a longer request goes a block at a time.
+
+On the Windows wheels flash is not compiled and the memory-efficient kernel
+refuses ``enable_gqa``, so a request's attention lands in the math kernel,
+which holds the whole heads x queries x keys matrix in float32. Measured on
+2026-09-23 on the user's 236-second song and on six minutes of it: hearing the
+whole song took 2.2 and 4.3 GiB above the weights that way, the word aligner
+2.2 and 4.8. A row of that matrix is the same sum however many rows are worked
+out beside it, so each block of queries attends over the same keys with the
+causal mask spelled out. On the CPU that is the whole call to the bit; on the
+card the products of a block round a little differently now and then. Measured
+with blocks of 512 and of 1024 on twelve recordings: the same tokens on eleven,
+the same four clips of each and the same times for all 1519 words, to the bit;
+on the twelfth, the user's 236-second song, the whole-song pass parted at a
+near tie and heard it a little worse (WER 0.178 -> 0.195), in every process
+alike.
+
+It goes in blocks on every build, flash or not: a torch built with flash
+still falls back to the math kernel on a card too old to run flash, and the
+small cards this saves are often those. A mask spelled out is also one flash
+refuses, so on such a build the blocks trade its speed for the math kernel's
+answers; the aligner's whole pass, which is all prefill, took 0.4 s for the
+236-second song and 0.8 s for six minutes in blocks.
+"""
 NEAR_TIE = 2.0
 """How far below the plain step's best logit a replayed pick may fall at a check and still stand."""
 GRAPHS = True
@@ -143,6 +179,7 @@ class AudioTower(nn.Module):
         self.layers = nn.ModuleList([AudioLayer() for _ in range(AUDIO_LAYERS)])
         self.ln_post = nn.LayerNorm(AUDIO_WIDTH)
         self.register_buffer("positions", sinusoids(POSITIONS, AUDIO_WIDTH), persistent=False)
+        self.conv_chunks = CONV_CHUNKS
 
     def _convolved(self, x: torch.Tensor) -> torch.Tensor:
         """``[chunks, 1, 128, 100]`` mel through the three convolutions into ``[chunks, 13, 1024]``.
@@ -151,9 +188,11 @@ class AudioTower(nn.Module):
         through in parts: the first convolution's output is three megabytes a
         second of audio, and a ten-minute recording taken at once wanted more
         of the card than the language model does. A recording of up to
-        ``CONV_CHUNKS`` seconds still goes at once, because the convolution
+        ``conv_chunks`` seconds still goes at once, because the convolution
         kernels chosen for another batch size round differently, and the
-        tokens of a song were measured to change with them.
+        tokens of a song were measured to change with them. That is
+        ``CONV_CHUNKS``, or ``SMALL_CONV_CHUNKS`` for a small card, which
+        pays those few words for the memory.
         """
         x = F.gelu(self.conv2d3(F.gelu(self.conv2d2(F.gelu(self.conv2d1(x))))))
         count, channels, bins, steps = x.shape
@@ -167,8 +206,8 @@ class AudioTower(nn.Module):
         padded = F.pad(mel, (0, chunks * prompt.CHUNK_FRAMES - frames))
         x = padded[None].view(1, MELS, chunks, prompt.CHUNK_FRAMES).permute(0, 2, 1, 3)
         x = x.reshape(chunks, 1, MELS, prompt.CHUNK_FRAMES).to(self.conv_out.weight.dtype)
-        x = self._convolved(x) if chunks <= CONV_CHUNKS else torch.cat(
-            [self._convolved(part) for part in x.split(CONV_CHUNKS, dim=0)])
+        x = self._convolved(x) if chunks <= self.conv_chunks else torch.cat(
+            [self._convolved(part) for part in x.split(self.conv_chunks, dim=0)])
         steps = x.shape[1]
         x = x + self.positions[:steps].to(x.dtype)
         keep = torch.arange(steps, device=x.device)[None, :] < torch.tensor(lengths, device=x.device)[:, None]
@@ -208,6 +247,29 @@ def _rotate(x):
     return torch.cat((-x[..., half:], x[..., :half]), dim=-1)
 
 
+def attend(q, keys, values, position: int = 0):
+    """Causal grouped-query attention of ``q``, the positions from ``position`` on, over ``keys`` and ``values``.
+
+    ``keys`` and ``values`` hold every position up to the last query's. A
+    request longer than ``QUERY_BLOCK`` goes a block of queries at a time, each
+    over all of them, a query seeing only the positions up to its own; see
+    ``QUERY_BLOCK`` for why, and for how little that changed.
+    """
+    length = q.shape[2]
+    if length <= QUERY_BLOCK:
+        return F.scaled_dot_product_attention(q, keys, values, is_causal=length > 1, scale=SCALE,
+                                              enable_gqa=True)
+    columns = torch.arange(keys.shape[2], device=q.device)
+    parts = []
+    for first in range(0, length, QUERY_BLOCK):
+        last = min(length, first + QUERY_BLOCK)
+        rows = torch.arange(position + first, position + last, device=q.device)
+        parts.append(F.scaled_dot_product_attention(q[:, :, first:last], keys, values,
+                                                    attn_mask=columns[None, :] <= rows[:, None],
+                                                    scale=SCALE, enable_gqa=True))
+    return torch.cat(parts, dim=2)
+
+
 class TextAttention(nn.Module):
     def __init__(self):
         super().__init__()
@@ -228,8 +290,7 @@ class TextAttention(nn.Module):
         end = position + length
         keys[:, :, position:end] = k
         values[:, :, position:end] = v
-        out = F.scaled_dot_product_attention(q, keys[:, :, :end], values[:, :, :end],
-                                             is_causal=length > 1, scale=SCALE, enable_gqa=True)
+        out = attend(q, keys[:, :, :end], values[:, :, :end], position)
         return self.o_proj(out.transpose(1, 2).reshape(batch, length, -1))
 
     def step(self, x, cos, sin, keys, values, position, mask):

@@ -315,6 +315,20 @@ def test_the_pinned_route_carries_the_bytes_exactly(monkeypatch):
         assert torch.equal(copy.cpu(), tensor)
 
 
+def test_a_move_outside_inference_mode_may_follow_the_first_one_inside_it(monkeypatch):
+    """The buffers are made on the first move; made in inference mode, no later move outside it could write them."""
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA card")
+    monkeypatch.setattr(p, "_STAGING", {})
+    monkeypatch.setattr(p, "STAGE_BYTES", 4096)
+    tensor = torch.randn(3001)
+    with torch.inference_mode():
+        p._to_card([tensor], torch.device("cuda"))
+    copy = p._to_card([tensor], torch.device("cuda"))[0]
+    assert torch.equal(copy.cpu(), tensor)
+
+
 def test_a_half_on_a_real_card_comes_back_without_a_copy():
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():

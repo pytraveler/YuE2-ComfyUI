@@ -181,18 +181,11 @@ ODE_TOOLTIP = (
 
 
 LOW_VRAM_TOOLTIP = (
-    "For a card of about 4 GB. The 28 layers are kept on the card as INT8 rows rather "
-    "than BF16, which is half their memory, and each matrix becomes BF16 again only "
-    "for the multiply that needs it; the last stage decodes in smaller tiles as well. "
-    "Measured with 'offload' at 'on': a 40-second song peaked at 3.11 GiB instead of "
-    "4.43 and a four-minute one at 3.14 instead of 4.50, and both sang on a card "
-    "capped at 3.5 GiB where they had needed 4.75.\n\n"
-    "Two prices, both real. The four-minute song took 110 seconds instead of 104: the "
-    "token loop is about twice as slow a step, and the acoustic stage is faster "
-    "because there is half as much to carry. And an INT8 round trip is lossy, so this "
-    "is the one setting in this node that writes a different song from the same seed: "
-    "the style, the words and the score hold, the performance is a new take on them. "
-    "Leave it off unless the card needs it."
+    "For a card of about 4 GB. The models' layers stay on the card as INT8, half their "
+    "memory, and the work goes in smaller pieces -- the song and the models that hear its "
+    "words alike.\n\n"
+    "It is slower, and the same seed sings a different take. Leave it off unless the card "
+    "needs it."
 )
 
 

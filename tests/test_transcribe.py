@@ -81,7 +81,9 @@ def heard(node, monkeypatch):
     calls = node
     calls.update(asr=0, llm=[], answer=faithful_answer)
 
-    def fake_recognise(folder, device, waveform, rate, timed, key, progress=None, cancelled=None):
+    def fake_recognise(folder, device, waveform, rate, timed, key, progress=None, cancelled=None,
+                       low_vram=False):
+        calls["low_vram"] = low_vram
         calls["asr"] += 1
         calls["timed"] = timed
         calls["asr_key"] = key
@@ -195,6 +197,15 @@ def test_a_new_seed_lays_the_words_out_again_and_the_same_seed_does_not(heard):
     assert [seed for _path, seed, _greedy in heard["llm"]] == [1, 2]
 
 
+def test_a_small_card_hears_the_words_with_the_model_packed_for_it(heard):
+    """'low_vram' on the options reaches recognition, which loads the packed speech model."""
+    run(recognition=True)
+    assert heard["low_vram"] is False
+    transcribe.YuE2Transcribe().transcribe({"data": b"recording", "count": 1}, "full", True, "auto", 1,
+                                           options={"low_vram": True}, unique_id="7")
+    assert heard["low_vram"] is True
+
+
 def test_a_section_whose_words_the_model_changed_keeps_the_words_as_heard(heard):
     heard["answer"] = lambda messages: faithful_answer(messages).replace("Sung once more.", "Sung twice more.", 1)
     lyrics = run(recognition=True)["result"][1]
@@ -261,7 +272,8 @@ def test_the_asr_runtime_reuses_words_for_the_same_recording_and_sections(monkey
             heard.append(language) or {"language": "English", "text": "la la"})
     monkeypatch.setitem(sys.modules, "yue2_comfy.asr.model", fake_model)
     monkeypatch.setattr(sys.modules["yue2_comfy.asr"], "model", fake_model, raising=False)
-    monkeypatch.setattr(asr_runtime, "acquire", lambda folder, device, progress=None: ("net", "tokenizer"))
+    monkeypatch.setattr(asr_runtime, "acquire",
+                        lambda folder, device, progress=None, low_vram=False: ("net", "tokenizer"))
     monkeypatch.setattr(asr_runtime, "_RESULTS", asr_runtime.collections.OrderedDict())
     timed = [{"start": 0.0, "end": 30.0, "notes": 12}]
     first = asr_runtime.recognise("f", "d", "samples", 44100, timed, key=("a", 1))

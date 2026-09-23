@@ -175,6 +175,19 @@ function singsAgain(op) {
     return op === "retake" || op === "words" || op === "notes" || op === "extend" || op === "break";
 }
 
+function tenths(seconds) {
+    const shown = Math.max(0, Math.round(seconds * 10)) / 10;
+    return roll.clock(shown) + "." + String(Math.round(shown * 10) % 10);
+}
+
+function beatsText(beats) {
+    if (Math.abs(beats) < 0.05) return "on the downbeat";
+    const count = Math.abs(beats);
+    const shown = Number.isInteger(count) ? String(count) : count.toFixed(1);
+    return shown + (count === 1 ? " beat " : " beats ") + (beats < 0 ? "before the downbeat"
+        : "after the downbeat");
+}
+
 const WORDS_WHERE =
     "The stretch in green is where the song's own bars put this line. It is the same guess that "
     + "lights a line up while the song plays, not a measurement, and what is sung is found by "
@@ -277,6 +290,15 @@ const BREAK_BARS_WHY = "How many bars the break plays, " + list.BREAK_BARS[0] + 
 const BREAK_BEFORE_WHY =
     "The section the break goes before. Selecting a section on the strip before pressing "
     + "Break\u2026 chooses it here.";
+
+const BREAK_EARLIER =
+    "Put the break in a beat earlier: where the section's first line is sung ahead of its bar, "
+    + "move the green mark to the pause before that line, so the line comes after the break.";
+
+const BREAK_LATER = "Put the break in a beat later.";
+
+const BREAK_ARROWS =
+    "The arrows move it a beat at a time, up to two bars ahead of the section and one into it.";
 
 const PICK_BREAK =
     "A take with no voice left in its break, the join choosing among those; it is the one the "
@@ -1427,7 +1449,7 @@ class TrackWindow {
             return { head: head, facts: this.cutFacts(edit), label: NEXT_CUT, why: RUN_WHY };
         }
         if (edit.op === "break") {
-            const facts = [this.breakFact(edit.to, edit.length), BREAK_SUNG, this.takeFact(edit),
+            const facts = [this.breakFact(edit.to, edit.length, edit.at), BREAK_SUNG, this.takeFact(edit),
                            SUNG_ONCE];
             return { head: head, facts: facts.filter(Boolean), label: NEXT_BREAK, why: RUN_WHY };
         }
@@ -1511,16 +1533,30 @@ class TrackWindow {
             + " on the track as it is drawn.";
     }
 
-    breakFact(to, length) {
+    breakFact(to, length, at = null, marked = false) {
         const grid = this.grid();
         if (!list.barCount(grid)) return "";
         const section = (grid.sections || []).find((item) => item.bar === to);
         const bar = list.lineAt(grid, to);
         const next = list.lineAt(grid, Math.min(list.barCount(grid), to + 1));
         const about = Math.max(0, next - bar) * length;
+        const place = this.breakPlaces(to).find((item) => item.at === (at ?? null));
         return "Plays " + length + (length === 1 ? " bar" : " bars") + " before the "
             + (section ? section.name : "bar " + (to + 1)) + " at " + roll.clock(bar)
-            + ", about " + about.toFixed(1) + " s; everything after it comes in that much later.";
+            + ", about " + about.toFixed(1) + " s; everything after it comes in that much later."
+            + (place ? " It goes in at " + tenths(place.second) + ", " + beatsText(place.beats)
+                + (marked ? ", where the green mark is." : ".") : "");
+    }
+
+    breakPlaces(to) {
+        const found = (this.payload?.breaks || []).find((item) => item.bar === to);
+        return found && Array.isArray(found.places) ? found.places : [];
+    }
+
+    breakPlace() {
+        if (!this.breaking) return null;
+        const places = this.breakPlaces(this.breaking.to);
+        return places.find((place) => place.at === this.breaking.at) || null;
     }
 
     goOnFact() {
@@ -1885,7 +1921,8 @@ class TrackWindow {
 
     saidSpan() {
         if (this.breaking && !this.overSaid && list.barCount(this.grid())) {
-            const line = list.lineAt(this.grid(), this.breaking.to);
+            const place = this.breakPlace();
+            const line = place ? place.second : list.lineAt(this.grid(), this.breaking.to);
             return [Math.max(0, line - 0.15), Math.min(this.total(), line + 0.15)];
         }
         const going = this.going && this.payload?.goes_on;
@@ -2079,6 +2116,19 @@ class TrackWindow {
         const box = element("div", "yue2-t-wordbox yue2-t-gobox yue2-t-breakbox");
         box.appendChild(element("div", "yue2-t-tag", "A break"));
         const grid = this.grid();
+        const moves = element("div", "yue2-t-wordrow yue2-t-nudges");
+        const earlier = element("button", "yue2-t-nudge", "\u2190");
+        earlier.title = BREAK_EARLIER;
+        earlier.addEventListener("click", () => this.nudgeBreak(-1));
+        moves.appendChild(earlier);
+        const later = element("button", "yue2-t-nudge", "\u2192");
+        later.title = BREAK_LATER;
+        later.addEventListener("click", () => this.nudgeBreak(1));
+        moves.appendChild(later);
+        this.breakWhere = element("span", "yue2-t-dim", "");
+        moves.appendChild(this.breakWhere);
+        box.appendChild(moves);
+        this.breakArrows = [earlier, later];
         const row = element("div", "yue2-t-wordrow");
         const bars = document.createElement("input");
         bars.type = "number";
@@ -2114,6 +2164,7 @@ class TrackWindow {
         before.addEventListener("change", () => {
             if (!this.breaking) return;
             this.breaking.to = Number(before.value);
+            this.breaking.at = null;
             this.paintBreakFact();
             this.draw();
         });
@@ -2140,10 +2191,29 @@ class TrackWindow {
     paintBreakFact() {
         if (!this.breakWhy || !this.breaking) return;
         this.breakWhy.replaceChildren();
+        const places = this.breakPlaces(this.breaking.to);
         this.breakWhy.appendChild(document.createTextNode(
-            [BREAK_HOW, this.breakFact(this.breaking.to, this.breaking.length)]
-                .filter(Boolean).join(" ")));
+            [BREAK_HOW, this.breakFact(this.breaking.to, this.breaking.length, this.breaking.at, true),
+             places.length > 1 ? BREAK_ARROWS : ""].filter(Boolean).join(" ")));
         this.breakWhy.appendChild(element("div", "yue2-t-wordknobs", WORDS_KNOBS));
+        const place = this.breakPlace();
+        if (this.breakWhere) this.breakWhere.textContent = place ? "in at " + tenths(place.second) : "";
+        if (this.breakArrows) {
+            const now = places.indexOf(place);
+            this.breakArrows[0].disabled = now <= 0;
+            this.breakArrows[1].disabled = now < 0 || now >= places.length - 1;
+        }
+    }
+
+    nudgeBreak(step) {
+        if (!this.breaking) return;
+        const places = this.breakPlaces(this.breaking.to);
+        const now = places.indexOf(this.breakPlace());
+        const next = now < 0 ? null : places[now + step];
+        if (!next) return;
+        this.breaking.at = next.at;
+        this.paintBreakFact();
+        this.draw();
     }
 
     breakKey(event) {
@@ -2186,7 +2256,8 @@ class TrackWindow {
         this.wordArea = null;
         this.going = null;
         this.goArea = null;
-        this.breaking = { to, length: this.breaking ? this.breaking.length : list.BREAK_LENGTH };
+        this.breaking = { to, length: this.breaking ? this.breaking.length : list.BREAK_LENGTH,
+                          at: null };
         this.paintWords();
         this.paintKnobs();
         this.draw();
@@ -2202,6 +2273,8 @@ class TrackWindow {
         this.breaking = null;
         this.breakBars = null;
         this.breakWhy = null;
+        this.breakArrows = null;
+        this.breakWhere = null;
         this.paintWords();
         this.paintKnobs();
         this.draw();
@@ -2221,12 +2294,14 @@ class TrackWindow {
             return;
         }
         const made = list.breakFor(this.breaking.to, this.breaking.length, nodeTakes(this.node),
-            this.knobs.seed, { vary: this.knobs.vary, guide: this.knobs.guide });
+            this.knobs.seed, { vary: this.knobs.vary, guide: this.knobs.guide }, this.breaking.at);
         writeList(this.node, [...edits, made]);
         paintSummary(this.node);
         this.breaking = null;
         this.breakBars = null;
         this.breakWhy = null;
+        this.breakArrows = null;
+        this.breakWhere = null;
         this.selection = null;
         this.refresh();
         this.setStatus(list.describeEdit(made, edits.length).slice(3) + " is on the list. "
@@ -3421,6 +3496,8 @@ const STYLE = `
     font-size: 10px; line-height: 1.45; color: var(--descrip-text, #8FA3AD); }
 .yue2-t-wordknobs { margin-top: 4px; color: #9CC4E0; }
 .yue2-t-wordrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.yue2-t-nudge { min-width: 30px; padding: 2px 8px; }
+.yue2-t-nudges { align-items: center; margin-bottom: 4px; }
 .yue2-t-words .yue2-t-now { background: rgba(240, 176, 88, 0.16); border-left-color: #F0B058;
     color: var(--input-text, #eee); }
 .yue2-t-words .yue2-t-over { background: rgba(255, 255, 255, 0.05);

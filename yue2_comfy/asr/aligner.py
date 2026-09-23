@@ -114,8 +114,16 @@ def _shaped(sizes: dict):
             setattr(network, name, value)
 
 
-def load(folder: str, tokenizer_path: str, device, dtype=torch.bfloat16) -> Aligner:
-    """The aligner with the folder's weights, on ``device``, reading words with ``tokenizer_path``."""
+def load(folder: str, tokenizer_path: str, device, dtype=torch.bfloat16,
+         low_vram: bool = False) -> Aligner:
+    """The aligner with the folder's weights, on ``device``, reading words with ``tokenizer_path``.
+
+    With ``low_vram`` the audio's convolutions go ``network.SMALL_CONV_CHUNKS``
+    seconds at a time, which is where its pass over a song spent its memory:
+    measured on 2026-09-23, 1.72 GiB above the weights for four minutes and
+    2.34 for six, against 0.43 and 0.65 in parts. Its weights stay BF16: at
+    1.75 GiB they are not what a small card runs out of.
+    """
     from safetensors import safe_open
 
     from .tokenizer import Tokenizer
@@ -143,6 +151,8 @@ def load(folder: str, tokenizer_path: str, device, dtype=torch.bfloat16) -> Alig
             missing[:5], unexpected[:5]))
     head.load_state_dict(crown, assign=True)
     net.audio_tower.positions = network.sinusoids(network.POSITIONS, network.AUDIO_WIDTH)
+    if low_vram:
+        net.audio_tower.conv_chunks = network.SMALL_CONV_CHUNKS
     net = net.to(device).eval().requires_grad_(False)
     head = head.to(device).eval().requires_grad_(False)
     return Aligner(net, head, Tokenizer(tokenizer_path), sizes["stamp"], sizes["step_ms"])

@@ -431,6 +431,91 @@ def go_on(lyrics: str, text: str) -> Going:
     return Going(joined, added, sung, lead)
 
 
+def moved_noise(runs, pieces) -> list:
+    """The noise of a song whose old frames ``pieces`` were put one after another: every frame keeps its rows."""
+    return joined(*[runs_between(runs, start, stop) for start, stop in pieces])
+
+
+@dataclasses.dataclass(frozen=True)
+class Moving:
+    """The lyrics a move leaves, and what happened to them.
+
+    ``moved`` holds the tags of the sections that went, in order. ``matched``
+    is False when the lyrics' sections could not be paired with the score's
+    (see ``_paired``); the lyrics are then left as they were. ``tagged`` says
+    that words sung before the first tag no longer came first, and were put
+    under ``GO_ON_TAG`` so as not to run on in the section now before them.
+    """
+
+    text: str
+    moved: tuple
+    matched: bool
+    tagged: bool = False
+
+
+def move_words(lyrics: str, score: str, first: int, stop: int, to: int) -> Moving:
+    """The lyrics with the sections sung in bars ``first`` to ``stop`` of ``score`` put where bar ``to`` is.
+
+    Each lyrics section with lines is paired with the score section it is
+    sung in, as a cut pairs them (see ``_paired``). The ones whose score
+    section starts inside the bars moved go, in their order, before the
+    first of the others whose section starts at ``to`` or later -- or after
+    the last one sung when none does, ahead of any tags with nothing under
+    them that close the words, as ``go_on`` leaves an [Outro] at the end.
+
+    Every section keeps its text to the character, and the blank lines
+    between sections stay where they were, so the words are laid out as they
+    were. Bars count from 0 and ``stop`` is not included.
+    """
+    text = str(lyrics or "")
+    sections = _sections(score, 0, 1)
+    starts = [section["bar"] for section in notation.read(score)["sections"]]
+    blocks = _blocks(text)
+    singing = [index for index, block in enumerate(blocks) if block["lines"]]
+    labels = [phrasing.label_of(blocks[index]["tag"]) if blocks[index]["tag"] else "verse"
+              for index in singing]
+    paired = _paired(labels, sections)
+    if paired is None:
+        return Moving(text, (), False)
+    where = {index: starts[at] for index, at in zip(singing, paired)}
+    going = [index for index in singing if first <= where[index] < stop]
+    if not going:
+        return Moving(text, (), True)
+    rest = [index for index in range(len(blocks)) if index not in going]
+    later = [place for place, index in enumerate(rest) if index in where and where[index] >= to]
+    if later:
+        place = later[0]
+    else:
+        sung = [place for place, index in enumerate(rest) if index in where]
+        place = sung[-1] + 1 if sung else len(rest)
+    order = rest[:place] + going + rest[place:]
+    ending = "\r\n" if "\r\n" in text else chr(10)
+    bodies, gaps = [], []
+    for block in blocks:
+        raw = list(block["raw"])
+        gap = []
+        while raw and not raw[-1].strip():
+            gap.insert(0, raw.pop())
+        body = "".join(raw)
+        if body and not body.endswith(("\n", "\r")):
+            body += ending
+        bodies.append(body)
+        gaps.append("".join(gap))
+    tagged = False
+    parts = []
+    for place, index in enumerate(order):
+        body = bodies[index]
+        if (not blocks[index]["tag"] and blocks[index]["lines"]
+                and any(bodies[earlier].strip() for earlier in order[:place])):
+            body = GO_ON_TAG + ending + body
+            tagged = True
+        parts.append(body + gaps[place])
+    joined_text = "".join(parts)
+    if not text.endswith(("\n", "\r")) and joined_text.endswith(ending):
+        joined_text = joined_text[:-len(ending)]
+    return Moving(joined_text, tuple(blocks[index]["tag"] for index in going), True, tagged)
+
+
 def last_sung(lyrics: str, score: str):
     """The bar the score section holding the last sung lines of ``lyrics`` starts at, or None.
 

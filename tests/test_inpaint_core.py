@@ -436,3 +436,99 @@ def test_a_song_whose_sound_is_not_its_latents_is_not_edited(models, song):
         core.retakes(models, made, sound[..., :-1], region, [1], SETTINGS)
     with pytest.raises(ValueError, match="not a stretch"):
         core.cut(models, made, sound, ops.Region(100, FRAMES + 1, 0, 0), "l", "X:1", SETTINGS)
+
+
+@pytest.mark.parametrize("pieces", [
+    [(0, 20), (80, FRAMES), (20, 80)],
+    [(0, 20), (60, 65), (20, 60), (65, FRAMES)],
+    [(90, FRAMES), (0, 90)],
+])
+def test_a_move_keeps_every_frame_and_draws_only_its_seams_again(models, song, pieces):
+    """The old sound in its new order, with the seams decoded: the whole moved song decoded.
+
+    The first puts the song's last frames, whose sound is 64 samples short, in the middle; the
+    second has two seams closer than a window, which share one.
+    """
+    made, sound = song
+    moved = sum(stop - start for start, stop in pieces[1:2])
+    take = core.moved(models, made, sound, pieces, moved, "[verse]\nla", "X:2", SETTINGS)
+    assert list(take.song.codec) == [value for start, stop in pieces for value in made.codec[start:stop]]
+    assert take.song.noise == ops.moved_noise(made.noise, pieces)
+    assert list(take.song.prefix) == prompt("[verse]\nla", Words().encode("X:2"))
+    assert (take.seed, take.count, take.join, take.ended) == (0, moved, None, False)
+    old, new = core.latents_of(made), core.latents_of(take.song)
+    known = torch.cat([old[start:stop] for start, stop in pieces])
+    held = torch.ones(FRAMES, dtype=torch.bool)
+    for seam in core.seams_of(pieces):
+        held[max(0, seam - ops.MARGIN):seam + ops.MARGIN] = False
+    assert torch.equal(new[held], known[held])
+    assert not torch.equal(new[~held], known[~held])
+    assert take.waveform.shape == sound.shape
+    assert torch.allclose(take.waveform, decode_locally(new), atol=1e-6)
+
+
+def test_the_seams_of_a_move_are_where_pieces_meet_that_were_not_neighbours():
+    assert core.seams_of([(0, 20), (80, 120), (20, 80)]) == [20, 60]
+    assert core.seams_of([(0, 20), (20, 80)]) == []
+    assert core.seams_of([(90, 120), (0, 90)]) == [30]
+
+
+def test_a_move_must_hold_every_frame_of_the_song(models, song):
+    made, sound = song
+    with pytest.raises(ValueError, match="hold 100 frames and the song has 120"):
+        core.moved(models, made, sound, [(0, 20), (40, 120)], 80, "l", "X:1", SETTINGS)
+
+
+MOVED = [(0, 40), (80, FRAMES), (40, 80)]
+"""The last 40 frames of the tiny song put after its first 40: seams at frames 40 and 80."""
+
+
+def test_a_move_sings_the_stretch_before_each_seam_again_and_keeps_the_rest(models, song):
+    """Each on the song the one before left; the audio of the whole song drawn once, the sound laid in."""
+    made, sound = song
+    take = core.moved(models, made, sound, MOVED, 40, "[verse]\nla", "X:2", SETTINGS,
+                      sung=((25, 40), (65, 80)))
+    spliced = [value for start, stop in MOVED for value in made.codec[start:stop]]
+    (low, high, first), (again, end, second) = take.sung
+    region = ops.retake(25, 40, FRAMES, len(take.song.prefix))
+    assert (low, high) == (25, 40) and region.shortest <= first <= region.longest
+    assert (again, end) == (65 + first - 15, 80 + first - 15)
+    codec = list(take.song.codec)
+    assert codec[:25] == spliced[:25]
+    assert codec[25 + first:again] == spliced[40:65]
+    assert codec[again + second:] == spliced[80:]
+    frames = FRAMES + first - 15 + second - 15
+    assert take.song.frames == frames and sum(run[2] for run in take.song.noise) == frames
+    assert take.waveform.shape[-1] == sound.shape[-1] + (frames - FRAMES) * HOP
+    new = core.latents_of(take.song)
+    known = torch.cat([core.latents_of(made)[start:stop] for start, stop in MOVED])
+    assert torch.equal(new[:25 - ops.MARGIN], known[:25 - ops.MARGIN])
+    assert torch.equal(new[again + second + ops.MARGIN:], known[80 + ops.MARGIN:])
+    assert torch.allclose(take.waveform, decode_locally(new), atol=1e-6)
+    assert (take.seed, take.count, take.join) == (0, 40, None)
+    twice = core.moved(models, made, sound, MOVED, 40, "[verse]\nla", "X:2", SETTINGS,
+                       sung=((25, 40), (65, 80)))
+    assert list(twice.song.codec) == codec and torch.equal(twice.waveform, take.waveform)
+
+
+def test_the_stretch_sung_again_comes_out_as_long_as_puts_the_beat_back(models, song, monkeypatch):
+    """Where the beat is read across the seam, only the lengths that put it back are open to the join."""
+    from yue2_comfy.constants import FRAME_SECONDS
+    from yue2_comfy.inpaint import beat
+
+    made, sound = song
+    read = []
+
+    def jump(sound_read, rate, second, pulse):
+        read.append((sound_read.shape[-1], second, pulse))
+        return 0.09
+
+    monkeypatch.setattr(beat, "jump", jump)
+    take = core.moved(models, made, sound, MOVED, 40, "[verse]\nla", "X:2", SETTINGS,
+                      sung=((25, 40),), pulse=0.25)
+    assert read == [(FRAMES * HOP, 40 * FRAME_SECONDS, 0.25)], "the splice's own sound, at the seam"
+    (_low, _high, count), = take.sung
+    region = ops.retake(25, 40, FRAMES, len(take.song.prefix))
+    allowed = beat.counts_on_beat(15, region.shortest, region.longest, 0.09, 0.25, FRAME_SECONDS)
+    assert allowed == [13, 19] and count in allowed
+

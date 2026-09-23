@@ -122,7 +122,10 @@ function facts(row) {
 }
 
 function where(mark) {
-    if (Array.isArray(mark.bars)) return "bars " + mark.bars[0] + "-" + mark.bars[1];
+    if (Array.isArray(mark.bars)) {
+        return mark.bars[1] - mark.bars[0] === 1 ? "bar " + (mark.bars[0] + 1)
+            : "bars " + (mark.bars[0] + 1) + "-" + mark.bars[1];
+    }
     const at = Array.isArray(mark.at) ? mark.at : [0, 0];
     return roll.clock(at[0]) + (mark.op === "cut" ? "" : "-" + roll.clock(at[1]));
 }
@@ -134,7 +137,7 @@ function what(row) {
         const at = Array.isArray(mark.at) ? mark.at : [0, 0];
         if (mark.op === "cut") return "cut " + where(mark) + DOT + "-" + roll.clock(mark.took || 0);
         const did = mark.op === "words" ? "new words " : mark.op === "notes" ? "new notes "
-            : mark.op === "extend" ? "went on " : "retake ";
+            : mark.op === "extend" ? "went on " : mark.op === "move" ? "moved " : "retake ";
         return did + where(mark) + DOT + roll.clock(Math.max(0, at[1] - at[0]));
     }).join(", ");
 }

@@ -24,7 +24,11 @@ A song that went on keeps the times its old lines had and has only its new
 lines timed, on the new part of its sound (``added_after``, ``went_on``).
 Given the whole song, the aligner lost them: on the 27 takes with new words of
 the extension stand and a user's song it heard 0.79 of their words in the
-spans it gave the new lines, against 0.90 timed on the new part alone.
+spans it gave the new lines, against 0.90 timed on the new part alone. A song
+whose sections moved keeps every word's time, carried along with the piece of
+sound it is sung in (``carried_along``) and past the bars before its seams
+that were sung again (``stretched``): those sing the same words in the same
+place, so nothing needs hearing again.
 
 Standard library and the word rule the aligner counts by, so this runs
 wherever the edit list runs, with no model and no torch.
@@ -172,6 +176,69 @@ def went_on(times, added, since: float) -> list:
     """
     return [tuple(time) for time in times] + [
         (word, since + float(start), since + float(stop)) for word, start, stop in added]
+
+
+def carried_along(times, before: str, pieces, text: str):
+    """The word times of a song whose old seconds ``pieces`` were laid one after another, or None.
+
+    ``times`` are the old song's, one for each word of ``before`` -- its
+    words as ``heard_text`` writes them -- and ``pieces`` are ``(start,
+    stop)`` seconds of it in their new order. A line goes whole with the
+    piece its middle word starts in, its words kept inside that piece: the
+    aligner can put a line's first word seconds early, on the playing before
+    it, and a last word held past a cut is still that line's. The lines are
+    then read in the order they now start, and their words must be
+    ``text``'s, word for word: otherwise the words did not move with their
+    sound -- lyrics that could not be paired with the score stay where they
+    were -- and None says so.
+    """
+    rows = [line.split() for line in str(before or "").splitlines() if line.split()]
+    if sum(len(row) for row in rows) != len(times):
+        return None
+    placed = []
+    at = 0
+    for row in rows:
+        chunk = [(word, float(begin), float(end)) for word, begin, end in times[at:at + len(row)]]
+        at += len(row)
+        middle = sorted(begin for _word, begin, _end in chunk)[len(chunk) // 2]
+        opening = 0.0
+        for low, high in pieces:
+            if low <= middle < high:
+                moved = [(word, opening + min(max(begin, low), high) - low,
+                          opening + min(max(end, low), high) - low) for word, begin, end in chunk]
+                placed.append((opening + middle - low, moved))
+                break
+            opening += high - low
+        else:
+            return None
+    placed.sort(key=lambda line: line[0])
+    found = [word for _middle, moved in placed for word in moved]
+    wanted = [normal(word) for line in str(text or "").splitlines() for word in line.split()]
+    if [normal(word) for word, _start, _stop in found] != wanted:
+        return None
+    return found
+
+
+def stretched(times, sung):
+    """Word times moved over the ``(start, stop, length)`` seconds of a song that were sung again, in order.
+
+    A move sings the last bar before each of its seams again, and that bar
+    comes out a few frames longer or shorter: a word after it moves by the
+    difference, and one inside it is spread through the new bar in
+    proportion, as ``grid.after_retake`` spreads the bar lines -- the same
+    words, sung in the same place, give or take a frame.
+    """
+    def moved(second):
+        for start, stop, length in sung:
+            if second >= stop:
+                second += length - (stop - start)
+            elif second > start and stop > start:
+                second = start + (second - start) * length / (stop - start)
+        return second
+
+    if not sung:
+        return times
+    return [(word, moved(float(begin)), moved(float(end))) for word, begin, end in times]
 
 
 def within(times, start: float, stop: float) -> str:

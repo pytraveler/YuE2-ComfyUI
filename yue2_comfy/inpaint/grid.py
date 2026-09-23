@@ -291,6 +291,27 @@ def cut_shift(first: Seam, second: Seam, beat: float, margin: float) -> float:
     return second.low
 
 
+def shared_shift(marks, beat: float, margin: float) -> float:
+    """Units of L: every piece of a move is cut at before its bar line: the same at every line it touches.
+
+    A move takes whole bars out at two bar lines and puts them in at a third,
+    and the bars keep their phase across all three seams only if each is cut
+    the same distance before its downbeat; a seam anywhere else is a hiccup
+    in the beat. Where the rests of all of them overlap by more than two
+    margins, the shift keeps a beat, or half the overlap, clear of the
+    phrases, as a cut's does. Where they do not -- a song whose sections all
+    run on from the one before, as the stand's rap does -- every section
+    keeps its first word: the shift is a margin before the latest pickup,
+    and what gives is the end of a phrase before some seam.
+    """
+    low = max(mark.low for mark in marks)
+    high = min(mark.high for mark in marks)
+    if high - low >= 2 * margin:
+        near = low + min(max(margin, beat), (high - low) / 2)
+        return min(max(0.0, near), high - margin)
+    return low + margin
+
+
 def _beat_and_margin(sheet, grid: Grid):
     beat = float(sheet["per_quarter"])
     margin = MARGIN_SECONDS / (grid.rate * grid.tick)
@@ -347,6 +368,109 @@ def retake_frames(sheet, grid: Grid, marks, first: int, stop: int, frames: int):
     start = 0 if first <= 0 else grid.moment(first, opening(marks[first], beat, margin))
     end = frames if stop >= len(grid.starts) - 1 else grid.moment(stop, opening(marks[stop], beat, margin))
     return _stretch(first, stop, start, end, frames)
+
+
+QUIET_SLACK = 3.0
+"""Decibels the voice may be louder at a move's cuts than at the quietest shift tried, with the score's own shift still kept."""
+
+QUIET_BEATS = 1.0
+"""How much further before its bar lines than the score's own shift a move may cut, in beats, looking for where the voice rests."""
+
+QUIET_WINDOW = 0.03
+"""Seconds on each side of a cut the voice is heard over: a cut in a breath, not beside one."""
+
+
+def _move_lines(sheet, grid: Grid, marks, stretches):
+    """``(bar lines touched, the score's shift, the furthest shift tried, beat)`` for a move read as ``stretches``."""
+    count = len(sheet["bars"])
+    touched = sorted({bar for pair in stretches for bar in pair if 0 < bar < count})
+    beat, margin = _beat_and_margin(sheet, grid)
+    shift = shared_shift([marks[bar] for bar in touched], beat, margin) if touched else 0.0
+    return touched, shift, int(math.ceil(max(2 * beat, shift + QUIET_BEATS * beat))), beat
+
+
+def voiced_shift(seconds, unit: float, beat: float, default: float, level, top: int) -> float:
+    """The shift a move cuts at when the separated voice can say where it rests.
+
+    ``seconds`` are the downbeats of the bar lines the move cuts at, ``unit``
+    the seconds of a unit of L:, ``default`` the score's own shift
+    (``shared_shift``) and ``level(second)`` how loud the voice is there, in
+    dB. Every whole shift from the downbeat to ``top`` units before it is
+    tried, and the loudest of the cuts is what a shift is judged by. The
+    score's own stands unless one is quieter by more than ``QUIET_SLACK``;
+    then the quiet ones compete and the one nearest the score's wins.
+
+    Measured on 2026-09-23 on the stand's moves: the pop's second verse comes
+    in 0.4 s ahead of its score, and the score's shift cut into its first
+    word at -25 dB where two units more cut at -79 dB. Where the voice never
+    rests, as in the rap, nothing is quieter and the score's shift stands.
+    """
+    def loudest(shift):
+        return max(level(second - shift * unit) for second in seconds)
+
+    tried = [(loudest(shift), shift) for shift in range(int(top) + 1)]
+    quietest = min(loud for loud, _shift in tried)
+    if loudest(default) <= quietest + QUIET_SLACK:
+        return float(default)
+    near = [shift for loud, shift in tried if loud <= quietest + QUIET_SLACK]
+    return float(min(near, key=lambda shift: abs(shift - default)))
+
+
+def move_windows(sheet, grid: Grid, marks, stretches) -> list:
+    """The seconds ``[(start, stop)]`` of the song the voice is asked about for a move: before each bar line it cuts at."""
+    touched, _shift, top, _beat = _move_lines(sheet, grid, marks, stretches)
+    unit = grid.rate * grid.tick
+    return [(grid.at(bar) - top * unit - QUIET_WINDOW, grid.at(bar) + QUIET_WINDOW)
+            for bar in touched]
+
+
+def move_frames(sheet, grid: Grid, marks, stretches, frames: int, level=None) -> list:
+    """Frames ``[(start, stop)]`` of the song under each stretch of bars, for a score read in the order ``stretches`` gives.
+
+    ``stretches`` are ``(first bar, stop)`` pairs, as ``notation.order`` lays
+    out a move. Every bar line they meet at is cut at one shift before its
+    downbeat (``shared_shift``), so each piece is its bars' own length to
+    within the rounding of each end to a frame; a stretch from the start of
+    the score begins at frame 0, one reaching its end takes the rest of the
+    song, and bars the song never reached give pieces with nothing in them.
+    ``level`` is the separated voice's loudness, ``level(second)`` in dB,
+    when it is known, and then the shift is where the voice rests at all the
+    cuts, if the score's is not (``voiced_shift``).
+    """
+    count = len(sheet["bars"])
+    touched, shift, top, beat = _move_lines(sheet, grid, marks, stretches)
+    if touched and level is not None:
+        shift = voiced_shift([grid.at(bar) for bar in touched], grid.rate * grid.tick, beat, shift,
+                             level, top)
+
+    def at(bar):
+        if bar <= 0:
+            return 0
+        if bar >= count:
+            return frames
+        return max(0, min(frames, grid.moment(bar, shift)))
+
+    return [(at(low), at(high)) for low, high in stretches]
+
+
+def after_move(grid: "Grid", starts, stretches, pieces) -> "Grid":
+    """The grid of the song whose bars were read in the order ``stretches`` gives, from the old frames ``pieces``.
+
+    ``starts`` are the bar starts of the score the move leaves. Every bar line
+    goes with the piece of sound it lies in, by how far that piece now starts
+    from where it started; the bars keep their lengths, since the pieces were
+    all cut at one shift. The end of the score is the end of the last stretch.
+    """
+    lines = grid.bar_seconds()
+    placed = []
+    at = 0
+    end = lines[-1]
+    for (low, high), (start, stop) in zip(stretches, pieces):
+        moved = (at - start) * FRAME_SECONDS
+        placed.extend(lines[bar] + moved for bar in range(low, high))
+        end = lines[high] + moved
+        at += stop - start
+    return dataclasses.replace(grid, starts=tuple(starts), lines=tuple(placed) + (end,))
 
 
 def after_cut(grid: "Grid", starts, first: int, stop: int, start: int, removed: int) -> "Grid":

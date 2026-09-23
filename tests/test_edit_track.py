@@ -53,6 +53,9 @@ SAMPLES_A_FRAME = 1920
 SPEECH_FOLDER = edit_track._speech_folder
 """The real lookup, kept before the fixture below stands it in for every test."""
 
+VOICE_LEVEL = edit_track._voice_level
+"""The real one too: a move hears the voice through it, and a test about that puts it back."""
+
 WORDS = ('[{"op": "words", "bars": [4, 8], "lines": [3, 4], "text": "one two four", '
          '"seed": 40}]')
 """A change of words on the stretch selected: line 4 of the words, sung over bars 5 to 8."""
@@ -105,11 +108,13 @@ def no_ears_of_the_machine(monkeypatch):
     The embedded Python these tests run with finds the aligner and Qwen3-ASR
     where this machine keeps them, so a run would load both onto the card and
     hear silence -- and a machine without them, downloading on, would fetch
-    4 GB. A test about hearing stands them in itself.
+    4 GB. A test about hearing stands them in itself. So is the separator a
+    move hears the voice with.
     """
     monkeypatch.setattr(edit_track, "_aligner_at_hand", lambda settings: None)
     monkeypatch.setattr(edit_track, "_speech_folder", lambda settings, progress, notices: None)
     monkeypatch.setattr(edit_track, "_ears_at_hand", lambda settings: None)
+    monkeypatch.setattr(edit_track, "_voice_level", lambda *args, **kwargs: None)
 
 
 @pytest.fixture
@@ -167,11 +172,36 @@ def stand(torch, monkeypatch):
                                   timing={}))
         return made
 
+    def moved(models, old, waveform, pieces, count, lyrics, score_text, settings, progress=None,
+              cancelled=None, sung=(), pulse=None):
+        calls.append(("move", tuple(tuple(piece) for piece in pieces), count, tuple(sung), pulse))
+        words.append(lyrics)
+        scores.append(score_text)
+        made = sung_by_stand(sung)
+        frames = old.frames + sum(new - (stop - start) for start, stop, new in made)
+        return core.Take(seed=0, waveform=a_wave(torch, frames, 0.7),
+                         song=a_song(frames, score_text, lyrics), count=count, join=None,
+                         joins={}, ended=False, timing={}, sung=made)
+
     monkeypatch.setattr(core, "retakes", retakes)
     monkeypatch.setattr(core, "cut", cut)
     monkeypatch.setattr(core, "extended", extended)
+    monkeypatch.setattr(core, "moved", moved)
     return types.SimpleNamespace(song=song, wave=wave, name=name, calls=calls, words=words,
                                  scores=scores, audio={"waveform": wave, "sample_rate": RATE})
+
+
+def sung_by_stand(sung):
+    """What the stand-in for the model makes of the stretches a move sings again: each two frames longer."""
+    made, shift = [], 0
+    for start, seam in sung:
+        made.append((start + shift, seam + shift, seam - start + SUNG_LONGER))
+        shift += SUNG_LONGER
+    return tuple(made)
+
+
+SUNG_LONGER = 2
+"""How many frames longer the stand-in sings each stretch before a seam of a move."""
 
 
 class _no_models:
@@ -1669,3 +1699,130 @@ def test_a_song_with_no_score_is_offered_no_going_on_and_refuses_one(torch):
     assert payload(edit_track.YuE2EditTrack().edit(audio, takes=2, edits=""))["goes_on"] is None
     with pytest.raises(Exception, match="no score for the model to go on writing"):
         edit_track.YuE2EditTrack().edit(audio, takes=2, edits=going_on())
+
+
+MOVE = '[{"op": "move", "bars": [4, 8], "to": 2}]'
+"""The chorus of the stand's song put before its verse."""
+
+
+def moved_step():
+    state = track.opened(a_song(), a_clock())
+    return state, track.plan(state, track.read(MOVE)[0])
+
+
+def test_a_section_moves_with_its_words_and_its_bars_and_the_bar_before_each_seam_is_sung(stand):
+    drawn = payload(run(stand, MOVE))
+    state, step = moved_step()
+    assert step.sung and step.pulse
+    assert stand.calls == [("move", step.pieces, step.stop - step.start, step.sung, step.pulse)]
+    assert stand.words == [step.lyrics] and stand.scores == [step.score]
+    assert drawn["kind"] == "move" and drawn["chosen"] == 0
+    assert len(drawn["takes"]) == 1 and "before" not in drawn, "it comes out one way, like a cut"
+    assert drawn["at"] == [round(step.start * FRAME_SECONDS, 3), round(step.stop * FRAME_SECONDS, 3)]
+    made = sung_by_stand(step.sung)
+    assert drawn["placed"] == [round(frame * FRAME_SECONDS, 3) for frame in track.placed(step, made)]
+    assert drawn["seconds"] == pytest.approx(
+        (FRAMES + SUNG_LONGER * len(made)) * FRAME_SECONDS), "the bars sung again came out longer"
+    left = track.after(state, step, step.stop - step.start, None, made)
+    assert drawn["grid"] == grid.layout(left.sheet, left.clock, left.frames)
+    assert [section["name"] for section in drawn["grid"]["sections"]] == [
+        "intro", "chorus", "verse", "outro"]
+    assert (drawn["lyrics"], drawn["score"]) == (step.lyrics, step.score)
+    assert json.loads(drawn["edits"]) == json.loads(MOVE)
+    mark = songs.store().get(drawn["song"]).edit[0]
+    assert (mark["op"], mark["at"], mark["bars"], mark["seed"]) == ("move", drawn["placed"], [4, 8], None)
+    run(stand, MOVE)
+    assert len(stand.calls) == 1, "the same move is not made twice"
+
+
+def test_an_edit_after_a_move_is_made_on_the_song_the_move_left(stand):
+    run(stand, json.dumps(json.loads(MOVE) + [{"op": "retake", "bars": [2, 6], "seed": 3}]))
+    state, step = moved_step()
+    left = track.after(state, step, step.stop - step.start, None, sung_by_stand(step.sung))
+    wanted = grid.retake_frames(left.sheet, left.clock, grid.seams(left.sheet), 2, 6, left.frames)
+    assert stand.calls[1][:3] == ("retake",) + wanted
+
+
+def test_the_mark_of_an_earlier_edit_goes_where_its_sound_went(stand):
+    retake = {"op": "retake", "bars": [2, 4], "seed": 3, "takes": 1}
+    drawn = payload(run(stand, json.dumps([retake] + json.loads(MOVE))))
+    state, step = moved_step()
+    first = stand.calls[0][1]
+    at = 0
+    for start, stop in step.pieces:
+        if start <= first < stop:
+            break
+        at += stop - start
+    marks = songs.store().get(drawn["song"]).edit
+    assert [mark["op"] for mark in marks] == ["retake", "move"]
+    assert marks[0]["at"][0] == round(
+        track.shifted(at + first - start, sung_by_stand(step.sung)) * FRAME_SECONDS, 3)
+
+
+def test_a_moved_song_keeps_the_times_of_its_words_and_is_not_heard_again(stand, monkeypatch):
+    """The words sung are where their sound went, past the bars sung again before the seams."""
+    from yue2_comfy.inpaint import lines
+
+    _state, step = moved_step()
+    verse = [frame * FRAME_SECONDS for frame in step.pieces[2]]
+    first = verse[0] + 0.1
+    gap = (verse[1] - first) / 5.8
+    calls = []
+    lined(monkeypatch, calls, first=first, gap=gap)
+    drawn = payload(run(stand, MOVE))
+    said = lines.heard_text(LYRICS)
+    assert [text for _key, text, _fill in calls] == [said], "the song as it was, once"
+    old = [(word, round(first + gap * index, 3), round(first + gap * index + 0.4, 3))
+           for index, word in enumerate(said.split())]
+    pieces = [(start * FRAME_SECONDS, stop * FRAME_SECONDS) for start, stop in step.pieces]
+    times = lines.carried_along(old, said, pieces, lines.heard_text(step.lyrics))
+    assert times is not None and times[0][0] == "seven"
+    times = lines.stretched(times, [(start * FRAME_SECONDS, stop * FRAME_SECONDS, count * FRAME_SECONDS)
+                                    for start, stop, count in sung_by_stand(step.sung)])
+    assert drawn["lines"] == [[number, round(start, 3), round(stop, 3)]
+                              for number, start, stop in lines.placed(step.lyrics, times)]
+
+
+def test_a_move_of_bars_that_are_not_whole_sections_is_refused(stand):
+    with pytest.raises(Exception, match="bar line 6 is inside the chorus"):
+        run(stand, '[{"op": "move", "bars": [5, 8], "to": 2}]')
+    assert stand.calls == []
+
+
+def test_a_move_cuts_where_the_separated_voice_rests_and_hears_it_once(stand, monkeypatch):
+    """The score says where a phrase starts; a singer who comes in ahead of it is where it really does."""
+    monkeypatch.setattr(edit_track, "_voice_level", VOICE_LEVEL)
+    monkeypatch.setattr(edit_track, "_VOICES", type(edit_track._VOICES)())
+    state, step = moved_step()
+    windows = grid.move_windows(state.sheet, state.clock, grid.seams(state.sheet), step.stretches)
+    touched, default, top, _beat = grid._move_lines(state.sheet, state.clock,
+                                                    grid.seams(state.sheet), step.stretches)
+    unit = state.clock.rate * state.clock.tick
+    quiet = int(default) + 2
+    assert quiet <= top
+    asked = []
+
+    def voice_near(sound, rate, stretches, settings, progress):
+        asked.append(stretches)
+        found = []
+        for start, stop in stretches:
+            loud = [0.0] * int((stop - start) / edit_track.VOICE_HOP + 2)
+            for bar in touched:
+                cut = state.clock.at(bar) - quiet * unit
+                for index in range(len(loud)):
+                    if abs(start + index * edit_track.VOICE_HOP - cut) <= 0.05:
+                        loud[index] = -100.0
+            found.append((start, loud))
+        return found
+
+    monkeypatch.setattr(edit_track, "_voice_near", voice_near)
+    run(stand, MOVE)
+    level = edit_track._voice_level(None, RATE, windows, {},
+                                    track.sound_name(songs.canonical(stand.name), []), None)
+    wanted = grid.move_frames(state.sheet, state.clock, grid.seams(state.sheet), step.stretches,
+                              FRAMES, level)
+    assert asked == [windows]
+    assert stand.calls[0][:3] == ("move", tuple(wanted), wanted[1][1] - wanted[1][0])
+    assert wanted[1][0] == state.clock.moment(4, quiet) != step.pieces[1][0]
+    run(stand, MOVE)
+    assert asked == [windows], "the voice of a sound is not separated twice"

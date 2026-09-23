@@ -98,6 +98,8 @@ const SKIN = {
     sung: "rgba(255, 255, 255, 0.35)",
     said: "rgba(126, 211, 148, 0.20)",
     saidEdge: "#7ED394",
+    lifted: "rgba(10, 14, 16, 0.55)",
+    drop: "#FFD24A",
 };
 
 const WAITING = "Press Render to hear it.";
@@ -229,9 +231,29 @@ const CUT_MOVES =
     "The node moves both ends to the same place in the singing, so what goes can differ from "
     + "this by a beat, and it takes the words of any section it empties out of the lyrics.";
 
+const MOVE_HOW =
+    "The sections keep their sound, their words and their bars. The last bar before each seam "
+    + "where they now meet other sections is sung again, so the song runs on across it; the "
+    + "sections themselves are not sung again.";
+
+const MOVE_SEAMS =
+    "Every seam is cut at the same place before its bar line, where the voice rests at every one "
+    + "of them if it can, and the bar sung again before it comes out as long as puts the beat "
+    + "back where the section after it has it.";
+
+const NEXT_MOVE = "Move it";
+
+const MOVE_NOWHERE =
+    "There is nowhere else to put it: every bar line is inside what is being moved.";
+
+const RENDER_FIRST_MOVE =
+    "Press Render first: a move not yet rendered puts sections somewhere else, so the track "
+    + "drawn here is no longer where this edit would land.";
+
 const HINT =
     "Drag across the wave to select, and drag either end of a selection to stretch it; hold Alt "
-    + "to work in beats instead of whole bars. Click a section to select it, click the wave to "
+    + "to work in beats instead of whole bars. Click a section to select it, or drag it along "
+    + "the strip to move it. Click the wave to "
     + "put the play mark there, the wheel zooms, Shift with the wheel slides, Space plays. "
     + "Escape stops the sound, then puts a message away, then forgets the selection, then "
     + "closes the window.";
@@ -280,7 +302,7 @@ const RENDER_FIRST_CUT =
 
 const RENDER_FIRST_NOTES =
     "Press Render first: the notes open on the song the track shows, and the list holds a cut, "
-    + "a change of notes or a song going on that the track has not sung yet.";
+    + "a move, a change of notes or a song going on that the track has not sung yet.";
 
 const RENDER_FIRST_GO_ON =
     "Press Render first: the list holds a song going on that the track has not sung yet, and "
@@ -288,7 +310,8 @@ const RENDER_FIRST_GO_ON =
 
 const RENDER_FIRST_GOING =
     "Press Render first: the song goes on from where the track shows its singing ends, and the "
-    + "list holds a cut, a change of notes or a song going on that the track has not sung yet.";
+    + "list holds a cut, a move, a change of notes or a song going on that the track has not "
+    + "sung yet.";
 
 const NOTES_WHY =
     "Change the song's notes in the piano roll. Only the bars whose notes change are sung again, "
@@ -695,6 +718,7 @@ class TrackWindow {
         this.overSaid = null;
         this.playhead = 0;
         this.drag = null;
+        this.lift = null;
         this.view = null;
         this.working = false;
         this.isClosed = false;
@@ -900,6 +924,10 @@ class TrackWindow {
         this.canvas.addEventListener("pointerup", (event) => this.pointerUp(event));
         this.canvas.addEventListener("pointercancel", () => {
             this.drag = null;
+            if (this.lift) {
+                this.lift = null;
+                this.draw();
+            }
         });
         this.canvas.addEventListener("pointerleave", () => {
             this.hover = null;
@@ -914,6 +942,13 @@ class TrackWindow {
             this.togglePlay();
         });
         handle.onEscape = () => {
+            if (this.lift) {
+                this.lift = null;
+                this.canvas.style.cursor = "";
+                this.setStatus("");
+                this.draw();
+                return;
+            }
             if (this.stopEditing()) {
                 return;
             }
@@ -1017,6 +1052,7 @@ class TrackWindow {
         this.view = null;
         this.take = null;
         this.selection = null;
+        this.lift = null;
         this.editing = null;
         this.wordArea = null;
         this.going = null;
@@ -1036,6 +1072,12 @@ class TrackWindow {
         if (at && this.payload.kind === "cut") {
             return "The cut took " + list.spanText(at[0], at[1]) + " out of the song."
                 + (dropped.length ? " Its words leave with it: " + dropped.join(", ") + "." : "");
+        }
+        if (at && this.payload.kind === "move") {
+            const placed = Array.isArray(this.payload.placed) ? this.payload.placed : at;
+            return "The move is in the song: what played at " + list.spanText(at[0], at[1])
+                + " now plays at " + list.spanText(placed[0], placed[1])
+                + ", and the last bar before each seam was sung again.";
         }
         if (at) {
             const made = this.madeSpan();
@@ -1133,7 +1175,7 @@ class TrackWindow {
             && JSON.stringify(here.bars) === JSON.stringify(there.bars)
             && JSON.stringify(here.seconds) === JSON.stringify(there.seconds)
             && JSON.stringify(here.lines) === JSON.stringify(there.lines)
-            && here.text === there.text;
+            && here.text === there.text && here.to === there.to;
     }
 
     clearPick() {
@@ -1277,8 +1319,9 @@ class TrackWindow {
                 "No edits yet: the node hands the song on as it came in."));
             return;
         }
+        const count = list.barCount(this.grid());
         edits.forEach((edit, index) => {
-            const row = element("div", "yue2-t-line", list.describeEdit(edit, index));
+            const row = element("div", "yue2-t-line", list.describeEdit(edit, index, count));
             if (index === edits.length - 1) row.classList.add("yue2-t-last");
             this.listBox.appendChild(row);
         });
@@ -1310,7 +1353,11 @@ class TrackWindow {
     }
 
     aboutEdit(edit, at) {
-        const head = list.describeEdit(edit, at).slice(3);
+        const head = list.describeEdit(edit, at, list.barCount(this.grid())).slice(3);
+        if (edit.op === "move") {
+            const facts = [this.moveFact(edit), MOVE_HOW, MOVE_SEAMS];
+            return { head: head, facts: facts.filter(Boolean), label: NEXT_MOVE, why: RUN_WHY };
+        }
         if (edit.op === "cut") {
             return { head: head, facts: this.cutFacts(edit), label: NEXT_CUT, why: RUN_WHY };
         }
@@ -1361,6 +1408,33 @@ class TrackWindow {
         const grid = this.grid();
         if (!edit.bars || !list.barCount(grid)) return null;
         return [list.lineAt(grid, edit.bars[0]), list.lineAt(grid, edit.bars[1])];
+    }
+
+    movedNames(first, stop) {
+        const sections = this.grid()?.sections || [];
+        const names = sections.filter((section) => section.bar >= first && section.bar < stop)
+            .map((section) => section.name);
+        if (!names.length) return list.barsText(first, stop);
+        if (names.length === 1) return "the " + names[0];
+        return "the " + names.slice(0, -1).join(", the ") + " and the " + names[names.length - 1];
+    }
+
+    movedTo(to) {
+        const grid = this.grid();
+        if (to >= list.barCount(grid)) return "to the end of the song";
+        const section = (grid?.sections || []).find((item) => item.bar === to);
+        return "before the " + (section ? section.name : "bar " + (to + 1));
+    }
+
+    moveFact(edit) {
+        const grid = this.grid();
+        if (!list.barCount(grid) || !edit.bars) return "";
+        const from = list.lineAt(grid, edit.bars[0]);
+        const to = list.lineAt(grid, edit.bars[1]);
+        const moved = this.movedNames(edit.bars[0], edit.bars[1]);
+        return moved.charAt(0).toUpperCase() + moved.slice(1) + ", " + list.spanText(from, to)
+            + ", goes " + this.movedTo(edit.to) + ", at " + roll.clock(list.lineAt(grid, edit.to))
+            + " on the track as it is drawn.";
     }
 
     goOnFact() {
@@ -2130,9 +2204,15 @@ class TrackWindow {
         if (event.offsetY < STRIP_H && this.hasScore()) {
             const section = list.sectionAt(this.grid(), at);
             this.drag = null;
+            this.lift = null;
             if (section) {
-                this.select(list.selectBars(this.grid(), section.bar,
-                    section.bar + section.bars));
+                const picked = this.selection;
+                const whole = picked && picked.first !== null && picked.first !== undefined
+                    && list.wholeSections(this.grid(), picked.first, picked.stop)
+                    && section.bar >= picked.first && section.bar < picked.stop;
+                this.lift = { first: whole ? picked.first : section.bar,
+                              stop: whole ? picked.stop : section.bar + section.bars,
+                              section, x: event.offsetX, grabbed: at, at, moved: false, to: null };
             }
             return;
         }
@@ -2159,8 +2239,18 @@ class TrackWindow {
         this.placeLabel.textContent = this.placeText(at);
         this.hover = at;
         this.markWords();
+        if (this.lift) {
+            if (!this.lift.moved && Math.abs(event.offsetX - this.lift.x) <= DRAG_PX) return;
+            this.lift.moved = true;
+            this.lift.at = at;
+            this.lift.to = list.dropLine(this.grid(), this.lift.first, this.lift.stop, at);
+            this.canvas.style.cursor = "grabbing";
+            this.setStatus(this.liftSaid());
+            this.draw();
+            return;
+        }
         if (!this.drag) {
-            this.canvas.style.cursor = event.offsetY < STRIP_H && this.hasScore() ? "pointer"
+            this.canvas.style.cursor = event.offsetY < STRIP_H && this.hasScore() ? "grab"
                 : (this.edgeAt(event.offsetX) ? "ew-resize" : "");
             return;
         }
@@ -2172,6 +2262,23 @@ class TrackWindow {
 
     pointerUp(event) {
         this.canvas.releasePointerCapture?.(event.pointerId);
+        const lift = this.lift;
+        this.lift = null;
+        if (lift) {
+            this.canvas.style.cursor = "";
+            if (!lift.moved) {
+                this.select(list.selectBars(this.grid(), lift.section.bar,
+                    lift.section.bar + lift.section.bars));
+                return;
+            }
+            this.draw();
+            if (lift.to === null || lift.to === undefined) {
+                this.setStatus(MOVE_NOWHERE, true);
+                return;
+            }
+            this.addMove(lift.first, lift.stop, lift.to);
+            return;
+        }
         const drag = this.drag;
         this.drag = null;
         if (!drag) return;
@@ -2226,6 +2333,7 @@ class TrackWindow {
         this.drawSaid(c, top, tall);
         this.drawPick(c, top, tall);
         this.drawStrip(c);
+        this.drawLift(c, top, tall);
         this.drawNumbers(c, top);
         this.drawRuler(c, this.height - RULER_H);
         this.drawHead(c);
@@ -2306,6 +2414,9 @@ class TrackWindow {
         const at = this.payload?.at;
         if (!Array.isArray(at)) return null;
         if (this.payload.kind === "cut") return [at[0], at[0]];
+        if (this.payload.kind === "move") {
+            return Array.isArray(this.payload.placed) ? this.payload.placed : null;
+        }
         const take = this.shownTake();
         const length = take && typeof take.seconds === "number" ? take.seconds : at[1] - at[0];
         return [at[0], at[0] + length];
@@ -2416,6 +2527,42 @@ class TrackWindow {
                 c.fillText(section.name, from + 5, STRIP_H / 2 - 1);
                 c.restore();
             }
+        }
+    }
+
+    drawLift(c, top, tall) {
+        const lift = this.lift;
+        const grid = this.grid();
+        if (!lift || !lift.moved || !grid) return;
+        const x0 = this.xOf(list.lineAt(grid, lift.first));
+        const x1 = this.xOf(list.lineAt(grid, lift.stop));
+        c.fillStyle = SKIN.lifted;
+        c.fillRect(x0, 0, Math.max(1, x1 - x0), top + tall);
+        if (lift.to !== null && lift.to !== undefined) {
+            const x = Math.round(this.xOf(list.lineAt(grid, lift.to)));
+            c.fillStyle = SKIN.drop;
+            c.fillRect(x - 1, 0, 3, top + tall);
+        }
+        const left = x0 + this.xOf(lift.at) - this.xOf(lift.grabbed);
+        const wide = Math.max(8, x1 - x0);
+        c.fillStyle = sectionColor(lift.section.name);
+        c.fillRect(left, 1, wide, STRIP_H - 4);
+        c.strokeStyle = SKIN.drop;
+        c.lineWidth = 1;
+        c.strokeRect(left + 0.5, 1.5, wide - 1, STRIP_H - 5);
+        const from = Math.max(left, 0);
+        const to = Math.min(left + wide, this.width);
+        if (to - from > 26) {
+            c.save();
+            c.beginPath();
+            c.rect(from + 3, 0, to - from - 6, STRIP_H);
+            c.clip();
+            c.font = "11px system-ui, sans-serif";
+            c.textBaseline = "middle";
+            c.fillStyle = "#fff";
+            c.fillText(this.movedNames(lift.first, lift.stop).replace(/^the /, ""), from + 5,
+                STRIP_H / 2 - 1);
+            c.restore();
         }
     }
 
@@ -2716,6 +2863,7 @@ class TrackWindow {
         if (!apart.length) return "";
         if (apart.some((edit) => edit.op === "cut")) return RENDER_FIRST_CUT;
         if (apart.some((edit) => edit.op === "extend")) return RENDER_FIRST_GO_ON;
+        if (apart.some((edit) => edit.op === "move")) return RENDER_FIRST_MOVE;
         if (selection.first === undefined || selection.first === null) return RENDER_FIRST_SECONDS;
         return "";
     }
@@ -2745,6 +2893,33 @@ class TrackWindow {
             + BY_ITSELF);
     }
 
+    addMove(first, stop, to) {
+        const why = this.whyNotMore({ first, stop, from: 0, to: 0 });
+        if (why) {
+            this.setStatus(why, true);
+            return;
+        }
+        const { edits, error } = nodeList(this.node);
+        if (error) {
+            this.setStatus(error, true);
+            return;
+        }
+        const said = "Moving " + this.movedNames(first, stop) + " " + this.movedTo(to);
+        writeList(this.node, [...edits, list.moveFor(first, stop, to)]);
+        paintSummary(this.node);
+        this.selection = null;
+        this.refresh();
+        this.setStatus(said + " is on the list. " + BY_ITSELF);
+    }
+
+    liftSaid() {
+        const lift = this.lift;
+        if (!lift) return "";
+        if (lift.to === null || lift.to === undefined) return MOVE_NOWHERE;
+        return "Let go to move " + this.movedNames(lift.first, lift.stop) + " "
+            + this.movedTo(lift.to) + ". Escape leaves it where it is.";
+    }
+
     whyNotNotes() {
         if (!this.payload) return NOT_DRAWN;
         if (!this.payload.score) return NO_NOTES_HERE;
@@ -2758,7 +2933,7 @@ class TrackWindow {
             && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
         const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
         return apart.some((edit) => edit.op === "cut" || edit.op === "notes"
-            || edit.op === "extend") ? RENDER_FIRST_NOTES : "";
+            || edit.op === "extend" || edit.op === "move") ? RENDER_FIRST_NOTES : "";
     }
 
     whyNotGoOn() {
@@ -2774,7 +2949,7 @@ class TrackWindow {
             && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
         const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
         return apart.some((edit) => edit.op === "cut" || edit.op === "notes"
-            || edit.op === "extend") ? RENDER_FIRST_GOING : "";
+            || edit.op === "extend" || edit.op === "move") ? RENDER_FIRST_GOING : "";
     }
 
     openNotes() {

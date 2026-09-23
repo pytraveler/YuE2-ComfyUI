@@ -1144,6 +1144,144 @@ def head(text: str, stop: int, merged=()) -> str:
     return result
 
 
+NOT_MOVED = (
+    "The bars could not be moved in the score: {reason}.\n\n"
+    "Nothing was changed. The score is as it was before the move."
+)
+
+KEY_CHANGE_MOVE = (
+    "Bar {bar} changes key halfway through, and moving the bars around it would carry that "
+    "change somewhere else. Move the sections on either side of it instead."
+)
+
+
+def order(first: int, stop: int, to: int, count: int) -> list:
+    """The stretches ``(first bar, stop)`` a score of *count* bars is read in once bars *first* to *stop* go before bar *to*.
+
+    Four stretches at most -- what stays before, what is moved, what it jumps
+    over, what stays after -- with the empty ones left out. Bars count from
+    0 and *stop* is not included; *to* is the bar line the moved bars go
+    before, *count* for after the last bar.
+    """
+    for value in (first, stop, to, count):
+        if not _whole(value):
+            raise ValueError("A move is counted in whole bars.")
+    if not 0 <= first < stop <= count:
+        raise ValueError("Bars {} to {} are not bars of this score, which has {}.".format(
+            first + 1, stop, count))
+    if not 0 <= to <= count:
+        raise ValueError("There is no bar line {} to move bars to in a score of {} bars.".format(
+            to + 1, count))
+    if first <= to <= stop:
+        raise ValueError("Bars {} to {} would be moved to where they already are.".format(
+            first + 1, stop))
+    if to < first:
+        found = [(0, to), (first, stop), (to, first), (stop, count)]
+    else:
+        found = [(0, first), (stop, to), (first, stop), (to, count)]
+    return [(low, high) for low, high in found if high > low]
+
+
+def _moved_back(before, after, stretches) -> None:
+    """The moved score read back: every bar has the length, meter and key it had where it came from."""
+    taken = [number for low, high in stretches for number in range(low, high)]
+    if len(after["bars"]) != len(taken):
+        raise ValueError("the score has {} bars where {} should be".format(
+            len(after["bars"]), len(taken)))
+    for number, (bar, was) in enumerate(zip(after["bars"], taken), 1):
+        old = before["bars"][was]
+        if (bar["length"], bar["meter"]) != (old["length"], old["meter"]):
+            raise ValueError("bar {} changed its length".format(number))
+        if bar["key"] != old["key"]:
+            raise ValueError("bar {} changed its key".format(number))
+    if after["bpm"] != before["bpm"] or after["unit"] != before["unit"]:
+        raise ValueError("the tempo or the note length changed")
+
+
+def moved(text: str, first: int, stop: int, to: int) -> str:
+    """*text* with bars *first* to *stop* put before bar *to*: what moving part of a song does to its score.
+
+    Bars count from 0 and *stop* is not included; *to* is the bar line the
+    bars go before, the score's bar count for after its last bar. Every bar
+    keeps its characters, cut into its own groups the way ``without`` cuts
+    them, and a section comment goes with the bars under it. A stretch that
+    starts in the middle of a section is named after that section again, so
+    its bars are not read as the tail of whatever now comes before them;
+    and a stretch that lands where another meter or key is in force carries
+    its own at its head. A tie from the last bar of any stretch is taken off
+    in both parts, since the note it held on into is somewhere else now, and
+    what it held into is struck again. Everything around the score is kept,
+    its final newline included.
+
+    The result is read back before it is returned: every bar must have the
+    length, meter and key it had. A bar that changes key halfway through
+    cannot be moved past, see ``KEY_CHANGE_MOVE``.
+    """
+    source, score, lines, _pieces, sections, inline = _parsed(text)
+    count = len(score.voices["Vocal"].bars)
+    stretches = order(first, stop, to, count)
+    low, high = min(first, to), max(stop, to)
+    locked = sorted(number for number in inline if low <= number < high)
+    if locked:
+        raise ValueError(KEY_CHANGE_MOVE.format(bar=locked[0] + 1))
+    bodies = [line.rstrip("\r\n") for line in lines]
+    ending = lines[0][len(bodies[0]):] or "\n"
+    try:
+        blocks = _blocks(bodies)
+        starts = []
+        at = 0
+        for block in blocks:
+            starts.append(at)
+            at += _bar_count(block["voices"]["Vocal"]["music"])
+        for bar in sorted({first, stop, to}):
+            if 0 < bar < count and bar not in starts:
+                index = max(place for place, start in enumerate(starts) if start < bar)
+                blocks[index:index + 1] = _split_block(blocks[index], bar - starts[index])
+                starts.insert(index + 1, bar)
+        sizes = [_bar_count(block["voices"]["Vocal"]["music"]) for block in blocks]
+        state = {name: ("M:" + bodies[2][2:], "K:" + bodies[7][2:]) for name in abc_tools.VOICES}
+        out = [body + ending for body in bodies[:HEADER_LINES]]
+        for low, high in stretches:
+            chosen = [index for index, start in enumerate(starts)
+                      if low <= start and start + sizes[index] <= high]
+            for place, index in enumerate(chosen):
+                block = blocks[index]
+                names = list(block["names"])
+                if place == 0 and not names and sections[low][1]:
+                    names = [sections[low][1]]
+                out.extend("% " + name + ending for name in names)
+                for name in abc_tools.VOICES:
+                    voice = score.voices[name]
+                    head = list(block["voices"][name]["head"])
+                    if place == 0:
+                        start, _length, meter = voice.bars[low]
+                        wanted = ("M:{}/{}".format(*meter), "K:" + _key_at(voice.keys, start))
+                        fields = [line for line in head[1:]]
+                        for field, have in zip(wanted, state[name]):
+                            if field != have and not any(line.startswith(field[:2]) for line in fields):
+                                head.insert(1, field)
+                    meter, key = state[name]
+                    for line in head[1:]:
+                        if line.startswith("M:"):
+                            meter = line
+                        elif line.startswith("K:"):
+                            key = line
+                    state[name] = (meter, key)
+                    music = block["voices"][name]["music"]
+                    if place == len(chosen) - 1 and music.rstrip().endswith("-|"):
+                        music = music.rstrip()[:-2] + "|"
+                    out.extend(line + ending for line in head)
+                    out.append(music + ending)
+        result = "".join(out)
+        _moved_back(read(source), read(result), stretches)
+    except (ValueError, KeyError, IndexError) as error:
+        raise ValueError(NOT_MOVED.format(reason=_reason(error))) from error
+    raw = str(text or "")
+    leading = raw[:len(raw) - len(raw.lstrip())]
+    trailing = raw[len(raw.rstrip()):]
+    return leading + result.strip() + trailing
+
+
 NOT_THE_BARS = (
     "The new score {what}. Only its notes and chords can change while the rest of the song is "
     "kept as it was sung: sing the song again for that, or change the notes alone."

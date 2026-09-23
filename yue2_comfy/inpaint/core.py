@@ -25,7 +25,10 @@ what they do there.
    sample for sample, moved by what the edit added or took away.
 
 A cut is stages 3 and 4 alone: nothing new is sung, and the two sides meet at
-the seam, under the prompt with the cut's score and lyrics.
+the seam, under the prompt with the cut's score and lyrics. A move
+(``moved``) lays pieces of the old song one after another, sings the last bar
+before each seam again as stages 1 and 2 would, and then draws the audio of
+the whole song once, under the prompt with the moved score and lyrics.
 
 A song that goes on (``extended``) has a stage before the first: the model
 writes the rest of the score from where the singing ends, for the lyrics with
@@ -133,6 +136,10 @@ class Take:
     listened to it: ``(found, wanted)``, how many of the words asked for were
     heard sung in their order, and the words that were heard. Both stay None
     until then; see ``inpaint.lines.heard``.
+
+    ``sung`` belongs to a move: ``(start, stop, count)`` for every stretch
+    before a seam that was sung again, in the frames of the song as it stood
+    when that one was sung; see ``moved``.
     """
 
     seed: int
@@ -146,6 +153,7 @@ class Take:
     natural: float | None = None
     heard: tuple | None = None
     said: str | None = None
+    sung: tuple = ()
 
 
 def best(takes) -> int:
@@ -631,9 +639,7 @@ def splice(models, old, latents, region, count: int, progress=None, band=None, c
     inner_start = 0 if left is None else left[1]
     inner_stop = samples if right is None else right[0]
     result[:, inner_start:inner_stop] = window[:, inner_start - begin:inner_stop - begin]
-    ramp = 0.5 - 0.5 * torch.cos(math.pi * (torch.arange(ops.FADE_SAMPLES, dtype=torch.float64) + 0.5)
-                                 / ops.FADE_SAMPLES)
-    ramp = ramp.to(torch.float32)
+    ramp = _ramp()
     if left is not None:
         a, b = left
         result[:, :a] = old[:, :a]
@@ -642,6 +648,74 @@ def splice(models, old, latents, region, count: int, progress=None, band=None, c
         a, b = right
         result[:, a:b] = window[:, a - begin:b - begin] * (1 - ramp) + old[:, a + shift:b + shift] * ramp
         result[:, b:] = old[:, b + shift:]
+    return result.unsqueeze(0), timing
+
+
+def _ramp() -> torch.Tensor:
+    """The rise of a crossfade, ``ops.FADE_SAMPLES`` long: a raised cosine in float32."""
+    ramp = 0.5 - 0.5 * torch.cos(math.pi * (torch.arange(ops.FADE_SAMPLES, dtype=torch.float64) + 0.5)
+                                 / ops.FADE_SAMPLES)
+    return ramp.to(torch.float32)
+
+
+def laid(models, base, latents, changed, progress=None, band=None, cancelled=None):
+    """``base`` with the decoded ``latents`` laid in around every run of ``changed`` frames: [1, channels, samples].
+
+    ``base`` is the edited song's sound before anything is drawn again -- for
+    a move, the old sound in its new order -- a hop for every frame of
+    ``latents``; a window that reaches the end of the song ends where the
+    decoder does, which is a few samples short of that, and what lies past
+    it is left as it was. Around each ``(first, stop)`` run of frames whose latents changed,
+    a window reaching the decoder's halo past it is decoded and laid in as
+    ``splice`` lays in its one, with a crossfade at each end in a stretch
+    where the old and the new latents are the same; runs closer than that
+    share a window. Returns float32 on the CPU, and the decodes' timing.
+    """
+    vae = models.vae
+    hop = int(vae.config.downsampling_ratio)
+    halo = int(vae.config.decode_halo_frames)
+    frames = int(latents.shape[0])
+    samples = int(base.shape[-1])
+    reach = 2 * halo + -(-2 * ops.FADE_SAMPLES // hop)
+    runs = []
+    for low, high in sorted(changed):
+        if runs and low - runs[-1][1] <= reach:
+            runs[-1] = (runs[-1][0], max(runs[-1][1], high))
+        else:
+            runs.append((low, high))
+    result = base.detach().to(device="cpu", dtype=torch.float32).clone()
+    ramp = _ramp()
+    timing = {}
+    for index, run in enumerate(runs):
+        first, end, left, right = _window(frames, run, halo, hop, samples)
+        low, high = max(0, first - halo), min(frames, end + halo)
+        share = None
+        if band is not None:
+            step = (band[1] - band[0]) / len(runs)
+            share = (band[0] + step * index, band[0] + step * (index + 1), band[2])
+        decoded, spent = generate.decode(models, latents[low:high], progress, cancelled,
+                                         stages=None if share is None else (share,))
+        for key, value in spent.items():
+            if isinstance(value, (int, float)):
+                timing[key] = timing.get(key, 0.0) + value
+        offset = (first - low) * hop
+        begin = first * hop
+        stop = samples if end == frames else end * hop
+        window = decoded[0, :, offset:offset + stop - begin]
+        if end == frames:
+            stop = begin + window.shape[-1]
+        elif window.shape[-1] != stop - begin:
+            raise RuntimeError("The decoded window is {} samples short".format(
+                stop - begin - window.shape[-1]))
+        inner_start = begin if left is None else left[1]
+        inner_stop = stop if right is None else right[0]
+        result[:, inner_start:inner_stop] = window[:, inner_start - begin:inner_stop - begin]
+        if left is not None:
+            a, b = left
+            result[:, a:b] = result[:, a:b] * (1 - ramp) + window[:, a - begin:b - begin] * ramp
+        if right is not None:
+            a, b = right
+            result[:, a:b] = window[:, a - begin:b - begin] * (1 - ramp) + result[:, a:b] * ramp
     return result.unsqueeze(0), timing
 
 
@@ -984,3 +1058,199 @@ def cut(models, song, waveform, region, lyrics, score, settings, progress=None,
              region.stop, region.removed * FRAME_SECONDS, sum(timing.values()))
     return Take(seed=0, waveform=sound, song=edited, count=0, join=None, joins={}, ended=False,
                 timing=timing)
+
+
+SEAM_SEEDS = (1, 2)
+"""The seeds the bar before every seam of a move is sung again from; the join keeps the better of them."""
+
+
+class Seams:
+    """Where each stage of a move sits on a 0..100 bar when the bar before each seam is sung again."""
+
+    PERFORM = (0.0, 40.0, "Singing the bar before each seam again")
+    ACOUSTIC = (40.0, 92.0, "Drawing the audio of the moved song")
+    DECODE = (92.0, 100.0, "Decoding around the seams")
+
+
+def seams_of(pieces) -> list:
+    """The frames of a song made of old ``pieces`` where two meet that were not neighbours before."""
+    found = []
+    at = 0
+    for index, (start, stop) in enumerate(pieces):
+        if index and pieces[index - 1][1] != start:
+            found.append(at)
+        at += stop - start
+    return found
+
+
+def _bounds(low: int, high: int, frames: int, prompt: int) -> tuple:
+    """``(shortest, longest)``: the lengths the join may give frames ``low`` to ``high`` sung again."""
+    region = ops.retake(low, high, frames, prompt)
+    return region.shortest, region.longest
+
+
+def _seam_sung(models, prefix, negative, ids, low: int, high: int, allowed, settings, index: int,
+               count: int, progress=None, cancelled=None):
+    """``(seed, tokens, length, score)``: frames ``low`` to ``high`` of ``ids`` sung again, the best of ``SEAM_SEEDS``.
+
+    Every seed sings the stretch as a retake does, and the join scores how
+    well the frames from ``high`` on follow each length of it; the best
+    score among the lengths ``allowed`` wins, or among all of them when
+    ``allowed`` is None.
+    """
+    region = ops.retake(low, high, len(ids), len(prefix))
+    window = _sampling(settings, 1, 1).penalty_window
+    context = list(prefix) + ids[:low]
+    unconditional = None if negative is None else list(negative) + ids[:low]
+    history = ids[max(0, low - window):low]
+    suffix = ids[high:high + ops.JOIN_FRAMES]
+    best = None
+    share = (Seams.PERFORM[1] - Seams.PERFORM[0]) / max(1, count * len(SEAM_SEEDS))
+    title = "{} (seam {} of {})".format(Seams.PERFORM[2], index + 1, count)
+    for number, seed in enumerate(SEAM_SEEDS):
+        at = Seams.PERFORM[0] + share * (index * len(SEAM_SEEDS) + number)
+        tokens, _spent, _ended = perform(models, context, unconditional, region.longest,
+                                         region.longest, seed, history, settings, progress,
+                                         (at, at + share * 0.7, title), cancelled)
+        longest = min(region.longest, len(tokens))
+        if longest < region.shortest:
+            continue
+        scores = joins(models, context, tokens, region.shortest, longest, suffix, progress,
+                       (at + share * 0.7, at + share, title), cancelled)
+        for length, score in scores.items():
+            if allowed is not None and length not in allowed:
+                continue
+            if best is None or score > best[3]:
+                best = (seed, tokens, length, score)
+    if best is None:
+        raise ValueError("The bar before the seam at {:.1f} s could not be sung again.".format(
+            high * FRAME_SECONDS))
+    return best
+
+
+def moved(models, song, waveform, pieces, count: int, lyrics, score, settings, progress=None,
+          cancelled=None, sung=(), pulse=None) -> Take:
+    """``song`` with its old frames ``pieces`` one after another, under the moved lyrics and score.
+
+    ``pieces`` are ``(start, stop)`` stretches of the old song that between
+    them hold every frame once; ``count`` is how many frames were moved,
+    which the Take carries. Every frame keeps its codec token, its noise and
+    its latent, and the seams where two pieces meet that were not neighbours
+    are drawn again, ``ops.MARGIN`` frames on each side, under the prompt
+    with the moved lyrics and score -- what a cut does at its one seam.
+
+    ``sung`` asks for more: ``(start, seam)`` frames of the song as the
+    pieces lay it, one for each seam, the stretch before it that is sung
+    again, which ``track`` makes the last bar before the seam. The model
+    sings it on from everything before, as a retake does, once from each of
+    ``SEAM_SEEDS``, and the join chooses how long it comes out and which
+    seed keeps it; the section after the seam is not touched. ``pulse`` is
+    the grid's eighth note in seconds: where the beat can be read on both
+    sides of a seam (``beat.jump``), only the lengths that put it back
+    (``beat.counts_on_beat``) are open to the join. The seams are sung in
+    order, each after the ones before it, and the audio of the whole song
+    is drawn once at the end.
+
+    Windows around what changed are decoded and laid into the old sound in
+    its new order (``laid``), and so is one at either end of the song where
+    a piece now starts or ends it that did not: the decoder hears past every
+    frame, so the sound there changes although the latents do not.
+    ``Take.sung`` says what was sung: ``(start, stop, count)`` for each seam,
+    in the frames of the song as it stood when that one was sung.
+
+    Measured on 2026-09-23 on the stand's three songs and a user's. The
+    seams alone kept the words (653 of 672 heard against 651 for the songs
+    themselves), but the user heard every seam: the beat jumped 76 to 146 ms
+    there, where the grid missed the song's own. Singing the last bar before
+    each seam again brought the user's seams to 18 and 72 ms and kept every
+    word, where one bar on each side or two lost up to 29 of the moved
+    sections' words. Left to the join alone, a seam in the stand's rap came
+    out two and three frames long and jumped 94 and 130 ms where the splice
+    had kept the beat; the new frames go on from the beat before the seam,
+    so the jump after them is the splice's own plus 40 ms a frame, which is
+    what the lengths open to the join are worked out from.
+    """
+    from . import beat
+    from ..vendor.yue2.protocol import CODEC_OFFSET
+
+    settings = _settings(settings)
+    old = _editable(song, waveform, ops.Region(0, song.frames, 0, 0))
+    if sum(stop - start for start, stop in pieces) != song.frames:
+        raise ValueError("The pieces of a move hold {} frames and the song has {}.".format(
+            sum(stop - start for start, stop in pieces), song.frames))
+    prefix, negative = _prompts(models, song, lyrics, score, settings)
+    hop = int(models.vae.config.downsampling_ratio)
+    before = latents_of(song)
+    known = torch.cat([before[start:stop] for start, stop in pieces], dim=0)
+    codec = [value for start, stop in pieces for value in song.codec[start:stop]]
+    runs = ops.moved_noise(song.noise, pieces)
+    free = [(seam - ops.MARGIN, seam + ops.MARGIN) for seam in seams_of(pieces)]
+    padded = torch.nn.functional.pad(old, (0, max(0, song.frames * hop - old.shape[-1])))
+    base = torch.cat([padded[:, start * hop:stop * hop] for start, stop in pieces], dim=1)
+    samples = int(old.shape[-1])
+    timing = {}
+    made = []
+    bands = (Seams.ACOUSTIC, Seams.DECODE) if sung else (Stages.ACOUSTIC, Stages.DECODE)
+    with _singing(models, settings):
+        if sung:
+            began = time.perf_counter()
+            jumps = [None if pulse is None else beat.jump(base, int(song.sample_rate),
+                                                          seam * FRAME_SECONDS, float(pulse))
+                     for _start, seam in sung]
+            ids = [int(value) + CODEC_OFFSET for value in codec]
+            shift = 0
+            for index, ((start, seam), jumped) in enumerate(zip(sung, jumps)):
+                low, high = int(start) + shift, int(seam) + shift
+                allowed = None
+                if jumped is not None:
+                    shortest, longest = _bounds(low, high, len(ids), len(prefix))
+                    allowed = set(beat.counts_on_beat(high - low, shortest, longest, jumped,
+                                                      float(pulse), FRAME_SECONDS)) or None
+                seed, tokens, length, joined = _seam_sung(models, prefix, negative, ids, low, high,
+                                                          allowed, settings, index, len(sung),
+                                                          progress, cancelled)
+                new = [int(token) for token in tokens[:length]]
+                ids = ids[:low] + new + ids[high:]
+                codec = codec[:low] + [token - CODEC_OFFSET for token in new] + codec[high:]
+                runs = ops.edited_noise(runs, ops.Region(low, high, length, 0), seed, length)
+                known = torch.cat([known[:low], torch.zeros((length, LATENT_DIM)), known[high:]])
+                base = torch.cat([base[:, :low * hop],
+                                  torch.zeros((base.shape[0], length * hop), dtype=base.dtype),
+                                  base[:, high * hop:]], dim=1)
+                moved_by = length - (high - low)
+                free = [(a + moved_by, b + moved_by) if a >= high else (a, b)
+                        for a, b in free if b <= low or a >= high]
+                free.append((low - ops.MARGIN, low + length + ops.MARGIN))
+                made.append((low, high, length))
+                shift += moved_by
+                samples += moved_by * hop
+                log.info("[yue2_comfy.inpaint] seam %d of %d: frames %d-%d sung again as %d from "
+                         "seed %d, join %.3f, the beat %s", index + 1, len(sung), low, high, length,
+                         seed, joined, "not read" if jumped is None
+                         else "{:+.0f} ms across the splice".format(jumped * 1000))
+            timing["perform"] = time.perf_counter() - began
+        frames = len(codec)
+        held = torch.ones(frames, dtype=torch.bool)
+        changed = []
+        for low, high in sorted(free):
+            low, high = max(0, low), min(frames, high)
+            held[low:high] = False
+            changed.append((low, high))
+        began = time.perf_counter()
+        latents = repaint(models, prefix, codec, noise_of(runs), known, held,
+                          int(settings["ode_steps"]), progress, bands[0], cancelled)
+        timing["acoustic"] = time.perf_counter() - began
+    edges = []
+    if pieces[0][0] > 0:
+        edges.append((0, 1))
+    if pieces[-1][1] < song.frames:
+        edges.append((frames - 1, frames))
+    began = time.perf_counter()
+    sound, _spent = laid(models, base, latents, changed + edges, progress, bands[1], cancelled)
+    sound = sound[..., :samples].contiguous()
+    timing["decode"] = time.perf_counter() - began
+    edited = _made(song, sound, prefix, negative, codec, runs, latents, lyrics, score)
+    log.info("[yue2_comfy.inpaint] %d frames moved, %d seams drawn again, %d sung again, in %.1f s",
+             count, len(seams_of(pieces)), len(made), sum(timing.values()))
+    return Take(seed=0, waveform=sound, song=edited, count=int(count), join=None, joins={},
+                ended=False, timing=timing, sung=tuple(made))

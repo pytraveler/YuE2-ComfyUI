@@ -1240,6 +1240,20 @@ EDIT_LISTS = [
     '[{"op": "extend", "text": "' + "la " * 1400 + '"}]',
     '[{"op": "extend", "text": "' + "\\u0431" * 4000 + '"}]',
     '[{"op": "extend", "text": "' + "\\ud83c\\udfb5" * 2100 + '"}]',
+    '[{"op": "move", "bars": [13, 22], "to": 5}]',
+    '[{"op": "move", "bars": [5, 13], "to": 30, "seed": 5, "takes": 3, "take": 1}]',
+    '[{"op": "move", "bars": [5, 13], "to": 2.0}]',
+    '[{"op": "move", "bars": [5, 13]}]',
+    '[{"op": "move", "bars": [5, 13], "to": null}]',
+    '[{"op": "move", "bars": [5, 13], "to": 2.5}]',
+    '[{"op": "move", "bars": [5, 13], "to": -1}]',
+    '[{"op": "move", "bars": [5, 13], "to": true}]',
+    '[{"op": "move", "bars": [5, 13], "to": "3"}]',
+    '[{"op": "move", "seconds": [1.0, 2.0], "to": 3}]',
+    '[{"op": "move", "to": 3}]',
+    '[{"op": "move", "bars": [5, 13], "seconds": [1.0, 2.0], "to": 3}]',
+    '[{"op": "move", "bars": [5, 5], "to": 3}]',
+    '[{"op": "retake", "bars": [1, 2], "to": 3}]',
     '["retake"]',
     "[null]",
 ]
@@ -1270,7 +1284,7 @@ def spelled(edit):
             "seed": edit.seed, "takes": edit.takes, "take": edit.take,
             "vary": edit.vary, "guide": edit.guide, "fade": edit.fade,
             "lines": None if edit.lines is None else list(edit.lines), "text": edit.text,
-            "score": edit.score}
+            "score": edit.score, "to": edit.to}
 
 
 @needs_node
@@ -1313,12 +1327,13 @@ def test_what_the_window_writes_is_what_the_node_sings():
     assert [spelled(edit) for edit in edits] == [
         {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3,
          "take": 2, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None, "score": None},
+         "text": None, "score": None, "to": None},
         {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None,
-         "vary": None, "guide": None, "fade": None, "lines": None, "text": None, "score": None},
+         "vary": None, "guide": None, "fade": None, "lines": None, "text": None, "score": None,
+         "to": None},
         {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
          "take": None, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None, "score": None},
+         "text": None, "score": None, "to": None},
     ]
     assert json.loads(track.written(edits)) == json.loads(written[0])
     assert len(track.read(written[1], 1)) == 2
@@ -2119,7 +2134,7 @@ def test_the_picker_tells_a_change_of_words_from_a_retake():
     source = SONGS.read_text(encoding="utf-8")
     what = source[source.index("function what(row) {"):source.index("function swapSaid(")]
     assert 'mark.op === "words" ? "new words " : mark.op === "notes" ? "new notes "' in what
-    assert 'mark.op === "extend" ? "went on " : "retake "' in what
+    assert 'mark.op === "extend" ? "went on " : mark.op === "move" ? "moved " : "retake "' in what
     mark = source[source.index("function badges(row, chosen) {"):source.index("function matches(")]
     assert '(mark.op === "words" || mark.op === "extend") && (mark.was || mark.now)' in mark
     assert "NEW_WORDS" in mark and "swapSaid" in mark, (
@@ -2265,3 +2280,31 @@ def test_the_audio_input_is_switched_off_by_a_square_beside_it():
     toggled = source[source.index("function toggleAudio(node) {"):source.index("function chooseSong(")]
     assert "setWidgetValue(node, USE_AUDIO" in toggled, "written so a saved workflow keeps it"
 
+
+
+@needs_node
+def test_a_section_is_dropped_on_the_section_line_nearest_the_pointer():
+    """Whole sections move, to where another starts or the song ends, never into themselves."""
+    from yue2_comfy.inpaint import track
+
+    got = run_edits("""
+        const grid = {grid};
+        console.log(JSON.stringify({{
+            lines: e.sectionLines(grid),
+            whole: [e.wholeSections(grid, 0, 2), e.wholeSections(grid, 2, 5),
+                    e.wholeSections(grid, 1, 2), e.wholeSections(grid, 0, 5)],
+            before: e.dropLine(grid, 2, 5, 0.3),
+            after: e.dropLine(grid, 0, 2, 9.0),
+            nowhere: e.dropLine(grid, 0, 5, 3.0),
+            said: e.describeEdit(e.moveFor(2, 5, 0), 0, 5),
+            end: e.describeEdit(e.moveFor(0, 2, 5), 1, 5),
+            written: e.writeEdits([e.moveFor(2, 5, 0)]),
+        }}));
+    """.format(grid=json.dumps(TRACK_GRID)))
+    assert got["lines"] == [0, 2, 5]
+    assert got["whole"] == [True, True, False, True]
+    assert (got["before"], got["after"], got["nowhere"]) == (0, 5, None)
+    assert got["said"] == "1. Move bars 3-5 before bar 1"
+    assert got["end"] == "2. Move bars 1-2 to the end"
+    edit = track.read(got["written"])[0]
+    assert (edit.op, edit.bars, edit.to) == ("move", (2, 5), 0)

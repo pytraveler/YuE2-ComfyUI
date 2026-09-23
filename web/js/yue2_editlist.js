@@ -4,7 +4,9 @@ export const MAX_TAKES = 4;
 
 export const SEED_CEILING = 2147483648;
 
-export const OPS = ["retake", "cut", "words", "notes", "extend"];
+export const OPS = ["retake", "cut", "words", "notes", "extend", "move"];
+
+export const ONE_TAKE = ["cut", "move"];
 
 export const LONGEST_SCORE = 200000;
 
@@ -71,6 +73,10 @@ function rangeOf(item, where, op) {
         }
         return { bars: null, seconds: null };
     }
+    if (op === "move" && (bars === null || seconds !== null)) {
+        throw new Error(where + " moves sections, which go by bars: it selects bars, and 'to' "
+            + "names the bar line they go to.");
+    }
     if ((op === "words" || op === "notes") && bars === null && seconds === null) {
         return { bars: null, seconds: null };
     }
@@ -117,13 +123,27 @@ function editOf(item, index, takes) {
     const op = given(item, "op");
     if (!OPS.includes(op)) {
         throw new Error(where + " asks for '" + op + "', which is not something an edit does. It "
-            + "is 'retake', 'cut', 'words', 'notes' or 'extend'.");
+            + "is 'retake', 'cut', 'words', 'notes', 'extend' or 'move'.");
     }
     const span = rangeOf(item, where, op);
     if (op === "cut") {
         return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
                  vary: null, guide: null, lines: null, text: null, score: null,
-                 fade: measure(item, "fade", where, "the fade", FADE) };
+                 fade: measure(item, "fade", where, "the fade", FADE), to: null };
+    }
+    if (op === "move") {
+        const to = given(item, "to");
+        if (to === null) {
+            throw new Error(where + " moves sections, which go by bars: it selects bars, and 'to' "
+                + "names the bar line they go to.");
+        }
+        if (!whole(to)) throw new Error(where + ": the bar line the bars go to is not a whole number.");
+        if (to < 0) {
+            throw new Error(where + " moves bars to bar line " + (to + 1) + ", which is before the "
+                + "song.");
+        }
+        return { op, bars: span.bars, seconds: null, seed: 0, takes: 1, take: null, vary: null,
+                 guide: null, fade: null, lines: null, text: null, score: null, to };
     }
     const seed = asked(item, "seed", 0);
     if (!whole(seed)) throw new Error(where + ": the seed is not a whole number.");
@@ -187,7 +207,7 @@ function editOf(item, index, takes) {
     return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
              vary: measure(item, "vary", where, "the variety", VARY),
              guide: measure(item, "guide", where, "the guide", GUIDE), fade: null,
-             lines, text: said, score };
+             lines, text: said, score, to: null };
 }
 
 export function readEdits(text, takes = 1) {
@@ -224,6 +244,7 @@ export function writeEdits(edits) {
         }
         if (edit.op === "notes") item.score = edit.score;
         if (edit.op === "extend") item.text = edit.text;
+        if (edit.op === "move") item.to = edit.to;
         if (edit.op === "retake" || edit.op === "words" || edit.op === "notes"
             || edit.op === "extend") {
             item.seed = edit.seed;
@@ -355,17 +376,21 @@ function goingOn(edit) {
         + (more ? " and " + more + (more === 1 ? " more line" : " more lines") : "");
 }
 
-export function describeEdit(edit, index) {
-    const named = { cut: "Cut", words: "New words", retake: "Retake", notes: "New notes" };
+export function describeEdit(edit, index, count = 0) {
+    const named = { cut: "Cut", words: "New words", retake: "Retake", notes: "New notes",
+                    move: "Move" };
     const what = edit.op === "extend" ? goingOn(edit) : named[edit.op] || "Retake";
     let where = "";
-    if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
+    if (edit.op === "move") {
+        where = barsText(edit.bars[0], edit.bars[1]) + (count && edit.to >= count ? " to the end"
+            : " before bar " + (edit.to + 1));
+    } else if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
     else if (edit.seconds) where = spanText(edit.seconds[0], edit.seconds[1]);
     else if (edit.lines) where = linesText(edit.lines[0], edit.lines[1]);
     else if (edit.op !== "extend") where = "the bars they change";
     const joiner = edit.op === "extend" ? "" : edit.op === "words" ? " for "
-        : edit.op === "notes" ? " in " : " of ";
-    const kept = edit.op !== "cut" && edit.take !== null && edit.take !== undefined
+        : edit.op === "notes" ? " in " : edit.op === "move" ? " " : " of ";
+    const kept = !ONE_TAKE.includes(edit.op) && edit.take !== null && edit.take !== undefined
         ? ", take " + (edit.take + 1) + " of " + edit.takes : "";
     const extra = [];
     if (typeof edit.vary === "number") extra.push("variety " + edit.vary.toFixed(2));
@@ -379,7 +404,7 @@ export function wordsFor(lines, said, takes, seed, selection = null, knobs = {})
     const edit = { op: "words", bars: null, seconds: null, seed,
                    takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
                    vary: null, guide: null, fade: null,
-                   lines: [lines[0], lines[1]], text: String(said), score: null };
+                   lines: [lines[0], lines[1]], text: String(said), score: null, to: null };
     if (selection && selection.first !== null && selection.first !== undefined) {
         edit.bars = [selection.first, selection.stop];
     } else if (selection) {
@@ -395,7 +420,7 @@ export function extendFor(text, takes, seed, knobs = {}) {
                    takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
                    vary: null, guide: null, fade: null, lines: null,
                    text: String(text === null || text === undefined ? "" : text).trim(),
-                   score: null };
+                   score: null, to: null };
     if (typeof knobs.vary === "number") edit.vary = knobs.vary;
     if (typeof knobs.guide === "number") edit.guide = knobs.guide;
     return edit;
@@ -447,7 +472,7 @@ export function notesFor(score, changed, takes, seeds, selection = null, knobs =
                        seed: seeds[index],
                        takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
                        vary: null, guide: null, fade: null, lines: null, text: null,
-                       score: String(score) };
+                       score: String(score), to: null };
         if (typeof knobs.vary === "number") edit.vary = knobs.vary;
         if (typeof knobs.guide === "number") edit.guide = knobs.guide;
         return edit;
@@ -456,7 +481,8 @@ export function notesFor(score, changed, takes, seeds, selection = null, knobs =
 
 export function editFor(selection, op, takes, seed, knobs = {}) {
     const edit = { op, bars: null, seconds: null, seed: 0, takes: 1, take: null,
-                   vary: null, guide: null, fade: null, lines: null, text: null, score: null };
+                   vary: null, guide: null, fade: null, lines: null, text: null, score: null,
+                   to: null };
     if (selection.first === null) {
         edit.seconds = [Number(selection.from.toFixed(3)), Number(selection.to.toFixed(3))];
     } else {
@@ -471,6 +497,31 @@ export function editFor(selection, op, takes, seed, knobs = {}) {
         edit.fade = knobs.fade;
     }
     return edit;
+}
+
+export function moveFor(first, stop, to) {
+    return { op: "move", bars: [first, stop], seconds: null, seed: 0, takes: 1, take: null,
+             vary: null, guide: null, fade: null, lines: null, text: null, score: null, to };
+}
+
+export function sectionLines(grid) {
+    const sections = grid && Array.isArray(grid.sections) ? grid.sections : [];
+    const count = barCount(grid);
+    return [...new Set(sections.map((section) => section.bar).concat(count ? [count] : []))]
+        .sort((a, b) => a - b);
+}
+
+export function wholeSections(grid, first, stop) {
+    const lines = sectionLines(grid);
+    return lines.includes(first) && lines.includes(stop) && first < stop;
+}
+
+export function dropLine(grid, first, stop, second) {
+    const lines = sectionLines(grid);
+    const at = lines.filter((bar) => bar < first || bar > stop);
+    if (!at.length) return null;
+    const seconds = at.map((bar) => lineAt(grid, bar));
+    return at[nearestIn(seconds, second)];
 }
 
 export function cutEdge(selection, grid, seconds) {

@@ -232,13 +232,14 @@ TAKES_TOOLTIP = (
     "They are sung once and kept in this session's memory. A workflow opened in a fresh "
     "ComfyUI sings only the take its list kept, however many it once compared; the window "
     "shows the others and sings one on request, a seed always giving back the same take.\n\n"
-    "A cut ignores this: a cut is the same cut however often it is made."
+    "A cut ignores this, and so does a move: each is the same however often it is made."
 )
 
 EDITS_TOOLTIP = (
     "The edits to make, as a JSON list, written by the track window. Empty means no edits: the "
     "node hands the song on as it is and draws the track.\n\n"
-    "Each edit is {'op': 'retake', 'cut' or 'words'} with either 'bars': [first, stop] counting "
+    "Each edit is {'op': 'retake', 'cut', 'words', 'notes', 'extend' or 'move'} with either "
+    "'bars': [first, stop] counting "
     "from 0, the second bar not included, or 'seconds': [from, to] for a song sung with cot "
     "'off', which has no score. A retake also takes a 'seed', how many 'takes' to sing, and "
     "which 'take' to keep. A change of words takes those too, and 'lines': [first, stop] of the "
@@ -247,7 +248,9 @@ EDITS_TOOLTIP = (
     "song is to have, as the score editor leaves it: without bars it is sung over the bars whose "
     "notes that score changes, and with bars only the music of those bars is taken from it. A "
     "song that goes on, 'extend', takes a seed and takes, and the 'text' it goes on with, empty "
-    "for a new ending alone; it selects no bars, going on from where the singing ends."
+    "for a new ending alone; it selects no bars, going on from where the singing ends. A 'move' "
+    "takes the bars of whole sections and 'to', the bar line they go to: where another section "
+    "starts, or the number of bars for the end."
 )
 
 OPTIONS_TOOLTIP = (
@@ -280,6 +283,10 @@ DESCRIPTION = (
     "chorus, a bridge -- or none, for a new ending alone. The model writes the tune of the new "
     "part itself, from where the singing ends, sings it and ends the song its own way; the old "
     "ending goes.\n\n"
+    "Drag a section along the strip above the track to move it: its sound, its words and its "
+    "bars go where you drop it, and the last bar before each seam where it now meets other "
+    "sections is sung again, so that the song runs on across the seam in time. The sections "
+    "themselves are not sung again.\n\n"
     "Finding where the score sits in the song listens to its voice, so the first edit of a song "
     "downloads the separator Vocals Only uses (0.85 GB, MIT) if it is not there yet."
 )
@@ -308,6 +315,100 @@ grid comes from the score. A file left behind by a song the store dropped is
 a hundred bytes, and still right if that song ever comes back."""
 
 _GRID_KEEP = 8
+
+_VOICES = collections.OrderedDict()
+"""The separated voice's loudness around the cuts of the moves made this session, by sound and stretches.
+
+A second run of the same list separates nothing: the voice of a sound is the
+same voice however often it is asked about."""
+
+_VOICE_KEEP = 16
+
+VOICE_CONTEXT = 1.0
+"""Seconds of the song on each side of a stretch the separator hears besides it."""
+
+VOICE_HOP = 0.005
+"""The step the separated voice's loudness is taken at: five milliseconds."""
+
+
+def _voice_near(sound, rate: int, windows, settings, progress):
+    """The separated voice's loudness in ``windows`` of ``sound``: ``[(first second, [dB every VOICE_HOP])]``.
+
+    Only the windows are separated, laid one after another with a second of
+    silence between them, in one pass; the separator is let go afterwards
+    unless the run keeps what it loads.
+    """
+    import torch
+
+    from . import devices, download
+    from .vocals import runtime as vocal_runtime
+
+    path = download.ensure_vocals(settings, progress)
+    samples = sound[0] if sound.dim() == 3 else sound
+    samples = samples.detach().to(device="cpu", dtype=torch.float32)
+    gap = torch.zeros((samples.shape[0], rate), dtype=torch.float32)
+    parts, spans, at = [], [], 0
+    for start, stop in windows:
+        first = max(0, int((start - VOICE_CONTEXT) * rate))
+        last = min(int(samples.shape[-1]), int(math.ceil((stop + VOICE_CONTEXT) * rate)))
+        if last <= first:
+            continue
+        parts += [samples[:, first:last], gap]
+        spans.append((first, at, last - first))
+        at += last - first + rate
+    if not spans:
+        return []
+    try:
+        voice = vocal_runtime.separate(path, devices.resolve(settings["device"]),
+                                       torch.cat(parts, dim=-1)[None], rate,
+                                       cancelled=interrupted)[0].mean(0)
+    finally:
+        if not settings.get("keep_model_loaded"):
+            vocal_runtime.unload()
+    hop = max(1, int(round(rate * VOICE_HOP)))
+    found = []
+    for first, placed, length in spans:
+        count = length // hop
+        piece = voice[placed:placed + count * hop].reshape(count, hop)
+        loud = 20.0 * torch.log10(piece.pow(2).mean(dim=1).sqrt() + 1e-9)
+        found.append((first / float(rate), [float(value) for value in loud]))
+    return found
+
+
+def _voice_level(sound, rate: int, windows, settings, label: str, progress):
+    """``level(second)``: how loud the separated voice is within ``grid.QUIET_WINDOW`` of ``second``, in dB.
+
+    None when the voice cannot be had -- no separator on the machine and
+    'download' off, say -- and the move then cuts where the score says.
+    Never fatal but for a cancel.
+    """
+    key = (label, tuple((round(start, 3), round(stop, 3)) for start, stop in windows))
+    found = _VOICES.get(key)
+    if found is None:
+        try:
+            found = _voice_near(sound, rate, windows, settings, progress)
+        except InterruptedError:
+            raise
+        except Exception:
+            log.warning("[yue2_comfy.edit_track] the voice around the move could not be separated, "
+                        "so it cuts where the score says", exc_info=True)
+            return None
+        _VOICES[key] = found
+        while len(_VOICES) > _VOICE_KEEP:
+            _VOICES.popitem(last=False)
+    if not found:
+        return None
+
+    def level(second):
+        for first, loud in found:
+            low = int((second - grid.QUIET_WINDOW - first) / VOICE_HOP)
+            high = int((second + grid.QUIET_WINDOW - first) / VOICE_HOP) + 1
+            if low >= 0 and high <= len(loud):
+                return max(loud[low:high])
+        return 0.0
+
+    return level
+
 
 WORDS_SUFFIX = ".words.json"
 """Where the word times of a song wait for the next session, beside the song they were measured on.
@@ -541,6 +642,13 @@ def _edited(settings, edit) -> dict:
     if edit.guide is not None:
         wanted["cfg_scale"] = float(edit.guide)
     return wanted
+
+
+def _one_take(step) -> bool:
+    """Whether an edit sings nothing new: a cut or a move, one take with no seed."""
+    from .inpaint import track
+
+    return step.kind in track.ONE_TAKE
 
 
 def _edge(step, frames: int) -> str:
@@ -825,7 +933,8 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
     entry = _write_wave(take.waveform, rate, "{}_{}.wav".format(name[:16], take.seed))
     drawn = _wave(take.waveform)
     own = track.after(prior, step, take.count,
-                      take.song.score if step.kind == "extend" else None)
+                      take.song.score if step.kind == "extend" else None,
+                      getattr(take, "sung", ()))
     laid = None
     if own.sheet is not None and own.clock is not None:
         laid = grid.layout(own.sheet, own.clock, own.frames)
@@ -885,13 +994,25 @@ def _goes_on(state):
     return {"bar": int(found["bar"]), "second": round(found["start"] * FRAME_SECONDS, 3)}
 
 
-def _moved(marks, step, count: int) -> list:
+def _moved(marks, step, count: int, sung=()) -> list:
     """Where the marks of the edits already made sit in the song after this one.
 
     An edit that put ``count`` frames where ``step.start`` to ``step.stop``
     were moves everything after it by the difference, and swallows whatever
-    stood inside it.
+    stood inside it. A move carries every mark along with the piece of the
+    song it starts in, and then past the bars before its seams that were
+    sung again, ``sung`` (``track.shifted``).
     """
+    if step.kind == "move":
+        carried = []
+        for mark in marks:
+            at = 0
+            for start, stop in step.pieces:
+                if start <= mark["start"] < stop:
+                    carried.append(dict(mark, start=track.shifted(at + mark["start"] - start, sung)))
+                    break
+                at += stop - start
+        return carried
     shift = count - (step.stop - step.start)
     moved = []
     for mark in marks:
@@ -1184,6 +1305,17 @@ class YuE2EditTrack:
                         opens = found_by
                     try:
                         step = track.plan(state, edit, span)
+                        if step.kind == "move":
+                            heard_by = opens + (closes - opens) * TIMES_SHARE
+                            level = _voice_level(
+                                sound, rate, grid.move_windows(state.sheet, state.clock,
+                                                               grid.seams(state.sheet),
+                                                               step.stretches),
+                                settings, track.sound_name(name, history),
+                                Band(progress, opens, heard_by))
+                            opens = heard_by
+                            if level is not None:
+                                step = track.plan(state, edit, span, level)
                     except ValueError as error:
                         raise _Refused("Edit {}: {}".format(index + 1, error))
                     notices.extend(step.notices)
@@ -1199,7 +1331,7 @@ class YuE2EditTrack:
                     hears = closes - (closes - opens) * HEARD_SHARE if asked else closes
                     entry = self._sung(loaded, current, sound, state, step, edit, made,
                                        settings, Band(progress, opens, hears))
-                    seeds = (0,) if step.kind == "cut" else edit.seeds()
+                    seeds = (0,) if _one_take(step) else edit.seeds()
                     if asked:
                         self._heard(entry, seeds, step, sound, rate, settings, made, released,
                                     Band(progress, hears, closes), notices, listened, asked,
@@ -1212,25 +1344,36 @@ class YuE2EditTrack:
                     prior, earlier = state, sound
                     edge = _edge(step, state.frames)
                     state = track.after(state, step, kept.count,
-                                        kept.song.score if step.kind == "extend" else None)
+                                        kept.song.score if step.kind == "extend" else None,
+                                        getattr(kept, "sung", ()))
                     current, sound = kept.song, kept.waveform
                     if edge and edit.fade:
                         sound = _faded(sound, edit.fade, edge == "head", rate)
-                    marks = _moved(marks, step, kept.count)
-                    marks.append({"op": step.kind, "start": step.start, "count": kept.count,
+                    marks = _moved(marks, step, kept.count, getattr(kept, "sung", ()))
+                    landed = (track.placed(step, getattr(kept, "sung", ()))
+                              if step.kind == "move" else (step.start, step.start + kept.count))
+                    marks.append({"op": step.kind, "start": landed[0],
+                                  "count": landed[1] - landed[0],
                                   "bars": list(edit.bars) if edit.bars else None,
-                                  "seed": None if step.kind == "cut" else int(kept.seed),
+                                  "seed": None if _one_take(step) else int(kept.seed),
                                   "took": round((step.stop - step.start) * FRAME_SECONDS, 3),
                                   "was": "\n".join(step.was), "now": "\n".join(step.now)})
                     shown = (step, ordered, pick, made, prior, seeds, earlier, entry)
+                    before = {"label": track.sound_name(name, history[:-1]),
+                              "disk": name if len(history) == 1 else "", "sound": earlier,
+                              "lyrics": prior.lyrics}
                     if step.kind == "extend":
-                        before = (track.sound_name(name, history[:-1]),
-                                  name if len(history) == 1 else "", earlier, prior.lyrics)
                         for take in ordered:
                             if take is not None and take.song is not None:
                                 went[track.sound_name(name, history[:-1] + [(edit, take.seed)])] = (
-                                    before + (track.sings_from(prior, step,
-                                                               notation.read(take.song.score)),))
+                                    dict(before, since=track.sings_from(
+                                        prior, step, notation.read(take.song.score))))
+                    if step.kind == "move":
+                        went[track.sound_name(name, history)] = dict(before, pieces=[
+                            (start * FRAME_SECONDS, stop * FRAME_SECONDS)
+                            for start, stop in step.pieces], sung=[
+                            (start * FRAME_SECONDS, stop * FRAME_SECONDS, count * FRAME_SECONDS)
+                            for start, stop, count in getattr(kept, "sung", ())])
                 released()
                 if wanted:
                     keyed = _remember(sound, _stamped(current, sound, name, song, marks))
@@ -1446,7 +1589,7 @@ class YuE2EditTrack:
                 if take is not None and index != pick:
                     jobs.append(("takes", index, take.waveform, state.lyrics,
                                  track.sound_name(name, history[:-1] + [(edit, take.seed)]), ""))
-            if step.kind != "cut":
+            if not _one_take(step):
                 jobs.append(("before", None, earlier, prior.lyrics,
                              track.sound_name(name, history[:-1]),
                              name if len(history) == 1 else ""))
@@ -1505,14 +1648,27 @@ class YuE2EditTrack:
         times, so a sound timed once in a run is not timed twice. Without the
         aligner at hand and with nothing on the disk, there is nothing to say.
         A sound ``went`` names is a song going on, timed as ``_went_times``
-        says.
+        says, or a song whose sections moved, whose words keep the times they
+        had and go with their sound (``lines.carried_along``), stretched over
+        the bars before its seams that were sung again (``lines.stretched``).
         """
         from .asr import runtime as asr_runtime
         from .inpaint import lines
 
         record = (went or {}).get(label)
-        if record is not None:
-            old = lines.heard_text(record[3])
+        if record is not None and "pieces" in record:
+            said = lines.heard_text(record["lyrics"])
+            earlier = self._times_of(place, record["label"], record["disk"], record["sound"], rate,
+                                     said, progress, listened, went)
+            times = None if earlier is None else lines.carried_along(earlier, said,
+                                                                     record["pieces"], text)
+            if times is not None:
+                times = lines.stretched(times, record.get("sung", ()))
+                if disk:
+                    _times_keep(disk, text, times)
+                return times
+        elif record is not None:
+            old = lines.heard_text(record["lyrics"])
             added = lines.added_after(old, text)
             if added is not None:
                 return self._went_times(place, label, disk, waveform, rate, text, old, added,
@@ -1531,9 +1687,9 @@ class YuE2EditTrack:
                     added: str, record, progress, listened, went):
         """The word times of a song going on: the song before it for its old lines, the new part for the new ones.
 
-        ``record`` is ``(label, disk, sound, lyrics, since)`` of the sound the
-        song went on from and the second this take is heard from
-        (``track.sings_from``); ``old`` is that sound's words and ``added`` the
+        ``record`` holds the ``label``, ``disk``, ``sound`` and ``lyrics`` of
+        the sound the song went on from and the second this take is heard from,
+        ``since`` (``track.sings_from``); ``old`` is that sound's words and ``added`` the
         ones it went on with. The old words are where they were -- the sound
         before the new part is the old one -- and the new ones are timed on
         the sound from ``since`` alone. Given the whole song, the aligner lost
@@ -1545,14 +1701,14 @@ class YuE2EditTrack:
         from .asr import runtime as asr_runtime
         from .inpaint import lines
 
-        before_label, before_disk, before_sound, _lyrics, since = record
+        since = record["since"]
         times = _times_read(disk, text, since) if disk else None
         if times is not None:
             return times
         halves = (None, None) if progress is None else (Band(progress, 0.0, 0.5),
                                                         Band(progress, 0.5, 1.0))
-        earlier = self._times_of(place, before_label, before_disk, before_sound, rate, old,
-                                 halves[0], listened, went)
+        earlier = self._times_of(place, record["label"], record["disk"], record["sound"], rate,
+                                 old, halves[0], listened, went)
         if earlier is None:
             return None
         found, first = [], 0
@@ -1586,8 +1742,8 @@ class YuE2EditTrack:
 
         settings = _edited(settings, edit)
         entry = RESULTS.get(name) or {"takes": {}, "natural": None}
-        seeds = (0,) if step.kind == "cut" else edit.seeds()
-        if step.kind != "cut" and edit.take is not None:
+        seeds = (0,) if _one_take(step) else edit.seeds()
+        if not _one_take(step) and edit.take is not None:
             seeds = (seeds[edit.take],)
         missing = [seed for seed in seeds if seed not in entry["takes"]]
         if not missing:
@@ -1598,6 +1754,10 @@ class YuE2EditTrack:
                 region = ops.cut(step.start, step.stop, state.frames)
                 entry["takes"][0] = core.cut(loaded(), song, waveform, region, step.lyrics,
                                              step.score, settings, band, interrupted)
+            elif step.kind == "move":
+                entry["takes"][0] = core.moved(loaded(), song, waveform, step.pieces,
+                                               step.stop - step.start, step.lyrics, step.score,
+                                               settings, band, interrupted, step.sung, step.pulse)
             elif step.kind == "extend":
                 fresh = core.extended(loaded(), song, waveform, step.start, step.score, step.lyrics,
                                       missing, settings,
@@ -1647,7 +1807,8 @@ class YuE2EditTrack:
         are heard on this machine (``_ears_at_hand``) or left to the join, so
         the window says which before anything is sung. After at least one edit there are also
         ``kind``, ``at`` (the seconds the last edit took in hand, on the song as
-        it was before it), ``dropped`` (the section tags a cut took out),
+        it was before it), ``placed`` (for a move, the seconds the bars it
+        moved lie at now), ``dropped`` (the section tags a cut took out),
         ``asked`` (the words the takes were heard against: the new words, or
         the words the song sings where a retake sings again; None when they
         were not heard), ``chosen`` and ``takes``: an entry a take, with seed,
@@ -1686,6 +1847,9 @@ class YuE2EditTrack:
         payload["chosen"] = pick
         payload["kind"] = step.kind
         payload["at"] = [round(step.start * FRAME_SECONDS, 3), round(step.stop * FRAME_SECONDS, 3)]
+        if step.kind == "move":
+            payload["placed"] = [round(frame * FRAME_SECONDS, 3) for frame in
+                                 track.placed(step, getattr(ordered[pick], "sung", ()))]
         payload["dropped"] = list(step.dropped)
         payload["asked"] = entry.get("asked")
         timings = timed.get("takes") or {}
@@ -1693,7 +1857,7 @@ class YuE2EditTrack:
             _take_facts(take, index, pick, made, rate, prior, step, timings.get(index), was)
             if take is not None else _take_gap(seeds[index], index)
             for index, take in enumerate(ordered)]
-        if step.kind != "cut":
+        if not _one_take(step):
             payload["before"] = _was_facts(earlier, rate, prior, step, made,
                                            timed.get("before"), entry.get("said"), was)
         return payload

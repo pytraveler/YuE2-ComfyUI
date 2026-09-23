@@ -1087,6 +1087,63 @@ def without(text: str, start: int, stop: int) -> str:
     return leading + result.strip() + trailing
 
 
+NOT_HEAD = (
+    "The score could not be ended after bar {stop}: {reason}.\n\n"
+    "Nothing was changed. The score is as it was."
+)
+
+
+def head(text: str, stop: int, merged=()) -> str:
+    """The first *stop* bars of *text*, for the model to write the rest of the score after them.
+
+    This is how a song is made to go on past its last words: the model writes
+    its score before a note of audio, so a score that ends at bar *stop* is
+    where it picks up the pen, and whatever it writes next is sung from there.
+    The bars kept come back character for character, cut into their own
+    groups the way ``without`` cuts them, with every line ending in a newline
+    so the model starts on a line of its own. A tie from the last bar kept is
+    taken off in both parts, since the note it held on into is not written
+    yet. *merged* names bars whose section comments are left out, so those
+    bars run on in the section before them: the tail of a last chorus that the
+    model marked as its outro, say, which would otherwise have the model write
+    the rest as an outro.
+
+    The result is read back before it is returned: it must be *stop* bars,
+    each with the length, meter and key it had.
+    """
+    source, score, lines, _pieces, _sections, _inline = _parsed(text)
+    count = len(score.voices["Vocal"].bars)
+    if not (_whole(stop) and 0 < stop <= count):
+        raise ValueError("The score cannot end after bar {}: it has {} bars.".format(stop, count))
+    bodies = [line.rstrip("\r\n") for line in lines]
+    ending = lines[0][len(bodies[0]):] or "\n"
+    out = [body + ending for body in bodies[:HEADER_LINES]]
+    at = 0
+    try:
+        for block in _blocks(bodies):
+            if at >= stop:
+                break
+            bars = _bar_count(block["voices"]["Vocal"]["music"])
+            if at + bars > stop:
+                block = _split_block(block, stop - at)[0]
+            last = at + bars >= stop
+            if at not in merged:
+                out.extend("% " + name + ending for name in block["names"])
+            for name in abc_tools.VOICES:
+                voice = block["voices"][name]
+                music = voice["music"]
+                if last and music.rstrip().endswith("-|"):
+                    music = music.rstrip()[:-2] + "|"
+                out.extend(line + ending for line in voice["head"])
+                out.append(music + ending)
+            at += bars
+        result = "".join(out)
+        _cut_back(score, abc_tools.parse(result.strip()), stop, count)
+    except (ValueError, KeyError, IndexError) as error:
+        raise ValueError(NOT_HEAD.format(stop=stop, reason=_reason(error))) from error
+    return result
+
+
 NOT_THE_BARS = (
     "The new score {what}. Only its notes and chords can change while the rest of the song is "
     "kept as it was sung: sing the song again for that, or change the notes alone."

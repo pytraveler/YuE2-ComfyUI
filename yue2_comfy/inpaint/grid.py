@@ -391,6 +391,23 @@ def after_retake(grid: "Grid", start: int, stop: int, count: int) -> "Grid":
     return dataclasses.replace(grid, lines=tuple(lines))
 
 
+def after_extend(grid: "Grid", starts, bar: int) -> "Grid":
+    """The grid of a song that went on from bar line ``bar`` under a score whose bars start at ``starts``.
+
+    The bars before that line are the old score's own and stay where they
+    were; the ones after it are new, and fall at the song's own tempo from
+    there, which is what the model sings a score it wrote at.
+    """
+    starts = tuple(starts)
+    if not grid.lines:
+        return dataclasses.replace(grid, starts=starts)
+    line = grid.at(bar)
+    step = grid.rate * grid.tick
+    lines = tuple(grid.lines[:bar + 1]) + tuple(line + (start - starts[bar]) * step
+                                                 for start in starts[bar + 1:])
+    return dataclasses.replace(grid, starts=starts, lines=lines)
+
+
 def _span(sheet, clock: Grid, bar: int) -> float:
     """Seconds of one unit of L: within bar ``bar``: the clock's own, or what the lines have left it."""
     length = float(sheet["bars"][bar]["length"]) if 0 <= bar < len(sheet["bars"]) else 0.0

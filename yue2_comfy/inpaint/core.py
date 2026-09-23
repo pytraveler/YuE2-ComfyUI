@@ -27,6 +27,19 @@ what they do there.
 A cut is stages 3 and 4 alone: nothing new is sung, and the two sides meet at
 the seam, under the prompt with the cut's score and lyrics.
 
+A song that goes on (``extended``) has a stage before the first: the model
+writes the rest of the score from where the singing ends, for the lyrics with
+the new lines in them, the way it wrote the song's score in the first place.
+Then it sings from there under that score to an end of its own -- there is no
+join, nothing old comes after. Measured on 2026-09-23 on the stand's three
+songs by three seeds: under the old score alone the model has nothing to sing
+past its end, and wrote silence in seven takes of nine and words of nobody's
+in two; under a longer score, 45 takes of five kinds all ended the song
+themselves, at 0.87 to 1.05 of the length that score gives. A bridge of new
+words was heard sung 0.86 to 1.00 of it in every take, and a last chorus sung
+again 0.81 to 1.00 in 17 takes of 18 -- its tune written again by the model
+to within one to three notes in five of the six scores that could be compared.
+
 This is the inpainting stand of 2026-09-19 carried into the pack. On its three
 songs by three seeds, retakes sang their words every time, the join landed
 within two frames of the length the bars asked for, and a retake took 6.5-14 s
@@ -136,10 +149,13 @@ class Take:
 
 
 def best(takes) -> int:
-    """The index of the take to keep; the first take when none was scored.
+    """The index of the take to keep; the first take when nothing tells them apart.
 
-    Takes that were heard go by how much of their words were heard sung, and
-    only a tie between them goes to the join: a change of words is worth
+    A take that ended the song itself goes before one stopped at its limit,
+    which ends mid-note: that only happens to an edit that reaches the end of
+    the song, and whatever else it did well, it is heard as a song cut off.
+    Then takes that were heard go by how much of their words were heard sung,
+    and only a tie between them goes to the join: a change of words is worth
     keeping for the words, and on the stand the take with the best join was
     the one whose words were heard best in two songs of three. A take nobody
     heard stands behind every one that was. Takes that were not heard at all
@@ -147,11 +163,12 @@ def best(takes) -> int:
     """
     scored = []
     for index, take in enumerate(takes):
-        if take is None or (take.join is None and take.heard is None):
+        if take is None:
             continue
         share = -1.0 if take.heard is None else take.heard[0] / max(1, take.heard[1])
-        scored.append((share, -math.inf if take.join is None else take.join, -index))
-    return -max(scored)[2] if scored else 0
+        scored.append((bool(take.ended), share, -math.inf if take.join is None else take.join,
+                       -index))
+    return -max(scored)[3] if scored else 0
 
 
 def _settings(settings) -> dict:
@@ -774,6 +791,168 @@ def retakes(models, song, waveform, region, seeds, settings, progress=None, canc
         takes.append(Take(seed=seed, waveform=sound, song=edited, count=chosen,
                           join=scores.get(chosen), joins=scores, ended=ended, timing=timing,
                           natural=own))
+    return takes
+
+
+class Going:
+    """Where each stage of a song going on sits on a 0..100 bar: no join to choose, a score to write first."""
+
+    WRITE = (0.0, 8.0, "Writing the score of the new part")
+    PERFORM = (8.0, 45.0, "Singing the new part")
+    ACOUSTIC = (45.0, 92.0, "Drawing the audio of the new part")
+    DECODE = (92.0, 100.0, "Decoding the new part")
+
+
+SCORE_TRIES = 3
+"""How many scores a take writes before it gives up on one it cannot read.
+
+The model writes its own dialect and the pack reads every score back before it
+is sung. Measured on 2026-09-23, every one of the scores written there could
+be read; the retries are for a seed that writes one that cannot, each from a
+seed of its own so the take still comes out the same every time."""
+
+SCORE_SEED_STEP = 7919
+"""How far apart the seeds of a take's retries are, so they fall on no other take's."""
+
+
+def score_on(models, song, lyrics, head, seed, settings, progress=None, band=None,
+             cancelled=None) -> str:
+    """The score ``head`` goes on to, as the model writes it for ``lyrics``: the whole text.
+
+    The model writes a song's score before a note of it is sung, so this is
+    the first stage of singing again, started from the bars ``head`` already
+    holds: the prompt is the song's style and these lyrics, and the score so
+    far is what the model hears itself having written. It is sampled the way
+    the song's score was, from ``seed``.
+    """
+    from ..vendor.yue2.protocol import GenerationConfig, token_prefixes
+    from ..vendor.yue2.sampling import generate_tokens
+
+    request = generate._request(song.style, lyrics, song.seed, settings)
+    written = [int(token) for token in models.tokenizer.encode(head)]
+    prefix = list(token_prefixes(request, models.tokenizer)) + written
+    sampling = generate._override(GenerationConfig().abc,
+                                  temperature=float(settings["abc_temperature"]),
+                                  top_p=float(settings["abc_top_p"]),
+                                  top_k=int(settings["abc_top_k"]))
+    done = [0]
+
+    def on_token(_phase, _token):
+        done[0] += 1
+        _report(progress, band, done[0], sampling.max_tokens)
+
+    def write(mode):
+        done[0] = 0
+        placement.arrange(models, placement.AR, placement.ar_stage_bytes(
+            len(prefix), sampling.max_tokens), "the score", mode)
+        vocabulary.tune(models, vocabulary.ABC, prefix)
+        with _remembering(written):
+            return generate_tokens(models.lm, prefix, sampling, normalize_seed(seed), "abc",
+                                   cancelled=cancelled, on_token=on_token)
+
+    ids, _spent, truncated = placement.guarded(models, "the score", write)
+    if truncated:
+        log.warning("[yue2_comfy.inpaint] the score of the new part hit its token budget")
+    return models.tokenizer.decode(written + [int(token) for token in ids])
+
+
+def extended(models, song, waveform, start, head, lyrics, seeds, settings, frames_for,
+             progress=None, cancelled=None) -> list:
+    """``song`` going on from frame ``start``, once for every seed: one Take each, in seed order.
+
+    Every take writes the rest of the score after ``head`` for ``lyrics``
+    (``score_on``), then sings from ``start`` under that score and those
+    lyrics with the end of the song barred until ``ops.EARLIER`` before the
+    length ``frames_for(sheet)`` gives for it, and ends the song itself --
+    stopped ``ops.LATER`` after that length if it has not. ``ended`` says it
+    ended by itself. There is no join to choose: nothing of the old song comes
+    after. Each take's song remembers the score it wrote.
+
+    All the writing and singing is done before any take is drawn, as for
+    retakes, so a card holding one half at a time swaps twice.
+    """
+    from .. import notation
+    from ..vendor.yue2.protocol import CODEC_OFFSET
+
+    settings = _settings(settings)
+    region = ops.Region(start, song.frames, 1, 0)
+    old = _editable(song, waveform, region)
+    seeds = [normalize_seed(seed) for seed in seeds]
+    ids = [int(value) + CODEC_OFFSET for value in song.codec]
+    window = _sampling(settings, 1, 1).penalty_window
+    history = ids[max(0, start - window):start]
+
+    sung = []
+    with _singing(models, settings):
+        for index, seed in enumerate(seeds):
+            timing = {}
+            began = time.perf_counter()
+            text, sheet, problem = None, None, None
+            for attempt in range(SCORE_TRIES):
+                text = score_on(models, song, lyrics, head, seed + attempt * SCORE_SEED_STEP,
+                                settings, progress, _part(Going.WRITE, index, len(seeds)),
+                                cancelled)
+                try:
+                    sheet = notation.read(text)
+                    break
+                except ValueError as error:
+                    problem = error
+                    log.warning("[yue2_comfy.inpaint] take %d wrote a score that cannot be read, "
+                                "writing it again: %s", seed, str(error).splitlines()[0])
+            if sheet is None:
+                raise ValueError("The model wrote {} scores for the new part and none of them can be "
+                                 "read: {}".format(SCORE_TRIES, problem))
+            timing["write"] = time.perf_counter() - began
+            length = int(frames_for(sheet))
+            region = ops.extend(start, song.frames, length)
+            prefix, unconditional = _prompts(models, song, lyrics, text, settings)
+            context = list(prefix) + ids[:start]
+            negative = None if unconditional is None else list(unconditional) + ids[:start]
+            began = time.perf_counter()
+            try:
+                tokens, _spent, ended = perform(
+                    models, context, negative, length + ops.LATER, max(1, length - ops.EARLIER),
+                    seed, history, settings, progress, _part(Going.PERFORM, index, len(seeds)),
+                    cancelled)
+            except ValueError as error:
+                if "exceeds" not in str(error):
+                    raise
+                raise ValueError(
+                    "The song and the part it goes on with do not both fit in the model's context "
+                    "of {} tokens. Go on with fewer words, or cut some of the song first."
+                    .format(CONTEXT))
+            timing["perform"] = time.perf_counter() - began
+            sung.append((seed, text, region, prefix, unconditional, tokens, ended, timing))
+
+        drawn = []
+        for index, (seed, text, region, prefix, unconditional, tokens, ended, timing) in \
+                enumerate(sung):
+            chosen = len(tokens)
+            codec = list(song.codec[:start]) + [token - CODEC_OFFSET for token in tokens]
+            runs = ops.edited_noise(song.noise, region, seed, chosen)
+            known, held = _held(song, region, chosen)
+            began = time.perf_counter()
+            latents = repaint(models, prefix, codec, noise_of(runs), known, held,
+                              int(settings["ode_steps"]), progress,
+                              _part(Going.ACOUSTIC, index, len(seeds)), cancelled)
+            timing["acoustic"] = time.perf_counter() - began
+            drawn.append((codec, runs, latents))
+
+    takes = []
+    for index, ((seed, text, region, prefix, unconditional, tokens, ended, timing),
+                (codec, runs, latents)) in enumerate(zip(sung, drawn)):
+        began = time.perf_counter()
+        chosen = len(tokens)
+        sound, _spent = splice(models, old, latents, region, chosen, progress,
+                               _part(Going.DECODE, index, len(seeds)), cancelled)
+        timing["decode"] = time.perf_counter() - began
+        edited = _made(song, sound, prefix, unconditional, codec, runs, latents, lyrics, text)
+        log.info("[yue2_comfy.inpaint] take %d of %d, seed %d: went on from frame %d for %d frames "
+                 "where the score asks about %d, %s, in %.1f s", index + 1, len(sung), seed, start,
+                 chosen, region.length, "ending by itself" if ended else "stopped at the limit",
+                 sum(timing.values()))
+        takes.append(Take(seed=seed, waveform=sound, song=edited, count=chosen, join=None,
+                          joins={}, ended=ended, timing=timing))
     return takes
 
 

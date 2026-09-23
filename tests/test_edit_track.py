@@ -57,6 +57,11 @@ WORDS = ('[{"op": "words", "bars": [4, 8], "lines": [3, 4], "text": "one two fou
          '"seed": 40}]')
 """A change of words on the stretch selected: line 4 of the words, sung over bars 5 to 8."""
 
+GOES_ON = "% bridge\nV: Vocal\nA2z8D2B4|A2z4FG3F2B2B2|\nV: Ins\nZ|Z|\n"
+"""What the stand-in for the model writes after the score it goes on from: two bars of a bridge."""
+
+BRIDGE = "[Bridge]\nnine ten eleven"
+
 
 @pytest.fixture
 def torch():
@@ -146,8 +151,25 @@ def stand(torch, monkeypatch):
                          song=a_song(frames, score_text, lyrics), count=0, join=None, joins={},
                          ended=False, timing={})
 
+    def extended(models, old, waveform, start, head, lyrics, seeds, settings, frames_for,
+                 progress=None, cancelled=None):
+        calls.append(("extend", start, tuple(seeds)))
+        words.append(lyrics)
+        scores.append(head)
+        made = []
+        for index, seed in enumerate(seeds):
+            written = head + GOES_ON
+            count = frames_for(notation.read(written))
+            frames = start + count
+            made.append(core.Take(seed=seed, waveform=a_wave(torch, frames, 0.1 * (index + 1)),
+                                  song=a_song(frames, score_text=written, lyrics=lyrics),
+                                  count=count, join=None, joins={}, ended=seed % 2 == 0,
+                                  timing={}))
+        return made
+
     monkeypatch.setattr(core, "retakes", retakes)
     monkeypatch.setattr(core, "cut", cut)
+    monkeypatch.setattr(core, "extended", extended)
     return types.SimpleNamespace(song=song, wave=wave, name=name, calls=calls, words=words,
                                  scores=scores, audio={"waveform": wave, "sample_rate": RATE})
 
@@ -1510,3 +1532,140 @@ def test_takes_are_heard_in_the_language_their_words_are_written_in(stand, monke
     run(stand, json.dumps([dict(item, text=snow)]))
     run(stand, WORDS)
     assert languages == ["Russian", ""]
+
+
+def going_on(text=BRIDGE, **more):
+    """A song going on as the window writes it."""
+    return json.dumps([dict({"op": "extend", "text": text, "seed": 9}, **more)])
+
+
+def goes_on_from():
+    """The frame the stand's song goes on from: the opening of bar 9, after the chorus's last note."""
+    sheet = notation.read(RAP)
+    return grid.retake_frames(sheet, a_clock(), grid.seams(sheet), 8, 10, FRAMES)[0]
+
+
+def test_a_song_goes_on_from_where_its_singing_ends_under_the_score_its_take_wrote(stand):
+    drawn = payload(run(stand, going_on()))
+    lyrics = LYRICS.replace("\n\n[Outro]", "") + "\n\n" + BRIDGE + "\n\n[Outro]"
+    assert stand.calls == [("extend", goes_on_from(), (9, 10))]
+    assert stand.scores == [notation.head(RAP, 8)] and stand.words == [lyrics]
+    assert drawn["kind"] == "extend" and drawn["chosen"] == 1, "the take that ended the song itself"
+    assert [take["ended"] for take in drawn["takes"]] == [False, True]
+    assert drawn["score"] == notation.head(RAP, 8) + GOES_ON and drawn["lyrics"] == lyrics
+    assert len(drawn["grid"]["bars"]) == 11, "eight bars kept, two written, and the end"
+    assert drawn["before"]["index"] == -1
+    assert json.loads(drawn["edits"]) == [{"op": "extend", "text": BRIDGE, "seed": 9, "takes": 2,
+                                           "take": 1}]
+
+
+def test_the_window_is_told_where_the_song_would_go_on_from(stand):
+    assert payload(run(stand))["goes_on"] == {"bar": 8,
+                                              "second": round(goes_on_from() * FRAME_SECONDS, 3)}
+
+
+def test_a_new_ending_alone_is_sung_under_the_songs_own_words_and_not_heard(stand, monkeypatch):
+    seen = []
+    hearing(monkeypatch, {}, seen)
+    drawn = payload(run(stand, going_on(text="")))
+    assert stand.words == [LYRICS] and seen == []
+    assert drawn["asked"] is None
+
+
+def test_the_takes_of_a_song_going_on_are_heard_against_its_new_words(stand, monkeypatch):
+    """A take stopped at its limit ends mid-note, which is heard however many words it sang."""
+    hearing(monkeypatch, {"was": "", 9: "nine ten eleven", 10: "nine"})
+    drawn = payload(run(stand, going_on()))
+    assert drawn["asked"] == "nine ten eleven"
+    assert [take["heard"] for take in drawn["takes"]] == [[3, 3], [1, 3]]
+    assert drawn["chosen"] == 1
+
+
+def test_a_kept_take_stopped_at_its_limit_is_said_to_stop_mid_note(stand, monkeypatch):
+    said = said_by(monkeypatch)
+    run(stand, going_on(take=0))
+    assert any(level == "warn" and "stops mid-note" in text for level, text in said)
+    said.clear()
+    run(stand, going_on(take=1))
+    assert not any("mid-note" in text for _level, text in said)
+
+
+def test_the_bars_a_song_went_on_with_can_be_edited_like_any_other(stand):
+    """The grid after it lays the take's own score on the song, so a retake of the new bars finds them."""
+    first = json.loads(going_on(take=1))[0]
+    run(stand, json.dumps([first, {"op": "retake", "bars": [8, 10], "seed": 3}]))
+    state = track.opened(stand.song, a_clock())
+    step = track.plan(state, track.read(going_on())[0])
+    written = step.score + GOES_ON
+    left = track.after(state, step, track.extension_frames(state, step, notation.read(written)),
+                       written)
+    wanted = grid.retake_frames(left.sheet, left.clock, grid.seams(left.sheet), 8, 10, left.frames)
+    assert stand.calls[0][0] == "extend" and stand.calls[1][:3] == ("retake",) + wanted
+
+
+TWO_LINES = "[Bridge]\nnine ten eleven\ntwelve thirteen"
+
+
+def went_from():
+    """The second the stand's take of ``TWO_LINES`` is heard from: where its new part opens, here."""
+    state = track.opened(a_song(), a_clock())
+    step = track.plan(state, track.read(going_on(TWO_LINES))[0])
+    return track.sings_from(state, step, notation.read(step.score + GOES_ON))
+
+
+def test_a_song_going_on_has_its_new_lines_timed_on_its_new_part_alone(stand, monkeypatch):
+    """Given the whole song, the aligner lost a user's new outro among the old lines, six seconds early.
+
+    The old lines keep the times the song before had, and only the new ones
+    are timed, on the take's sound from where its new part is heard.
+    """
+    calls = []
+    lined(monkeypatch, calls)
+    drawn = payload(run(stand, going_on(TWO_LINES, take=1)))
+    since = went_from()
+    assert since == pytest.approx(goes_on_from() * FRAME_SECONDS)
+    assert {(text, fill) for _key, text, fill in calls} == {
+        ("one two three\nfour five six\nseven eight", 0.0),
+        ("nine ten eleven\ntwelve thirteen", 0.1)}, "never the whole song's words at once"
+    assert drawn["lines"] == [[3, 0.0, 1.4], [4, 1.5, 2.9], [7, 3.0, 3.9],
+                              [10, round(since, 3), round(since + 1.4, 3)],
+                              [11, round(since + 1.5, 3), round(since + 2.4, 3)]]
+
+
+def test_a_line_a_song_went_on_with_is_rewritten_where_its_new_part_sings_it(stand, monkeypatch):
+    """The stretch of a new line comes from the new part's times: timed whole, it would open 12.5 s early here."""
+    from yue2_comfy import download
+    from yue2_comfy.inpaint import lines
+
+    monkeypatch.setattr(download, "ensure_aligner", lambda settings, progress=None: "aligner")
+    monkeypatch.setattr(download, "aligner_tokenizer",
+                        lambda folder, settings, progress=None: "tokenizer")
+    lined(monkeypatch)
+    first = json.loads(going_on(TWO_LINES, take=1))[0]
+    run(stand, json.dumps([first, {"op": "words", "lines": [11, 12], "text": "twelve fourteen",
+                                   "seed": 3}]))
+    opening = went_from() + 1.0 - lines.EARLY
+    assert stand.calls[1][:2] == ("retake", int(round(opening / FRAME_SECONDS))), (
+        "it opens on the last word of the line before, 'eleven', the new part's third word")
+
+
+def test_times_of_a_song_that_went_on_are_read_only_when_they_say_so(tmp_path, monkeypatch):
+    """A song timed whole before its new lines were known to be lost there is timed again."""
+    monkeypatch.setattr(songs, "_store", songs.Store(str(tmp_path)))
+    key = "{:064x}".format(6)
+    times = [("one", 0.0, 0.4), ("two", 20.5, 20.9)]
+    edit_track._times_keep(key, "one two", times)
+    assert edit_track._times_read(key, "one two", 20.0) is None
+    edit_track._times_keep(key, "one two", times, 20.0)
+    assert edit_track._times_read(key, "one two", 20.0) == times
+    assert edit_track._times_read(key, "one two", 21.0) is None
+    assert edit_track._times_read(key, "one two") == times, "opened as a song of its own"
+
+
+def test_a_song_with_no_score_is_offered_no_going_on_and_refuses_one(torch):
+    wave = a_wave(torch, fill=0.3)
+    songs.remember(wave, RATE, a_song(score_text="", settings={"cot": "off"}))
+    audio = {"waveform": wave, "sample_rate": RATE}
+    assert payload(edit_track.YuE2EditTrack().edit(audio, takes=2, edits=""))["goes_on"] is None
+    with pytest.raises(Exception, match="no score for the model to go on writing"):
+        edit_track.YuE2EditTrack().edit(audio, takes=2, edits=going_on())

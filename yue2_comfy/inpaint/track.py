@@ -10,6 +10,7 @@ window writes::
      {"op": "cut", "bars": [20, 24]},
      {"op": "words", "lines": [7, 8], "text": "and the night comes down", "seed": 4},
      {"op": "notes", "score": "X:1 ...", "bars": [4, 6], "seed": 12},
+     {"op": "extend", "text": "[Chorus]\nhold on ...", "seed": 9},
      {"op": "retake", "seconds": [48.0, 64.0], "seed": 7}]
 
 Bars count from 0 and the second number is not included: [12, 16] is bars 13
@@ -28,7 +29,11 @@ seconds. A change of notes carries the whole score the song is to have, as
 the score editor leaves it; it is sung like a retake too, over the bars whose
 notes that score changes, or over the bars it names -- and then only the
 music of those bars is taken from it, so a score changed in two places far
-apart is sung as two edits, each a stretch of its own.
+apart is sung as two edits, each a stretch of its own. A song that goes on
+carries the words it goes on with, or none for a new ending alone, and
+selects nothing: it goes on from where the singing ends, the model writing
+the score of the rest itself -- each take its own -- and ending the song its
+own way.
 
 What an edit does to the words and the score is worked out here as well, so
 the window can show it and the node can sing it without either of them
@@ -50,7 +55,7 @@ from . import grid, ops
 MAX_TAKES = 4
 """The most takes one edit may ask for at a time. Suno offers two; four is room to choose without a long wait."""
 
-OPS = ("retake", "cut", "words", "notes")
+OPS = ("retake", "cut", "words", "notes", "extend")
 
 NOT_A_LIST = ("The edits field does not hold a JSON list. The track window writes it -- open the "
               "track, or clear the field to start again.")
@@ -78,6 +83,15 @@ SECONDS_NOTES = ("{} changes notes, which go by bars, and it selects seconds. Se
 
 SAME_SCORE = "The new score sings the same notes as the song, so there is nothing to sing again."
 
+NO_GOING_ON = ("This song was sung with 'cot' set to 'off', so it has no score for the model to go on "
+               "writing. Retake its last seconds instead.")
+
+EXTEND_WHERE = ("{} makes the song go on, which it does from where the singing ends, so it selects "
+                "no bars and no seconds.")
+
+TAGGED = ("The new words name no section, so they are sung as {}: the model writes a section's tune "
+          "from its name. Start them with a tag such as [Chorus] or [Bridge] to say otherwise.")
+
 
 @dataclasses.dataclass(frozen=True)
 class Edit:
@@ -94,7 +108,9 @@ class Edit:
 
     ``lines`` and ``text`` belong to a change of words: which lines of the
     lyrics it rewrites, counted from 0 with the second number not included,
-    and what they become. Both are None for anything else.
+    and what they become. Both are None for anything else, but for a song
+    that goes on, whose ``text`` is the words it goes on with -- "" for a new
+    ending alone.
 
     ``score`` belongs to a change of notes: the whole score the song is to
     have, from which the music of ``bars`` is taken, or of every bar it
@@ -136,10 +152,14 @@ class Step:
 
     ``start`` and ``stop`` are the frames it takes in hand. ``lyrics`` and
     ``score`` are what the song has after it, the same text as before for a
-    retake. ``dropped`` names the sections a cut takes out, and ``notices``
-    what the person editing should be told about it. ``was`` and ``now`` are
-    the lines a change of words swapped, which is what the picker shows of an
-    edit whose stretch alone says nothing about what was done to it.
+    retake. A song that goes on is the one exception: its score is written by
+    each take for itself, so ``score`` is the part of the old one the model
+    goes on writing from (``notation.head``), and ``bars`` is where that part
+    ends and where the old score did. ``dropped`` names the sections a cut
+    takes out, and ``notices`` what the person editing should be told about
+    it. ``was`` and ``now`` are the lines a change of words swapped, or the
+    lines a song goes on with, which is what the picker shows of an edit whose
+    stretch alone says nothing about what was done to it.
     """
 
     kind: str
@@ -203,6 +223,10 @@ def _range(item, index: int, op: str = "retake"):
     """
     where = "Edit {}".format(index + 1)
     bars, seconds = item.get("bars"), item.get("seconds")
+    if op == "extend":
+        if bars is not None or seconds is not None:
+            raise ValueError(EXTEND_WHERE.format(where))
+        return None, None
     if op in ("words", "notes") and bars is None and seconds is None:
         return None, None
     if op == "notes" and seconds is not None:
@@ -282,6 +306,22 @@ def _new_score(item, where: str) -> str:
     return score
 
 
+def _going(item, where: str) -> str:
+    """The words a song goes on with, checked for being text: none at all is a new ending alone.
+
+    What they may say is ``ops.go_on``'s business.
+    """
+    words = item.get("text", "")
+    if words is None:
+        return ""
+    if not isinstance(words, str):
+        raise ValueError("{} holds new words that are not text.".format(where))
+    if len(words) > ops.LONGEST_WORDS:
+        raise ValueError("{} goes on with more than {} characters of words.".format(
+            where, ops.LONGEST_WORDS))
+    return words
+
+
 def _edit(item, index: int, takes: int) -> Edit:
     where = "Edit {}".format(index + 1)
     if not isinstance(item, dict):
@@ -289,7 +329,7 @@ def _edit(item, index: int, takes: int) -> Edit:
     op = item.get("op")
     if op not in OPS:
         raise ValueError("{} asks for '{}', which is not something an edit does. It is 'retake', "
-                         "'cut', 'words' or 'notes'.".format(where, op))
+                         "'cut', 'words', 'notes' or 'extend'.".format(where, op))
     bars, seconds = _range(item, index, op)
     if op == "cut":
         return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None,
@@ -312,6 +352,8 @@ def _edit(item, index: int, takes: int) -> Edit:
         lines, words = _rewrite(item, where)
     if op == "notes":
         score = _new_score(item, where)
+    if op == "extend":
+        words = _going(item, where)
     return Edit(op=op, bars=bars, seconds=seconds, seed=seed, takes=wanted, take=take,
                 vary=_measure(item, "vary", where, "the variety", VARY),
                 guide=_measure(item, "guide", where, "the guide", GUIDE),
@@ -354,7 +396,9 @@ def written(edits) -> str:
             item["text"] = edit.text
         if edit.op == "notes":
             item["score"] = edit.score
-        if edit.op in ("retake", "words", "notes"):
+        if edit.op == "extend":
+            item["text"] = edit.text
+        if edit.op in ("retake", "words", "notes", "extend"):
             item["seed"] = edit.seed
             item["takes"] = edit.takes
             if edit.take is not None:
@@ -449,6 +493,108 @@ def _notes(state: State, edit: Edit) -> Step:
                 lyrics=state.lyrics, score=laid["abc"], dropped=(), notices=())
 
 
+SOUND_REACHED = 0.5
+"""Seconds a bar line must lie inside the song for the song to go on from it.
+
+A song can stop short of its score, and the bars it never reached are not
+something to go on from: the model writes those again, with the rest."""
+
+
+def going_on_from(state: State):
+    """The bar a song goes on from, and the second it opens at; None for a song with no score.
+
+    That is the first bar after the last sung note ends -- whatever plays
+    after it, an outro or a last chord, is the ending the new part replaces --
+    or the last bar line the song reached, when it stopped short of its score.
+    A score with nothing sung goes on after its last bar.
+    """
+    if state.sheet is None or state.clock is None:
+        return None
+    sheet, clock = state.sheet, state.clock
+    count = len(sheet["bars"])
+    starts = grid.starts_of(sheet)
+    vocal = sheet["notes"]["Vocal"]
+    bar = count
+    if vocal:
+        end = max(note["start"] + note["length"] for note in vocal)
+        bar = next((number for number in range(1, count + 1) if starts[number] >= end), count)
+    song = state.frames * FRAME_SECONDS
+    while bar > 1 and clock.at(bar) > song - SOUND_REACHED:
+        bar -= 1
+    if bar < count:
+        start, _stop = grid.retake_frames(sheet, clock, grid.seams(sheet), bar, count, state.frames)
+    else:
+        start = max(0, min(state.frames - 1, clock.moment(count)))
+    return {"bar": bar, "bars": count, "start": start}
+
+
+def _extend(state: State, edit: Edit) -> Step:
+    """A song that goes on, worked out: where it goes on from, what the model writes on from, the words.
+
+    The score the model goes on from is the old one up to the bar the song
+    goes on from. The sections that start between the one the last lines are
+    sung in and that bar lose their names there -- the model often marks the
+    tail of a last chorus as its outro, and a score ending in an outro is
+    finished by writing more outro, not by singing what comes next.
+    """
+    found = going_on_from(state)
+    if found is None:
+        raise ValueError(NO_GOING_ON)
+    bar, count, start = found["bar"], found["bars"], found["start"]
+    going = ops.go_on(state.lyrics, edit.text or "")
+    last = ops.last_sung(state.lyrics, state.score)
+    merged = () if last is None else tuple(
+        section["bar"] for section in state.sheet["sections"] if last < section["bar"] < bar)
+    notices = []
+    if going.tagged:
+        notices.append(("notice", TAGGED.format(ops.GO_ON_TAG)))
+    return Step(kind="extend", start=start, stop=state.frames, bars=(bar, count),
+                lyrics=going.text, score=notation.head(state.score, bar, merged), dropped=(),
+                notices=tuple(notices), now=going.sung)
+
+
+def extension_frames(state: State, step: Step, sheet) -> int:
+    """Frames the song goes on for under ``sheet``, a score one of its takes wrote: from ``step.start`` to its end.
+
+    The new bars last what the song's own tempo gives them, and the song
+    keeps the tail it had past its score's last bar -- the ring of a last
+    chord -- which the model sings again at the new end.
+    """
+    clock = state.clock
+    bar, count = step.bars
+    starts = grid.starts_of(sheet)
+    tail = max(0, state.frames - clock.moment(count))
+    return max(1, clock.moment(bar) - step.start + clock.frames(starts[-1] - starts[bar]) + tail)
+
+
+def sings_from(state: State, step: Step, sheet) -> float:
+    """The second a take of a song going on is heard from for its new words: a beat before its first new note.
+
+    ``sheet`` is the score the take wrote, and its new bars fall at the song's
+    own tempo from the bar the song goes on from, as ``grid.after_extend``
+    lays them. The aligner, given a stretch that opens on seconds of playing,
+    puts the first word where the stretch opens: a bridge after four bars of
+    riff was lit six seconds early on a user's song, 2026-09-23. The takes of
+    the stand's extensions and that song sang their first new note up to
+    0.6 s ahead of where their scores have it and not behind it, so a beat
+    early catches the singer who comes in first and leaves little playing to
+    open on. Never before the new part begins, and that is where a take that
+    sings no new note is heard from.
+    """
+    opening = step.start * FRAME_SECONDS
+    clock = state.clock
+    bar = step.bars[0]
+    starts = grid.starts_of(sheet)
+    if clock is None or bar >= len(starts):
+        return opening
+    notes = [note["start"] for note in sheet["notes"]["Vocal"] if note["start"] >= starts[bar]]
+    if not notes:
+        return opening
+    unit = clock.rate * clock.tick
+    first = clock.at(bar) + (min(notes) - starts[bar]) * unit
+    return max(opening, first - float(sheet["per_quarter"]) * unit)
+
+
 def needs_times(edit: Edit) -> bool:
     """Whether the stretch this edit sings has to be found from the song's own word times."""
     return edit.op == "words" and edit.bars is None and edit.seconds is None
@@ -462,6 +608,8 @@ def plan(state: State, edit: Edit, span=None) -> Step:
     """
     if edit.op == "notes":
         return _notes(state, edit)
+    if edit.op == "extend":
+        return _extend(state, edit)
     start, stop = _frames(state, edit, span)
     if edit.op == "words":
         rewrite = ops.change_words(state.lyrics, edit.lines[0], edit.lines[1], edit.text)
@@ -499,16 +647,21 @@ def plan(state: State, edit: Edit, span=None) -> Step:
                 score=score, dropped=words.dropped, notices=tuple(notices))
 
 
-def after(state: State, step: Step, count: int) -> State:
+def after(state: State, step: Step, count: int, score: str | None = None) -> State:
     """The song an edit leaves, once its new part has come out ``count`` frames long.
 
     A cut is ``count`` 0. The bars of the score move with the sound: a cut
     takes its own out and pulls the rest back, and a retake that came out
     longer or shorter than what it replaced pushes everything after it along.
     A change of notes leaves the bars where a retake would, and its notes in
-    them.
+    them. A song that goes on has the score its take wrote, ``score``: the
+    old bars where they were, and the new ones after them.
     """
     frames = state.frames - (step.stop - step.start) + count
+    if step.kind == "extend":
+        sheet = notation.read(score)
+        clock = grid.after_extend(state.clock, grid.starts_of(sheet), step.bars[0])
+        return State(lyrics=step.lyrics, score=score, sheet=sheet, clock=clock, frames=frames)
     if step.kind == "cut" and step.bars is not None:
         sheet = notation.read(step.score)
         clock = grid.after_cut(state.clock, grid.starts_of(sheet), step.bars[0], step.bars[1],
@@ -534,6 +687,8 @@ def _spelled(edit: Edit, seed) -> dict:
         item["text"] = edit.text
     if edit.op == "notes":
         item["score"] = edit.score
+    if edit.op == "extend":
+        item["text"] = edit.text
     for key, value in (("vary", edit.vary), ("guide", edit.guide)):
         if value is not None:
             item[key] = value

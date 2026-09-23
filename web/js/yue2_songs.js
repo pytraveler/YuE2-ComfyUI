@@ -133,7 +133,8 @@ function what(row) {
     return marks.map((mark) => {
         const at = Array.isArray(mark.at) ? mark.at : [0, 0];
         if (mark.op === "cut") return "cut " + where(mark) + DOT + "-" + roll.clock(mark.took || 0);
-        const did = mark.op === "words" ? "new words " : "retake ";
+        const did = mark.op === "words" ? "new words " : mark.op === "notes" ? "new notes "
+            : mark.op === "extend" ? "went on " : "retake ";
         return did + where(mark) + DOT + roll.clock(Math.max(0, at[1] - at[0]));
     }).join(", ");
 }
@@ -224,7 +225,7 @@ function picture(row) {
 function badges(row, chosen) {
     const said = [];
     const swap = (Array.isArray(row.edit) ? row.edit : [])
-        .filter((mark) => mark.op === "words" && (mark.was || mark.now));
+        .filter((mark) => (mark.op === "words" || mark.op === "extend") && (mark.was || mark.now));
     if (swap.length) {
         said.push([NEW_WORDS, "yue2-s-swap-mark", swap.map(swapSaid).join("\n\n")]);
     }

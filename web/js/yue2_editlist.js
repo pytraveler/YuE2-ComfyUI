@@ -4,9 +4,11 @@ export const MAX_TAKES = 4;
 
 export const SEED_CEILING = 2147483648;
 
-export const OPS = ["retake", "cut", "words", "notes"];
+export const OPS = ["retake", "cut", "words", "notes", "extend"];
 
 export const LONGEST_SCORE = 200000;
+
+export const LONGEST_WORDS = 4000;
 
 export const NOTES_APART = 2;
 
@@ -62,6 +64,13 @@ function asked(item, name, fallback) {
 function rangeOf(item, where, op) {
     const bars = given(item, "bars");
     const seconds = given(item, "seconds");
+    if (op === "extend") {
+        if (bars !== null || seconds !== null) {
+            throw new Error(where + " makes the song go on, which it does from where the singing "
+                + "ends, so it selects no bars and no seconds.");
+        }
+        return { bars: null, seconds: null };
+    }
     if ((op === "words" || op === "notes") && bars === null && seconds === null) {
         return { bars: null, seconds: null };
     }
@@ -108,7 +117,7 @@ function editOf(item, index, takes) {
     const op = given(item, "op");
     if (!OPS.includes(op)) {
         throw new Error(where + " asks for '" + op + "', which is not something an edit does. It "
-            + "is 'retake', 'cut', 'words' or 'notes'.");
+            + "is 'retake', 'cut', 'words', 'notes' or 'extend'.");
     }
     const span = rangeOf(item, where, op);
     if (op === "cut") {
@@ -164,6 +173,17 @@ function editOf(item, index, takes) {
             throw new Error(where + " holds a score far longer than any song.");
         }
     }
+    if (op === "extend") {
+        const words = given(item, "text");
+        said = words === null ? "" : words;
+        if (typeof said !== "string") {
+            throw new Error(where + " holds new words that are not text.");
+        }
+        if (said.length > LONGEST_WORDS && [...said].length > LONGEST_WORDS) {
+            throw new Error(where + " goes on with more than " + LONGEST_WORDS
+                + " characters of words.");
+        }
+    }
     return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
              vary: measure(item, "vary", where, "the variety", VARY),
              guide: measure(item, "guide", where, "the guide", GUIDE), fade: null,
@@ -203,7 +223,9 @@ export function writeEdits(edits) {
             item.text = edit.text;
         }
         if (edit.op === "notes") item.score = edit.score;
-        if (edit.op === "retake" || edit.op === "words" || edit.op === "notes") {
+        if (edit.op === "extend") item.text = edit.text;
+        if (edit.op === "retake" || edit.op === "words" || edit.op === "notes"
+            || edit.op === "extend") {
             item.seed = edit.seed;
             item.takes = edit.takes;
             if (edit.take !== null && edit.take !== undefined) item.take = edit.take;
@@ -319,15 +341,30 @@ export function linesText(first, stop) {
     return stop - first === 1 ? "line " + (first + 1) : "lines " + (first + 1) + "-" + stop;
 }
 
+export function sungLines(text) {
+    return String(text === null || text === undefined ? "" : text).split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => /\p{L}|\p{N}/u.test(line) && !/^\[[^\]]*\]$/.test(line));
+}
+
+function goingOn(edit) {
+    const sung = sungLines(edit.text);
+    if (!sung.length) return "A new ending";
+    const more = sung.length - 1;
+    return "Go on with \"" + sung[0] + "\""
+        + (more ? " and " + more + (more === 1 ? " more line" : " more lines") : "");
+}
+
 export function describeEdit(edit, index) {
     const named = { cut: "Cut", words: "New words", retake: "Retake", notes: "New notes" };
-    const what = named[edit.op] || "Retake";
+    const what = edit.op === "extend" ? goingOn(edit) : named[edit.op] || "Retake";
     let where = "";
     if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
     else if (edit.seconds) where = spanText(edit.seconds[0], edit.seconds[1]);
     else if (edit.lines) where = linesText(edit.lines[0], edit.lines[1]);
-    else where = "the bars they change";
-    const joiner = edit.op === "words" ? " for " : edit.op === "notes" ? " in " : " of ";
+    else if (edit.op !== "extend") where = "the bars they change";
+    const joiner = edit.op === "extend" ? "" : edit.op === "words" ? " for "
+        : edit.op === "notes" ? " in " : " of ";
     const kept = edit.op !== "cut" && edit.take !== null && edit.take !== undefined
         ? ", take " + (edit.take + 1) + " of " + edit.takes : "";
     const extra = [];
@@ -351,6 +388,39 @@ export function wordsFor(lines, said, takes, seed, selection = null, knobs = {})
     if (typeof knobs.vary === "number") edit.vary = knobs.vary;
     if (typeof knobs.guide === "number") edit.guide = knobs.guide;
     return edit;
+}
+
+export function extendFor(text, takes, seed, knobs = {}) {
+    const edit = { op: "extend", bars: null, seconds: null, seed,
+                   takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
+                   vary: null, guide: null, fade: null, lines: null,
+                   text: String(text === null || text === undefined ? "" : text).trim(),
+                   score: null };
+    if (typeof knobs.vary === "number") edit.vary = knobs.vary;
+    if (typeof knobs.guide === "number") edit.guide = knobs.guide;
+    return edit;
+}
+
+export function lastSung(lyrics) {
+    const blocks = [];
+    let current = null;
+    for (const raw of String(lyrics || "").replace(/\r\n?/g, "\n").split("\n")) {
+        const line = raw.trim();
+        if (/^\[[^\]]*\]$/.test(line)) {
+            current = { tag: line, lines: [] };
+            blocks.push(current);
+        } else if (line) {
+            if (!current) {
+                current = { tag: "", lines: [] };
+                blocks.push(current);
+            }
+            current.lines.push(line);
+        }
+    }
+    const sung = blocks.filter((block) => block.lines.some((line) => /\p{L}|\p{N}/u.test(line)));
+    const last = sung[sung.length - 1];
+    if (!last) return "";
+    return (last.tag ? [last.tag] : []).concat(last.lines).join("\n");
 }
 
 export function stretchesOf(changed, apart = NOTES_APART) {

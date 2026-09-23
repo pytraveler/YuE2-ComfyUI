@@ -3,8 +3,9 @@
 An edit replaces the old frames ``start`` to ``stop`` of a song with new ones.
 A retake sings the same stretch again with the same words and lets the join
 choose how many frames it takes; a cut takes the stretch out, and only the seam
-where the two sides now meet is drawn again. Everything here is arithmetic on
-frames, noise runs and text. ``core`` does what needs the model.
+where the two sides now meet is drawn again; a song that goes on replaces
+everything from where its singing ends, and ends itself. Everything here is
+arithmetic on frames, noise runs and text. ``core`` does what needs the model.
 
 The numbers are the ones the inpainting stand settled on and measured on
 2026-09-19, three songs by three seeds on an RTX 5090: every retake sang its
@@ -43,6 +44,18 @@ FADE_SAMPLES = 4800
 
 It lies where the old and the new latents are the same, so what it blends is
 one sound decoded twice, which differs only in rounding."""
+
+EARLIER = 50
+"""How long before the end its new score asks for a song that goes on may end: 2 s."""
+
+LATER = 250
+"""How long after that end it may still be going: 10 s, then it is stopped.
+
+A song ends past its last bar -- a chord held, a fade, the last word ringing
+-- and the model is left to end it its own way. Measured on 2026-09-23, three
+songs by three seeds, a song that went on under a new chorus, new words or a
+new ending ended by itself every time, within these bounds; see
+``inpaint.core.extended``."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -106,6 +119,19 @@ def cut(start: int, stop: int, frames: int) -> Region:
     if stop - start >= frames:
         raise ValueError("That would cut the whole song.")
     return Region(start, stop, 0, 0)
+
+
+def extend(start: int, frames: int, length: int) -> Region:
+    """The region of a song that goes on from frame ``start``: the rest of it goes, about ``length`` frames come.
+
+    ``length`` is how long the new score says the song now runs from
+    ``start``, which is only a guide: the model ends the song itself, from
+    ``EARLIER`` before that to ``LATER`` after it.
+    """
+    _within(start, frames, frames)
+    if isinstance(length, bool) or not isinstance(length, int) or length < 1:
+        raise ValueError("A song that goes on sings at least a frame.")
+    return Region(start, frames, length, 0)
 
 
 def runs_between(runs, start: int, stop: int) -> list:
@@ -341,3 +367,87 @@ def change_words(lyrics: str, first: int, stop: int, text: str) -> Rewrite:
                    before=tuple(chosen), after=tuple(fresh), tag=tag,
                    syllables=(sum(phrasing.syllables(line) for line in chosen),
                               sum(phrasing.syllables(line) for line in fresh)))
+
+
+LONGEST_WORDS = 4000
+"""Characters of new words a song may go on with: a few verses. They go into the
+prompt, which shares the model's context with the song itself."""
+
+GO_ON_TAG = "[Verse]"
+"""The tag put above new words that name no section: the model writes a section's
+tune from its name, and lines under no tag would run on in the last section."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Going:
+    """The lyrics a song goes on with: its own, then the new lines.
+
+    ``added`` holds the new lines as written, tags included, and ``sung`` the
+    ones that are sung, which are what its takes are heard against. ``tagged``
+    says that ``GO_ON_TAG`` was put above them because they named no section.
+    """
+
+    text: str
+    added: tuple
+    sung: tuple
+    tagged: bool
+
+
+def go_on(lyrics: str, text: str) -> Going:
+    """``lyrics`` with ``text`` after their last sung line: the words a song goes on with.
+
+    No text at all is the song's own words, for a song that only gets a new
+    ending. The new lines keep the line ending the lyrics are written with,
+    and a blank line stands between the two, as between any two sections.
+    Tags after the last sung line -- an [Outro] with nothing under it -- stay
+    at the very end, after the new lines: they name how the song ends, and the
+    new part comes before its ending.
+    """
+    fresh = [line.rstrip() for line in str(text or "").splitlines()]
+    while fresh and not fresh[0].strip():
+        fresh.pop(0)
+    while fresh and not fresh[-1].strip():
+        fresh.pop()
+    if len("\n".join(fresh)) > LONGEST_WORDS:
+        raise ValueError("The new words run to more than {} characters. A song goes on by a few "
+                         "sections at a time.".format(LONGEST_WORDS))
+    if not fresh:
+        return Going(str(lyrics or ""), (), (), False)
+    sung = tuple(line.strip() for line in fresh if not tagged(line) and phrasing.syllables(line))
+    added = tuple(line.strip() for line in fresh)
+    lead = not tagged(fresh[0])
+    if lead:
+        added = (GO_ON_TAG,) + added
+    ending = "\r\n" if "\r\n" in str(lyrics or "") else chr(10)
+    raw = str(lyrics or "").splitlines(keepends=True)
+    cut = len(raw)
+    while cut > 0 and (not raw[cut - 1].strip() or tagged(raw[cut - 1])):
+        cut -= 1
+    before = "".join(raw[:cut]).rstrip()
+    after = "".join(raw[cut:]).strip()
+    joined = before + (ending * 2 if before else "") + ending.join(added)
+    if after:
+        joined += ending * 2 + after
+    return Going(joined, added, sung, lead)
+
+
+def last_sung(lyrics: str, score: str):
+    """The bar the score section holding the last sung lines of ``lyrics`` starts at, or None.
+
+    The sections are paired as a cut pairs them (see ``_paired``). None when
+    they cannot be, or when the lyrics sing nothing.
+    """
+    sheet = notation.read(score)
+    if not sheet["bars"]:
+        return None
+    sections = _sections(score, 0, 1)
+    blocks = _blocks(lyrics)
+    singing = [index for index, block in enumerate(blocks) if block["lines"]]
+    if not singing:
+        return None
+    labels = [phrasing.label_of(blocks[index]["tag"]) if blocks[index]["tag"] else "verse"
+              for index in singing]
+    paired = _paired(labels, sections)
+    if not paired:
+        return None
+    return sheet["sections"][paired[-1]]["bar"]

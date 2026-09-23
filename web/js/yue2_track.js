@@ -170,7 +170,7 @@ function typing(target) {
 }
 
 function singsAgain(op) {
-    return op === "retake" || op === "words" || op === "notes";
+    return op === "retake" || op === "words" || op === "notes" || op === "extend";
 }
 
 const WORDS_WHERE =
@@ -279,8 +279,16 @@ const RENDER_FIRST_CUT =
     + "here is no longer where this edit would land.";
 
 const RENDER_FIRST_NOTES =
-    "Press Render first: the notes open on the song the track shows, and the list holds a cut or "
-    + "a change of notes the track has not sung yet.";
+    "Press Render first: the notes open on the song the track shows, and the list holds a cut, "
+    + "a change of notes or a song going on that the track has not sung yet.";
+
+const RENDER_FIRST_GO_ON =
+    "Press Render first: the list holds a song going on that the track has not sung yet, and "
+    + "every bar after where its singing ends will be new.";
+
+const RENDER_FIRST_GOING =
+    "Press Render first: the song goes on from where the track shows its singing ends, and the "
+    + "list holds a cut, a change of notes or a song going on that the track has not sung yet.";
 
 const NOTES_WHY =
     "Change the song's notes in the piano roll. Only the bars whose notes change are sung again, "
@@ -297,6 +305,35 @@ const NOTES_APART =
 
 const NO_NOTES_HERE =
     "This song was sung with 'cot' set to 'off', so it has no score and no notes to change.";
+
+const NEXT_GO_ON = "Sing on";
+
+const GO_ON_WHY =
+    "Make the song longer. Write the lines it goes on with, or none for a new ending alone: the "
+    + "model writes the tune of the new part itself, from where the singing ends, sings it and "
+    + "ends the song its own way. The old ending goes.";
+
+const NO_GO_ON_HERE =
+    "This song was sung with 'cot' set to 'off', so it has no score for the model to go on "
+    + "writing.";
+
+const GO_ON_HOW =
+    "The lines the song goes on with, under a section tag such as [Chorus] or [Bridge]; lines "
+    + "under no tag are sung as a verse. Leave the box empty for a new ending alone.";
+
+const GO_ON_SUNG =
+    "The model writes the tune of the new part, each take its own, and ends the song its own "
+    + "way. The old ending after the last words goes.";
+
+const GO_ON_AGAIN = "The last section again";
+
+const GO_ON_AGAIN_WHY =
+    "Put the words of the song's last sung section in the box, tag and all. The model writes "
+    + "that section once more, most often to the tune it had.";
+
+const PICK_GO_ON =
+    "A take that ended the song by itself, heard singing the most of the new words; it is the "
+    + "one the node keeps unless the list says otherwise.";
 
 const RENDER_FIRST_SECONDS =
     "Press Render first: an edit not yet rendered moves the seconds after it, and this "
@@ -577,7 +614,8 @@ function heardFacts(take) {
 function wasFacts(was, kind) {
     const parts = ["the " + roll.clock(was.seconds || 0)
         + (kind === "words" ? " the new words replaced"
-            : kind === "notes" ? " the new notes replaced" : " the retake replaced")];
+            : kind === "notes" ? " the new notes replaced"
+                : kind === "extend" ? " of ending the new part replaced" : " the retake replaced")];
     if (typeof was.total === "number") parts.push("song " + roll.clock(was.total));
     parts.push("nothing sung for it");
     return parts.join(" \u00b7 ");
@@ -652,6 +690,8 @@ class TrackWindow {
         this.selection = null;
         this.editing = null;
         this.wordArea = null;
+        this.going = null;
+        this.goArea = null;
         this.overSaid = null;
         this.playhead = 0;
         this.drag = null;
@@ -801,6 +841,10 @@ class TrackWindow {
         this.notesButton.title = NOTES_WHY;
         this.notesButton.addEventListener("click", () => this.openNotes());
         chosen.appendChild(this.notesButton);
+        this.goOnButton = element("button", "", "Go on\u2026");
+        this.goOnButton.title = GO_ON_WHY;
+        this.goOnButton.addEventListener("click", () => this.openGoOn());
+        chosen.appendChild(this.goOnButton);
         this.undoButton = element("button", "", "Undo last edit");
         this.undoButton.title = "Take the last edit off the list. What it was made on is still in "
             + "memory, so this costs nothing.";
@@ -871,6 +915,9 @@ class TrackWindow {
         });
         handle.onEscape = () => {
             if (this.stopEditing()) {
+                return;
+            }
+            if (this.stopGoing()) {
                 return;
             }
             if (this.sound) {
@@ -972,6 +1019,8 @@ class TrackWindow {
         this.selection = null;
         this.editing = null;
         this.wordArea = null;
+        this.going = null;
+        this.goArea = null;
         this.setWorking(false);
         this.adoptTakes();
         this.box.title = this.payload && !this.hasScore() ? NO_SCORE_HERE : "";
@@ -990,6 +1039,10 @@ class TrackWindow {
         }
         if (at) {
             const made = this.madeSpan();
+            if (this.payload.kind === "extend") {
+                return "The song goes on from " + roll.clock(at[0]) + " and now runs "
+                    + roll.clock(this.total()) + ". Listen to the takes, or keep another one.";
+            }
             return (this.payload.kind === "words" ? "The new words are in the song, at "
                 : this.payload.kind === "notes" ? "The new notes are in the song, at "
                 : "The retake is in the song, at ") + list.spanText(made[0], made[1])
@@ -1154,7 +1207,8 @@ class TrackWindow {
         const edge = this.cutEdge();
         const canRetake = Boolean(this.payload) && !this.retakeButton.disabled;
         const canFade = Boolean(this.payload) && !this.cutButton.disabled && Boolean(edge);
-        const sings = canRetake || (Boolean(this.editing) && !this.working);
+        const sings = canRetake || ((Boolean(this.editing) || Boolean(this.going))
+            && !this.working);
         this.knobsRow.hidden = !sings && !canFade;
         this.seedKnob.hidden = !sings;
         this.varyKnob.box.hidden = !sings;
@@ -1196,6 +1250,8 @@ class TrackWindow {
             || Boolean(list.whyNotCut(this.selection, this.hasScore()));
         this.notesButton.disabled = busy || !drawn || !this.payload?.score;
         this.notesButton.title = drawn && !this.payload?.score ? NO_NOTES_HERE : NOTES_WHY;
+        this.goOnButton.disabled = busy || !drawn || !this.payload?.goes_on;
+        this.goOnButton.title = drawn && !this.payload?.goes_on ? NO_GO_ON_HERE : GO_ON_WHY;
         this.undoButton.disabled = busy || !edits.length;
         this.songsButton.disabled = busy;
         this.renderButton.disabled = busy;
@@ -1258,6 +1314,13 @@ class TrackWindow {
         if (edit.op === "cut") {
             return { head: head, facts: this.cutFacts(edit), label: NEXT_CUT, why: RUN_WHY };
         }
+        if (edit.op === "extend") {
+            const facts = [this.goOnFact()];
+            const sung = list.sungLines(edit.text);
+            if (sung.length) facts.push("Sings: " + sung.join(" / "));
+            facts.push(GO_ON_SUNG, this.takeFact(edit), SUNG_ONCE);
+            return { head: head, facts: facts.filter(Boolean), label: NEXT_GO_ON, why: RUN_WHY };
+        }
         if (edit.op === "words") {
             const said = [this.spanFact(edit) || WORDS_HEARD];
             const written = String(edit.text || "").split(/\r?\n/).filter((line) => line.trim());
@@ -1278,6 +1341,12 @@ class TrackWindow {
         if (edit.take !== null && edit.take !== undefined) {
             return "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.";
         }
+        if (edit.op === "extend") {
+            return "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
+                + ", each take writing its own tune, and keeps one that ends the song by itself"
+                + (list.sungLines(edit.text).length
+                    ? ", heard singing the most of the new words." : ".");
+        }
         return "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
             + (edit.op === "words"
                 ? ", hears every take, and keeps the one heard singing the most of the new words."
@@ -1292,6 +1361,13 @@ class TrackWindow {
         const grid = this.grid();
         if (!edit.bars || !list.barCount(grid)) return null;
         return [list.lineAt(grid, edit.bars[0]), list.lineAt(grid, edit.bars[1])];
+    }
+
+    goOnFact() {
+        const at = this.payload?.goes_on;
+        if (!at) return "";
+        return "The song goes on from " + roll.clock(at.second) + ", bar " + (at.bar + 1)
+            + ", where its singing ends.";
     }
 
     spanFact(edit) {
@@ -1428,12 +1504,16 @@ class TrackWindow {
         const same = this.sameEdit();
         const mine = same && last >= 0 && singsAgain(edits[last].op);
         const shown = this.shownTake();
-        const words = this.payload.kind === "words";
+        const going = this.payload.kind === "extend";
+        const words = this.payload.kind === "words" || going;
         const head = element("div", "yue2-t-takehead");
-        head.appendChild(element("span", "", (words ? "Takes of the new words at "
+        const where = !this.payload.at ? ""
+            : going ? roll.clock(this.payload.at[0])
+                : list.spanText(this.payload.at[0], this.payload.at[1]);
+        head.appendChild(element("span", "", (going ? "Takes of the song going on from "
+            : words ? "Takes of the new words at "
             : this.payload.kind === "notes" ? "Takes of the new notes at " : "Takes of the retake at ")
-            + (this.payload.at ? list.spanText(this.payload.at[0], this.payload.at[1]) : "")
-            + " -- the one chosen is the track above, so playing compares them in place."));
+            + where + " -- the one chosen is the track above, so playing compares them in place."));
         this.takesRow.appendChild(head);
         if (!same) this.takesRow.appendChild(element("div", "yue2-t-warn", OTHER_LIST));
         if (takes.some((take) => take.sung === false)) {
@@ -1489,7 +1569,8 @@ class TrackWindow {
             }
             if (take.kept) {
                 const mark = element("span", "yue2-t-dim", "the model's pick");
-                mark.title = words ? PICK_WORDS : heardAny ? PICK_HEARD : PICK_JOIN;
+                mark.title = going ? PICK_GO_ON
+                    : (words ? PICK_WORDS : heardAny ? PICK_HEARD : PICK_JOIN);
                 row.appendChild(mark);
             }
             if (take.flagged) {
@@ -1525,7 +1606,8 @@ class TrackWindow {
         this.paired = [];
         this.marked = "";
         const text = this.payload?.lyrics || "";
-        if (!text.trim()) {
+        this.goArea = null;
+        if (!text.trim() && !this.going) {
             this.words.hidden = true;
             return;
         }
@@ -1566,6 +1648,7 @@ class TrackWindow {
             }
             this.blocks.push(row);
         }
+        if (this.going) this.words.appendChild(this.goBox());
         this.pairWords();
         this.words.title = this.timedLines() ? WORDS_TIMED
             : (!(this.grid()?.sections || []).length ? WORDS_NO_SCORE
@@ -1632,6 +1715,8 @@ class TrackWindow {
     }
 
     saidSpan() {
+        const going = this.going && this.payload?.goes_on;
+        if (going && !this.overSaid) return [going.second, Math.max(going.second, this.total())];
         let over = this.overSaid;
         if (!over && this.editing) {
             const first = this.whereLine(this.editing.first);
@@ -1693,7 +1778,11 @@ class TrackWindow {
     }
 
     fitArea() {
-        const area = this.wordArea;
+        this.fitBox(this.wordArea);
+        this.fitBox(this.goArea);
+    }
+
+    fitBox(area) {
         if (!area) return;
         area.style.height = "auto";
         area.style.height = Math.min(WORDS_TALL, Math.max(WORDS_SHORT, area.scrollHeight + 2))
@@ -1737,6 +1826,107 @@ class TrackWindow {
         why.appendChild(element("div", "yue2-t-wordknobs", WORDS_KNOBS));
         box.appendChild(why);
         return box;
+    }
+
+    goBox() {
+        const box = element("div", "yue2-t-wordbox yue2-t-gobox");
+        box.appendChild(element("div", "yue2-t-tag", "After the last line"));
+        const area = document.createElement("textarea");
+        area.className = "yue2-t-wordarea";
+        area.rows = 3;
+        area.value = this.going.text;
+        area.placeholder = "[Chorus]";
+        area.spellcheck = false;
+        area.addEventListener("input", () => {
+            if (this.going) this.going.text = area.value;
+            this.fitBox(area);
+        });
+        area.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                this.stopGoing();
+            } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                this.singOn();
+            }
+        });
+        box.appendChild(area);
+        this.goArea = area;
+        const row = element("div", "yue2-t-wordrow");
+        const go = element("button", "yue2-t-go", NEXT_GO_ON);
+        go.title = GO_ON_WHY;
+        go.disabled = this.working;
+        go.addEventListener("click", () => this.singOn());
+        row.appendChild(go);
+        const last = list.lastSung(this.payload?.lyrics || "");
+        const again = element("button", "", GO_ON_AGAIN);
+        again.title = GO_ON_AGAIN_WHY;
+        again.disabled = !last;
+        again.addEventListener("click", () => {
+            if (!this.going) return;
+            this.going.text = last;
+            area.value = last;
+            this.fitBox(area);
+            area.focus();
+        });
+        row.appendChild(again);
+        const stop = element("button", "", "Cancel");
+        stop.addEventListener("click", () => this.stopGoing());
+        row.appendChild(stop);
+        box.appendChild(row);
+        const why = element("div", "yue2-t-wordwhy", [GO_ON_HOW, this.goOnFact()]
+            .filter(Boolean).join(" "));
+        why.appendChild(element("div", "yue2-t-wordknobs", WORDS_KNOBS));
+        box.appendChild(why);
+        return box;
+    }
+
+    openGoOn() {
+        const why = this.whyNotGoOn();
+        if (why) {
+            this.setStatus(why, true);
+            return;
+        }
+        this.editing = null;
+        this.wordArea = null;
+        if (!this.going) this.going = { text: "" };
+        this.paintWords();
+        this.paintKnobs();
+        this.draw();
+        if (this.goArea) {
+            this.goArea.focus();
+            this.goArea.scrollIntoView?.({ block: "nearest" });
+        }
+        this.setStatus(GO_ON_HOW);
+    }
+
+    stopGoing() {
+        if (!this.going) return false;
+        this.going = null;
+        this.goArea = null;
+        this.paintWords();
+        this.paintKnobs();
+        this.draw();
+        return true;
+    }
+
+    singOn() {
+        if (!this.going || this.working) return;
+        const { edits, error } = nodeList(this.node);
+        if (error) {
+            this.setStatus(error, true);
+            return;
+        }
+        const made = list.extendFor(this.going.text, nodeTakes(this.node), this.knobs.seed,
+            { vary: this.knobs.vary, guide: this.knobs.guide });
+        writeList(this.node, [...edits, made]);
+        paintSummary(this.node);
+        this.going = null;
+        this.goArea = null;
+        this.selection = null;
+        this.refresh();
+        this.setStatus(list.describeEdit(made, edits.length).slice(3) + " is on the list. "
+            + BY_ITSELF);
     }
 
     stopEditing() {
@@ -2525,6 +2715,7 @@ class TrackWindow {
         const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
         if (!apart.length) return "";
         if (apart.some((edit) => edit.op === "cut")) return RENDER_FIRST_CUT;
+        if (apart.some((edit) => edit.op === "extend")) return RENDER_FIRST_GO_ON;
         if (selection.first === undefined || selection.first === null) return RENDER_FIRST_SECONDS;
         return "";
     }
@@ -2566,8 +2757,24 @@ class TrackWindow {
         while (shared < drawn.edits.length && shared < mine.edits.length
             && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
         const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
-        return apart.some((edit) => edit.op === "cut" || edit.op === "notes")
-            ? RENDER_FIRST_NOTES : "";
+        return apart.some((edit) => edit.op === "cut" || edit.op === "notes"
+            || edit.op === "extend") ? RENDER_FIRST_NOTES : "";
+    }
+
+    whyNotGoOn() {
+        if (!this.payload) return NOT_DRAWN;
+        if (!this.payload.goes_on) return NO_GO_ON_HERE;
+        const drawn = list.readEdits(this.payload.edits || "", nodeTakes(this.node));
+        const mine = nodeList(this.node);
+        if (drawn.error) return "";
+        if (mine.error) return mine.error;
+        const spelled = (edit) => list.writeEdits([{ ...edit, take: null }]);
+        let shared = 0;
+        while (shared < drawn.edits.length && shared < mine.edits.length
+            && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
+        const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
+        return apart.some((edit) => edit.op === "cut" || edit.op === "notes"
+            || edit.op === "extend") ? RENDER_FIRST_GOING : "";
     }
 
     openNotes() {

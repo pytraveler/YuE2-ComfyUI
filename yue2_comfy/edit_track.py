@@ -9,7 +9,9 @@ heard singing the most of the words there; a change of words does the same
 with other words, and keeps the take heard singing the most of them; a change
 of notes sings again, under the score the score editor left, only the bars
 whose notes it changed, and keeps a take as a retake does; a cut takes a
-stretch out and draws the two sides together. The sound that comes out is the song with those edits
+stretch out and draws the two sides together; and a song can go on past its
+last words, the model writing the score of the new part and the song's new
+ending itself, the take heard singing the most of the new words kept. The sound that comes out is the song with those edits
 in it, and it is remembered like any other, so it can be saved, loaded and
 edited again. When the word aligner is on the machine, the node also finds
 when each line of the words is sung, so the window lights the words where the
@@ -43,7 +45,7 @@ import time
 from . import notation, songs
 from .constants import CATEGORY, DEFAULT_OPTIONS, FRAME_SECONDS, OPTIONS_TYPE
 from .edits import EDIT_TRACK_UI
-from .inpaint import grid, track
+from .inpaint import grid, ops, track
 from .progress import (Band, NodeProgress, announce, interrupted, refuse,
                        translate_interrupt)
 
@@ -222,7 +224,9 @@ TAKES_TOOLTIP = (
     "them, the join deciding a tie. A retake or a change of notes does the same with the words "
     "the song sings there when Qwen3-ASR "
     "and the word aligner are already on the machine -- they come with the first change of "
-    "words -- and otherwise keeps the take whose join the model likes best. The track window "
+    "words -- and otherwise keeps the take whose join the model likes best. A song that goes on "
+    "sings this many takes as well, each writing its own score, and keeps one that ended the "
+    "song by itself, heard singing the most of the new words. The track window "
     "plays them all and lets you keep another, which costs nothing -- they are all already "
     "sung.\n\n"
     "They are sung once and kept in this session's memory. A workflow opened in a fresh "
@@ -241,7 +245,9 @@ EDITS_TOOLTIP = (
     "words with the 'text' they become; without bars or seconds it is sung where those lines "
     "are. A change of notes, 'notes', takes a seed and takes as well, and the whole 'score' the "
     "song is to have, as the score editor leaves it: without bars it is sung over the bars whose "
-    "notes that score changes, and with bars only the music of those bars is taken from it."
+    "notes that score changes, and with bars only the music of those bars is taken from it. A "
+    "song that goes on, 'extend', takes a seed and takes, and the 'text' it goes on with, empty "
+    "for a new ending alone; it selects no bars, going on from where the singing ends."
 )
 
 OPTIONS_TOOLTIP = (
@@ -270,6 +276,10 @@ DESCRIPTION = (
     "Press 'Notes...' to change the song's notes in the piano roll: only the bars whose notes "
     "changed are sung again, under the new score, and the rest of the song stays as it was "
     "sung. Bars changed far apart are sung as separate edits.\n\n"
+    "Press 'Go on...' to make the song longer: write the lines it goes on with -- another "
+    "chorus, a bridge -- or none, for a new ending alone. The model writes the tune of the new "
+    "part itself, from where the singing ends, sings it and ends the song its own way; the old "
+    "ending goes.\n\n"
     "Finding where the score sits in the song listens to its voice, so the first edit of a song "
     "downloads the separator Vocals Only uses (0.85 GB, MIT) if it is not there yet."
 )
@@ -306,7 +316,9 @@ Timing a song reads 1.84 GB of weights and makes one pass over the whole
 recording; the answer never changes, a song being remembered under the key of
 its own samples, and what it is worth is exactly the second and third line
 somebody rewrites. The words they were measured on are written with them, so a
-song whose words an edit has changed is timed again rather than read wrong."""
+song whose words an edit has changed is timed again rather than read wrong. A
+song that went on writes the second its new lines were timed from as well
+(``_went_times``), and one timed whole before that is timed again."""
 
 NO_WORDS = ("Nothing is sung in this song's words, so there is no line to rewrite. Select the "
             "bars to sing instead.")
@@ -324,6 +336,10 @@ MUMBLED_SAID = ("The take kept is heard singing {} of the {} new words. Ask for 
 
 MUMBLED_AGAIN = ("The take kept is heard singing {} of the {} words there, where the song as it "
                  "was sang {}. Ask for more takes, or keep the song as it was.")
+
+STOPPED = ("The take kept had not ended the song {:.0f} seconds past where its score ends, so it "
+           "was stopped there and the song stops mid-note. Ask for more takes: most end by "
+           "themselves.")
 
 
 def _said_once(notices, kind: str, text: str) -> None:
@@ -726,8 +742,13 @@ def _said(text: str) -> str:
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
 
 
-def _times_read(name: str, text: str):
-    """The word times measured for this song in some other session, or None. Never fatal."""
+def _times_read(name: str, text: str, since=None):
+    """The word times measured for this song in some other session, or None. Never fatal.
+
+    ``since`` is the second a song that went on has its new lines timed from,
+    and times read for it must say they were measured so: a song timed whole
+    before it was known to lose those lines is timed again.
+    """
     path = _words_file(name)
     if path is None:
         return None
@@ -736,6 +757,8 @@ def _times_read(name: str, text: str):
             kept = json.load(handle)
         if kept.get("words") != _said(text):
             return None
+        if since is not None and kept.get("from") != round(float(since), 3):
+            return None
         return [(str(word), float(start), float(stop)) for word, start, stop in kept["times"]]
     except (OSError, ValueError, KeyError, TypeError):
         log.debug("[yue2_comfy.edit_track] %s cannot be read and the words are timed again", path,
@@ -743,17 +766,20 @@ def _times_read(name: str, text: str):
         return None
 
 
-def _times_keep(name: str, text: str, times) -> None:
-    """Write the word times beside their song. Never fatal: they only save time."""
+def _times_keep(name: str, text: str, times, since=None) -> None:
+    """Write the word times beside their song, and ``since`` when the new lines were timed from there. Never fatal: they only save time."""
     path = _words_file(name)
     if path is None:
         return
+    kept = {"words": _said(text),
+            "times": [[word, round(float(start), 3), round(float(stop), 3)]
+                      for word, start, stop in times]}
+    if since is not None:
+        kept["from"] = round(float(since), 3)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with io.open(path, "w", encoding="utf-8") as handle:
-            json.dump({"words": _said(text),
-                       "times": [[word, round(float(start), 3), round(float(stop), 3)]
-                                 for word, start, stop in times]}, handle)
+            json.dump(kept, handle)
     except OSError:
         log.debug("[yue2_comfy.edit_track] the word times could not be written to %s", path,
                   exc_info=True)
@@ -798,7 +824,8 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
 
     entry = _write_wave(take.waveform, rate, "{}_{}.wav".format(name[:16], take.seed))
     drawn = _wave(take.waveform)
-    own = track.after(prior, step, take.count)
+    own = track.after(prior, step, take.count,
+                      take.song.score if step.kind == "extend" else None)
     laid = None
     if own.sheet is not None and own.clock is not None:
         laid = grid.layout(own.sheet, own.clock, own.frames)
@@ -841,6 +868,21 @@ def _was_facts(waveform, rate: int, prior, step, name: str, lines=None, said=Non
             "join": None, "natural": None,
             "heard": None if heard is None else [int(heard[0]), int(heard[1])],
             "said": said, "mumbled": False, "ended": False, "flagged": False, "audio": entry}
+
+
+def _goes_on(state):
+    """Where this song would go on from, as the window marks it: ``{"bar", "second"}``, or None.
+
+    None for a song with no score, which has nothing for the model to go on
+    writing, and for one whose bars cannot be found in its sound. Never fatal.
+    """
+    try:
+        found = track.going_on_from(state)
+    except ValueError:
+        return None
+    if found is None:
+        return None
+    return {"bar": int(found["bar"]), "second": round(found["start"] * FRAME_SECONDS, 3)}
 
 
 def _moved(marks, step, count: int) -> list:
@@ -1103,6 +1145,7 @@ class YuE2EditTrack:
         history, notices, picks, shown, marks = [], [], [], None, []
         clock, state, current, sound = None, None, song, waveform
         keyed, timed, ears, place = name, {}, None, None
+        went = {}
         try:
             with stack:
                 stack.callback(_ears_off, settings, listened)
@@ -1137,7 +1180,7 @@ class YuE2EditTrack:
                         span = self._span(state, edit, sound, rate, settings, index,
                                           track.sound_name(name, history),
                                           name if not history else "",
-                                          Band(progress, opens, found_by), listened)
+                                          Band(progress, opens, found_by), listened, went)
                         opens = found_by
                     try:
                         step = track.plan(state, edit, span)
@@ -1146,12 +1189,12 @@ class YuE2EditTrack:
                     notices.extend(step.notices)
                     made = track.name(name, history, edit)
                     asked = ""
-                    if step.kind == "words":
+                    if step.kind in ("words", "extend"):
                         asked = chr(10).join(step.now)
                     elif step.kind in ("retake", "notes") and ears is not None:
                         found_by = opens + (closes - opens) * TIMES_SHARE
                         asked = self._words_there(place, state, step, sound, rate, name, history,
-                                                  Band(progress, opens, found_by), listened)
+                                                  Band(progress, opens, found_by), listened, went)
                         opens = found_by
                     hears = closes - (closes - opens) * HEARD_SHARE if asked else closes
                     entry = self._sung(loaded, current, sound, state, step, edit, made,
@@ -1168,7 +1211,8 @@ class YuE2EditTrack:
                     picks.append(pick)
                     prior, earlier = state, sound
                     edge = _edge(step, state.frames)
-                    state = track.after(state, step, kept.count)
+                    state = track.after(state, step, kept.count,
+                                        kept.song.score if step.kind == "extend" else None)
                     current, sound = kept.song, kept.waveform
                     if edge and edit.fade:
                         sound = _faded(sound, edit.fade, edge == "head", rate)
@@ -1179,6 +1223,14 @@ class YuE2EditTrack:
                                   "took": round((step.stop - step.start) * FRAME_SECONDS, 3),
                                   "was": "\n".join(step.was), "now": "\n".join(step.now)})
                     shown = (step, ordered, pick, made, prior, seeds, earlier, entry)
+                    if step.kind == "extend":
+                        before = (track.sound_name(name, history[:-1]),
+                                  name if len(history) == 1 else "", earlier, prior.lyrics)
+                        for take in ordered:
+                            if take is not None and take.song is not None:
+                                went[track.sound_name(name, history[:-1] + [(edit, take.seed)])] = (
+                                    before + (track.sings_from(prior, step,
+                                                               notation.read(take.song.score)),))
                 released()
                 if wanted:
                     keyed = _remember(sound, _stamped(current, sound, name, song, marks))
@@ -1188,7 +1240,7 @@ class YuE2EditTrack:
                     place = _aligner_at_hand(settings)
                 if place is not None:
                     timed = self._timed(place, name, keyed, history, shown, sound, rate, state,
-                                        Band(progress, top, 1.0), listened)
+                                        Band(progress, top, 1.0), listened, went)
         except InterruptedError:
             translate_interrupt()
             raise
@@ -1203,6 +1255,8 @@ class YuE2EditTrack:
                                     "join there scores {:.2f}, so it may be heard. Ask for more "
                                     "takes, or open the selection wider.".format(
                                         kept.join, kept.natural)))
+        if shown is not None and shown[0].kind == "extend" and not shown[1][shown[2]].ended:
+            notices.append(("warn", STOPPED.format(ops.LATER * FRAME_SECONDS)))
         was = None if shown is None else shown[7].get("was_heard")
         if shown is not None and _mumbled(shown[1][shown[2]], was):
             kept = shown[1][shown[2]]
@@ -1223,7 +1277,7 @@ class YuE2EditTrack:
         return {"ui": ui, "result": (out,)}
 
     def _span(self, state, edit, waveform, rate: int, settings, index: int, sound: str,
-              saved: str, progress, listened=None):
+              saved: str, progress, listened=None, went=None):
         """The frames the lines one edit rewrites are sung over, from the song's own word times.
 
         The score knows a note for every syllable but not which line the
@@ -1233,17 +1287,18 @@ class YuE2EditTrack:
         the song, and the region opens at the last word of the line before --
         the model sings that word again and runs into the new line, which is
         what the stand measured as the difference between every word sung and
-        a line that starts late.
+        a line that starts late. A song this run made go on is timed as
+        ``_went_times`` says.
         """
         from . import devices, download
-        from .asr import runtime as asr_runtime
         from .inpaint import lines
 
         where = "Edit {}".format(index + 1)
         text = lines.heard_text(state.lyrics)
         if not text.strip():
             raise _Refused("{}: {}".format(where, NO_WORDS))
-        times = _times_read(saved, text)
+        listened = set() if listened is None else listened
+        times = self._times_of(None, sound, saved, waveform, rate, text, progress, listened, went)
         if times is None:
             try:
                 folder = download.ensure_aligner(settings, progress)
@@ -1251,13 +1306,10 @@ class YuE2EditTrack:
             except (FileNotFoundError, download.DownloadError) as error:
                 raise _Refused(str(error))
             began = time.perf_counter()
-            if listened is not None:
-                listened.add("aligner")
-            times = asr_runtime.word_times(folder, reader, devices.resolve(settings["device"]),
-                                           waveform, rate, text, sound, progress, interrupted)
+            times = self._times_of((folder, reader, devices.resolve(settings["device"])), sound,
+                                   saved, waveform, rate, text, progress, listened, went)
             log.info("[yue2_comfy.edit_track] %d words timed in %.1f s", len(times),
                      time.perf_counter() - began)
-            _times_keep(saved, text, times)
         try:
             start, stop = lines.region(state.lyrics, times, edit.lines[0], edit.lines[1])
         except ValueError as error:
@@ -1266,7 +1318,7 @@ class YuE2EditTrack:
                 state.frames if stop is None else int(round(stop / FRAME_SECONDS)))
 
     def _words_there(self, place, state, step, sound, rate: int, name: str, history, progress,
-                     listened) -> str:
+                     listened, went=None) -> str:
         """The words the song sings in the stretch a retake sings again, or "" when they cannot be known.
 
         They are what the takes are heard against, and only the song's own
@@ -1287,7 +1339,7 @@ class YuE2EditTrack:
         try:
             times = self._times_of(place, track.sound_name(name, history),
                                    name if not history else "", sound, rate, text, progress,
-                                   listened)
+                                   listened, went)
         except InterruptedError:
             raise
         except Exception:
@@ -1303,8 +1355,9 @@ class YuE2EditTrack:
                progress, notices, listened, asked: str, ears=None):
         """Every take of an edit heard, and how many of the words ``asked`` for each sings kept on it.
 
-        ``asked`` is the new words of a change of words, or the words the song
-        sings where a retake or a change of notes sings again. Only a take not heard yet is heard,
+        ``asked`` is the new words of a change of words or of a song that goes
+        on, or the words the song sings where a retake or a change of notes
+        sings again. Only a take not heard yet is heard,
         so asking for one more take hears that one alone. The stretch as the
         song sang it before is heard first: its language is the surest, and
         every take is then heard in it, so the takes are heard alike. For a
@@ -1316,8 +1369,8 @@ class YuE2EditTrack:
         when nothing can hear them, and the join picks.
 
         ``ears`` is the speech model already on the machine, which is all a
-        retake or a change of notes is heard with; a change of words fetches
-        it when it is missing and downloading is on. Every clip is heard in
+        retake or a change of notes is heard with; new words, changed or
+        going on, fetch it when it is missing and downloading is on. Every clip is heard in
         the language the letters of ``asked`` name (``lines.language_of``),
         or, when they name none, in the one the model names for the first.
         """
@@ -1369,7 +1422,7 @@ class YuE2EditTrack:
                  "" if len(fresh) == 1 else "s", time.perf_counter() - began)
 
     def _timed(self, place, name: str, keyed: str, history, shown, sound, rate: int, state,
-               progress, listened) -> dict:
+               progress, listened, went=None) -> dict:
         """When each sung line is sung, in every sound the window can put on the track.
 
         ``{"song": lines, "takes": {index: lines}, "before": lines}``, where
@@ -1379,7 +1432,8 @@ class YuE2EditTrack:
         anything better. The takes are the last edit's, each a song of its own
         length, the one kept being the song itself. The song as it was comes
         numbered as the lines after the edit, which a change of words may have
-        moved (``lines.carried``).
+        moved (``lines.carried``). A song this run made go on, and each of its
+        takes, is timed as ``_went_times`` says.
         """
         from .inpaint import lines
 
@@ -1398,7 +1452,8 @@ class YuE2EditTrack:
                              name if len(history) == 1 else ""))
         for at, (where, index, waveform, lyrics, label, disk) in enumerate(jobs):
             spans = self._lines_of(place, label, disk, waveform, rate, lyrics,
-                                   Band(progress, at / len(jobs), (at + 1) / len(jobs)), listened)
+                                   Band(progress, at / len(jobs), (at + 1) / len(jobs)), listened,
+                                   went)
             if where == "takes":
                 found["takes"][index] = spans
             else:
@@ -1413,7 +1468,7 @@ class YuE2EditTrack:
         return found
 
     def _lines_of(self, place, label: str, disk: str, waveform, rate: int, lyrics: str,
-                  progress, listened):
+                  progress, listened, went=None):
         """``[[line, start, stop]]`` for every sung line of ``lyrics`` in ``waveform``, or None.
 
         ``label`` names the sound for this session and ``disk`` the song whose
@@ -1427,7 +1482,8 @@ class YuE2EditTrack:
         if not text.strip():
             return []
         try:
-            times = self._times_of(place, label, disk, waveform, rate, text, progress, listened)
+            times = self._times_of(place, label, disk, waveform, rate, text, progress, listened,
+                                   went)
             if times is None:
                 return None
             return [[number, round(start, 3), round(stop, 3)]
@@ -1440,7 +1496,7 @@ class YuE2EditTrack:
             return None
 
     def _times_of(self, place, label: str, disk: str, waveform, rate: int, text: str, progress,
-                  listened):
+                  listened, went=None):
         """The aligner's ``(word, start, stop)`` for ``text`` in ``waveform``; None when they cannot be had.
 
         Read beside the song ``disk`` names when it was timed on these words
@@ -1448,9 +1504,19 @@ class YuE2EditTrack:
         there. ``label`` names the sound for this session's own memory of
         times, so a sound timed once in a run is not timed twice. Without the
         aligner at hand and with nothing on the disk, there is nothing to say.
+        A sound ``went`` names is a song going on, timed as ``_went_times``
+        says.
         """
         from .asr import runtime as asr_runtime
+        from .inpaint import lines
 
+        record = (went or {}).get(label)
+        if record is not None:
+            old = lines.heard_text(record[3])
+            added = lines.added_after(old, text)
+            if added is not None:
+                return self._went_times(place, label, disk, waveform, rate, text, old, added,
+                                        record, progress, listened, went)
         times = _times_read(disk, text) if disk else None
         if times is None and place is not None:
             folder, reader, device = place
@@ -1459,6 +1525,48 @@ class YuE2EditTrack:
                                            progress, interrupted)
             if disk:
                 _times_keep(disk, text, times)
+        return times
+
+    def _went_times(self, place, label: str, disk: str, waveform, rate: int, text: str, old: str,
+                    added: str, record, progress, listened, went):
+        """The word times of a song going on: the song before it for its old lines, the new part for the new ones.
+
+        ``record`` is ``(label, disk, sound, lyrics, since)`` of the sound the
+        song went on from and the second this take is heard from
+        (``track.sings_from``); ``old`` is that sound's words and ``added`` the
+        ones it went on with. The old words are where they were -- the sound
+        before the new part is the old one -- and the new ones are timed on
+        the sound from ``since`` alone. Given the whole song, the aligner lost
+        them among the old ones: a user's new outro of four lines, its first
+        repeating the old outro's, came back lit six seconds early, and a
+        ballad's chorus sung again came back inside the first one. None when
+        the aligner is not at hand and the times are not beside the song.
+        """
+        from .asr import runtime as asr_runtime
+        from .inpaint import lines
+
+        before_label, before_disk, before_sound, _lyrics, since = record
+        times = _times_read(disk, text, since) if disk else None
+        if times is not None:
+            return times
+        halves = (None, None) if progress is None else (Band(progress, 0.0, 0.5),
+                                                        Band(progress, 0.5, 1.0))
+        earlier = self._times_of(place, before_label, before_disk, before_sound, rate, old,
+                                 halves[0], listened, went)
+        if earlier is None:
+            return None
+        found, first = [], 0
+        if added.strip():
+            if place is None:
+                return None
+            folder, reader, device = place
+            listened.add("aligner")
+            first = max(0, min(int(round(since * rate)), int(waveform.shape[-1]) - rate))
+            found = asr_runtime.word_times(folder, reader, device, waveform[..., first:], rate,
+                                           added, (label, first), halves[1], interrupted)
+        times = lines.went_on(earlier, found, first / rate)
+        if disk:
+            _times_keep(disk, text, times, since)
         return times
 
     def _sung(self, loaded, song, waveform, state, step, edit, name, settings, band):
@@ -1490,6 +1598,13 @@ class YuE2EditTrack:
                 region = ops.cut(step.start, step.stop, state.frames)
                 entry["takes"][0] = core.cut(loaded(), song, waveform, region, step.lyrics,
                                              step.score, settings, band, interrupted)
+            elif step.kind == "extend":
+                fresh = core.extended(loaded(), song, waveform, step.start, step.score, step.lyrics,
+                                      missing, settings,
+                                      lambda sheet: track.extension_frames(state, step, sheet),
+                                      band, interrupted)
+                for take in fresh:
+                    entry["takes"][take.seed] = take
             else:
                 region = ops.retake(step.start, step.stop, state.frames, len(song.prefix))
                 fresh = core.retakes(loaded(), song, waveform, region, missing, settings, band,
@@ -1526,7 +1641,9 @@ class YuE2EditTrack:
         not heard for it (see ``_timed``); ``edits`` the list as it was read,
         with the take kept written into every retake, and ``sung`` the
         temperature and the guide the song itself was sung with, which is where
-        the window's own knobs start. ``hears`` says whether a retake's takes
+        the window's own knobs start. ``goes_on`` is where the song would go on
+        from, the bar and the second, None for a song with no score (see
+        ``_goes_on``). ``hears`` says whether a retake's takes
         are heard on this machine (``_ears_at_hand``) or left to the join, so
         the window says which before anything is sung. After at least one edit there are also
         ``kind``, ``at`` (the seconds the last edit took in hand, on the song as
@@ -1561,6 +1678,7 @@ class YuE2EditTrack:
                         for edit, pick in zip(wanted, picks)])}
         if state.sheet is not None and state.clock is not None:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
+        payload["goes_on"] = _goes_on(state)
         if shown is None:
             return payload
         step, ordered, pick, made, prior, seeds, earlier, entry = shown

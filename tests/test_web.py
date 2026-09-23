@@ -1229,6 +1229,17 @@ EDIT_LISTS = [
     '[{"op": "notes", "score": "\\u001c"}]',
     '[{"op": "notes", "score": 5}]',
     '[{"op": "retake", "bars": [1, 2], "score": "X:1"}]',
+    '[{"op": "extend", "text": "[Bridge]\\nnine ten", "seed": 5, "takes": 2, "take": 1}]',
+    '[{"op": "extend", "seed": 5}]',
+    '[{"op": "extend", "text": null, "seed": 5, "vary": 1.5, "guide": 3.0}]',
+    '[{"op": "extend", "text": "", "bars": [8, 10]}]',
+    '[{"op": "extend", "text": "", "seconds": [1.0, 2.0]}]',
+    '[{"op": "extend", "text": 5}]',
+    '[{"op": "extend", "text": ["nine"]}]',
+    '[{"op": "extend", "text": "nine", "lines": [1, 2], "score": "X:1"}]',
+    '[{"op": "extend", "text": "' + "la " * 1400 + '"}]',
+    '[{"op": "extend", "text": "' + "\\u0431" * 4000 + '"}]',
+    '[{"op": "extend", "text": "' + "\\ud83c\\udfb5" * 2100 + '"}]',
     '["retake"]',
     "[null]",
 ]
@@ -1408,6 +1419,33 @@ def test_notes_changed_far_apart_are_written_as_an_edit_a_place():
     assert got["bare"] == "2. New notes in the bars they change"
 
 
+@needs_node
+def test_a_song_going_on_is_written_and_named_as_the_node_reads_it():
+    """The box's words go on the list trimmed, a new ending alone is the empty box, and the list
+    names the first line sung, since a song going on selects no stretch to name."""
+    from yue2_comfy.inpaint import track
+
+    got = run_edits("""
+        const made = e.extendFor("  [Chorus]\\nhold on\\nsing it loud  ", 3, 17, {vary: 1.2});
+        const bare = e.extendFor("", 9, 4);
+        console.log(JSON.stringify({written: e.writeEdits([made, bare]),
+            said: e.describeEdit(made, 0), ending: e.describeEdit(bare, 1),
+            kept: e.describeEdit({...made, take: 0}, 2),
+            last: e.lastSung("[Verse]\\none two\\n\\n[Chorus]\\nthree four\\nfive\\n\\n[Outro]\\n"),
+            none: e.lastSung("[Intro]\\n\\n[Outro]"), bareWords: e.lastSung("one\\ntwo")}));
+    """)
+    edits = track.read(got["written"])
+    assert [edit.op for edit in edits] == ["extend", "extend"]
+    assert (edits[0].text, edits[0].takes, edits[0].seed, edits[0].vary) == (
+        "[Chorus]\nhold on\nsing it loud", 3, 17, 1.2)
+    assert (edits[1].text, edits[1].takes) == ("", 4)
+    assert got["said"] == '1. Go on with "hold on" and 1 more line, variety 1.20'
+    assert got["ending"] == "2. A new ending"
+    assert got["kept"] == '3. Go on with "hold on" and 1 more line, take 1 of 3, variety 1.20'
+    assert got["last"] == "[Chorus]\nthree four\nfive"
+    assert got["none"] == "" and got["bareWords"] == "one\ntwo"
+
+
 def test_the_two_sides_offer_the_same_number_of_takes():
     from yue2_comfy import edit_track
     from yue2_comfy.inpaint import track
@@ -1417,6 +1455,9 @@ def test_the_two_sides_offer_the_same_number_of_takes():
     source = EDITLIST.read_text(encoding="utf-8")
     assert "export const MAX_TAKES = {};".format(track.MAX_TAKES) in source
     assert "export const LONGEST_SCORE = {};".format(notation.LONGEST) in source
+    from yue2_comfy.inpaint import ops
+
+    assert "export const LONGEST_WORDS = {};".format(ops.LONGEST_WORDS) in source
     assert edit_track.YuE2EditTrack.INPUT_TYPES()["required"]["takes"][1]["max"] == track.MAX_TAKES
 
 
@@ -2072,12 +2113,15 @@ def test_typing_in_the_track_window_is_not_the_play_key():
 
 
 def test_the_picker_tells_a_change_of_words_from_a_retake():
-    """Two edits of the same seconds look alike on a row; only the words say which was which."""
+    """Two edits of the same seconds look alike on a row; only the words say which was which.
+
+    A change of notes and a song that went on name themselves too: both were once called retakes."""
     source = SONGS.read_text(encoding="utf-8")
     what = source[source.index("function what(row) {"):source.index("function swapSaid(")]
-    assert 'mark.op === "words" ? "new words " : "retake "' in what
+    assert 'mark.op === "words" ? "new words " : mark.op === "notes" ? "new notes "' in what
+    assert 'mark.op === "extend" ? "went on " : "retake "' in what
     mark = source[source.index("function badges(row, chosen) {"):source.index("function matches(")]
-    assert 'mark.op === "words" && (mark.was || mark.now)' in mark
+    assert '(mark.op === "words" || mark.op === "extend") && (mark.was || mark.now)' in mark
     assert "NEW_WORDS" in mark and "swapSaid" in mark, (
         "the badge is there to be pointed at, and what it holds is both texts")
     said = source[source.index("function swapSaid(mark) {"):source.index("function matches(")]
@@ -2149,7 +2193,8 @@ def test_a_change_of_words_offers_its_takes_as_a_retake_does():
     """The takes of new words were sung and compared but never shown: none could be heard side by
     side, none kept but the join's, and More takes was not there. A change of notes has takes too."""
     source = TRACK.read_text(encoding="utf-8")
-    assert 'return op === "retake" || op === "words" || op === "notes";' in source
+    assert ('return op === "retake" || op === "words" || op === "notes" || op === "extend";'
+            in source)
     assert source.count('op === "retake"') == 1
     for pattern in ('op !== "retake"', 'kind === "retake"', 'kind !== "retake"'):
         assert pattern not in source, pattern

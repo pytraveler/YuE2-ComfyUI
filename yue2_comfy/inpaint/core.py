@@ -43,6 +43,11 @@ words was heard sung 0.86 to 1.00 of it in every take, and a last chorus sung
 again 0.81 to 1.00 in 17 takes of 18 -- its tune written again by the model
 to within one to three notes in five of the six scores that could be compared.
 
+A break (``broke``) is both: the model writes a few bars of playing after the
+section before it, as it writes a song that goes on, and plays them from
+where that section's singing ends, as a retake of nothing -- no old frame
+goes, and the join chooses where the old song comes back in.
+
 This is the inpainting stand of 2026-09-19 carried into the pack. On its three
 songs by three seeds, retakes sang their words every time, the join landed
 within two frames of the length the bars asked for, and a retake took 6.5-14 s
@@ -140,6 +145,10 @@ class Take:
     ``sung`` belongs to a move: ``(start, stop, count)`` for every stretch
     before a seam that was sung again, in the frames of the song as it stood
     when that one was sung; see ``moved``.
+
+    ``voice`` belongs to a break once the voice in it has been listened for:
+    how loud the separated voice is in the break against the singing around
+    it, in dB. None until then; see ``VOICE_LEFT``.
     """
 
     seed: int
@@ -154,6 +163,24 @@ class Take:
     heard: tuple | None = None
     said: str | None = None
     sung: tuple = ()
+    voice: float | None = None
+
+
+VOICE_LEFT = -20.0
+"""Decibels, against the singing around it, above which the voice left in a break is a voice.
+
+The measure of 2026-09-23 counted a break as played without a voice when
+its separated voice stayed 20 dB or more under the song's singing: seven
+takes of twelve the model wrote itself, on the stand's three songs and a
+user's, and every take of the Russian ballad and the user's song but one or
+two. What was left above it was heard as a voice -- ad-libs, a shout, a
+chant of "hey", the chorus begun too early."""
+
+
+def voiced(take) -> bool:
+    """Whether a take of a break still has a voice in it, as far as it was listened for."""
+    voice = getattr(take, "voice", None)
+    return voice is not None and voice > VOICE_LEFT
 
 
 def best(takes) -> int:
@@ -168,15 +195,20 @@ def best(takes) -> int:
     the one whose words were heard best in two songs of three. A take nobody
     heard stands behind every one that was. Takes that were not heard at all
     go by the join.
+
+    A break is played, not sung: a take whose break has no voice left in it
+    (see ``voiced``) goes before one that has, the quieter of those first,
+    and the join chooses among the ones with none.
     """
     scored = []
     for index, take in enumerate(takes):
         if take is None:
             continue
         share = -1.0 if take.heard is None else take.heard[0] / max(1, take.heard[1])
-        scored.append((bool(take.ended), share, -math.inf if take.join is None else take.join,
-                       -index))
-    return -max(scored)[3] if scored else 0
+        quiet = -getattr(take, "voice") if voiced(take) else math.inf
+        scored.append((bool(take.ended), share, quiet,
+                       -math.inf if take.join is None else take.join, -index))
+    return -max(scored)[4] if scored else 0
 
 
 def _settings(settings) -> dict:
@@ -189,8 +221,14 @@ def _settings(settings) -> dict:
 
 
 def _editable(song, waveform, region) -> torch.Tensor:
-    """The song's audio as [channels, samples] float32, or a ValueError saying why it cannot be edited."""
-    if not 0 <= region.start < region.stop <= song.frames:
+    """The song's audio as [channels, samples] float32, or a ValueError saying why it cannot be edited.
+
+    A break takes no old frame out, so its stretch is empty; it still has to
+    lie between two frames of the song.
+    """
+    inside = (0 <= region.start < region.stop <= song.frames if region.stop > region.start
+              else 0 < region.start < song.frames and region.length > 0)
+    if not inside:
         raise ValueError("Frames {} to {} are not a stretch of this song, which has {} frames."
                          .format(region.start, region.stop, song.frames))
     if song.settings.get("vocals_only"):
@@ -890,14 +928,17 @@ SCORE_SEED_STEP = 7919
 
 
 def score_on(models, song, lyrics, head, seed, settings, progress=None, band=None,
-             cancelled=None) -> str:
+             cancelled=None, most=None) -> str:
     """The score ``head`` goes on to, as the model writes it for ``lyrics``: the whole text.
 
     The model writes a song's score before a note of it is sung, so this is
     the first stage of singing again, started from the bars ``head`` already
     holds: the prompt is the song's style and these lyrics, and the score so
     far is what the model hears itself having written. It is sampled the way
-    the song's score was, from ``seed``.
+    the song's score was, from ``seed``. ``most`` caps the tokens written, for
+    an edit that needs only the next few bars of what the model would write;
+    the text then ends wherever the cap fell, halfway through a line as
+    likely as not.
     """
     from ..vendor.yue2.protocol import GenerationConfig, token_prefixes
     from ..vendor.yue2.sampling import generate_tokens
@@ -908,7 +949,8 @@ def score_on(models, song, lyrics, head, seed, settings, progress=None, band=Non
     sampling = generate._override(GenerationConfig().abc,
                                   temperature=float(settings["abc_temperature"]),
                                   top_p=float(settings["abc_top_p"]),
-                                  top_k=int(settings["abc_top_k"]))
+                                  top_k=int(settings["abc_top_k"]),
+                                  max_tokens=None if most is None else int(most))
     done = [0]
 
     def on_token(_phase, _token):
@@ -925,7 +967,7 @@ def score_on(models, song, lyrics, head, seed, settings, progress=None, band=Non
                                    cancelled=cancelled, on_token=on_token)
 
     ids, _spent, truncated = placement.guarded(models, "the score", write)
-    if truncated:
+    if truncated and most is None:
         log.warning("[yue2_comfy.inpaint] the score of the new part hit its token budget")
     return models.tokenizer.decode(written + [int(token) for token in ids])
 
@@ -1027,6 +1069,136 @@ def extended(models, song, waveform, start, head, lyrics, seeds, settings, frame
                  sum(timing.values()))
         takes.append(Take(seed=seed, waveform=sound, song=edited, count=chosen, join=None,
                           joins={}, ended=ended, timing=timing))
+    return takes
+
+
+class Playing:
+    """Where each stage of a break sits on a 0..100 bar: a score to write first, then a take as a retake is sung."""
+
+    WRITE = (0.0, 10.0, "Writing the score of the break")
+    PERFORM = (10.0, 30.0, "Playing the break")
+    JOIN = (30.0, 42.0, "Choosing where the break ends")
+    ACOUSTIC = (42.0, 92.0, "Drawing the audio of the break")
+    DECODE = (92.0, 100.0, "Decoding the break")
+
+
+BREAK_TOKENS = 2.0
+"""How many times the tokens a bar of the score before it took a break's writing may spend on each of its bars.
+
+A break needs the next few bars of what the model would write, not the rest
+of the song, which is what writing on to its end costs: 4 to 8 seconds a
+take on 2026-09-23. The score before the break says what a bar costs in
+this song's score; twice that is room for a busier bar, and a take that
+still falls short writes again with twice the room."""
+
+
+def broke(models, song, waveform, start, head, lyrics, bars, seeds, settings, build, frames_for,
+          progress=None, cancelled=None) -> list:
+    """``bars`` bars of playing put into ``song`` at frame ``start``, once for every seed: one Take each, in seed order.
+
+    Every take writes the bars of the break after ``head`` for ``lyrics``
+    (``score_on``, see ``notation.interlude_head``), which ``build`` turns
+    into the score the song has with them (``notation.interluded``), and
+    ``frames_for`` gives how many frames its bars last. Then it is sung like
+    a retake of nothing: the performance goes on from ``start`` under that
+    score, and the join chooses how many frames to keep by how well the old
+    song goes on after them. The join is free to choose within the region's
+    width: the beat after a move is locked to the lengths that put it back,
+    but a break has no splice of its own to read the beat from, and there the
+    lock took a user's song 60 to 80 ms off it where the free join was within
+    20 ms, measured 2026-09-23.
+
+    Measured the same day on the stand's three songs and a user's, four bars
+    before a first chorus: seven takes of twelve came out with no voice in
+    the break, and every word of the chorus after it was sung. The rap sang
+    in every take -- ad-libs, or the chorus begun early -- as it does in its
+    own bars without notes. Which takes still sing is the node's business,
+    which listens (``Take.voice``, ``best``).
+    """
+    from .. import notation
+    from ..vendor.yue2.protocol import CODEC_OFFSET
+
+    settings = _settings(settings)
+    seeds = [normalize_seed(seed) for seed in seeds]
+    ids = [int(value) + CODEC_OFFSET for value in song.codec]
+    window = _sampling(settings, 1, 1).penalty_window
+    history = ids[max(0, start - window):start]
+    suffix = ids[start:start + ops.JOIN_FRAMES]
+    kept_bars = max(1, notation.head_bars(head))
+    per_bar = len(models.tokenizer.encode(head)) / float(kept_bars)
+    old = None
+
+    sung = []
+    with _singing(models, settings):
+        for index, seed in enumerate(seeds):
+            timing = {}
+            began = time.perf_counter()
+            text, score, problem = None, None, None
+            room = int(math.ceil(per_bar * bars * BREAK_TOKENS)) + 32
+            for attempt in range(SCORE_TRIES):
+                text = score_on(models, song, lyrics, head, seed + attempt * SCORE_SEED_STEP,
+                                settings, progress, _part(Playing.WRITE, index, len(seeds)),
+                                cancelled, most=room)
+                try:
+                    score = build(text)
+                    break
+                except ValueError as error:
+                    problem = error
+                    room *= 2
+                    log.warning("[yue2_comfy.inpaint] take %d wrote a break that cannot be laid "
+                                "into the score, writing it again: %s", seed,
+                                str(error).splitlines()[0])
+            if score is None:
+                raise ValueError("The model wrote {} scores for the break and none of them could "
+                                 "be laid into the song's: {}".format(SCORE_TRIES, problem))
+            timing["write"] = time.perf_counter() - began
+            length = int(frames_for(notation.read(score)))
+            prefix, unconditional = _prompts(models, song, lyrics, score, settings)
+            region = ops.insert(start, song.frames, length, len(prefix))
+            if old is None:
+                old = _editable(song, waveform, region)
+            context = list(prefix) + ids[:start]
+            negative = None if unconditional is None else list(unconditional) + ids[:start]
+            began = time.perf_counter()
+            tokens, _spent, _ended = perform(
+                models, context, negative, region.longest, region.longest, seed, history,
+                settings, progress, _part(Playing.PERFORM, index, len(seeds)), cancelled)
+            timing["perform"] = time.perf_counter() - began
+            began = time.perf_counter()
+            scores = joins(models, context, tokens, region.shortest, region.longest, suffix,
+                           progress, _part(Playing.JOIN, index, len(seeds)), cancelled)
+            timing["join"] = time.perf_counter() - began
+            chosen = max(scores, key=scores.get)
+            sung.append((seed, score, region, prefix, unconditional, tokens, chosen, scores,
+                         timing))
+
+        drawn = []
+        for index, (seed, score, region, prefix, unconditional, tokens, chosen, scores,
+                    timing) in enumerate(sung):
+            codec = list(song.codec[:start]) + [token - CODEC_OFFSET for token in tokens[:chosen]] \
+                + list(song.codec[start:])
+            runs = ops.edited_noise(song.noise, region, seed, chosen)
+            known, held = _held(song, region, chosen)
+            began = time.perf_counter()
+            latents = repaint(models, prefix, codec, noise_of(runs), known, held,
+                              int(settings["ode_steps"]), progress,
+                              _part(Playing.ACOUSTIC, index, len(seeds)), cancelled)
+            timing["acoustic"] = time.perf_counter() - began
+            drawn.append((codec, runs, latents))
+
+    takes = []
+    for index, ((seed, score, region, prefix, unconditional, tokens, chosen, scores, timing),
+                (codec, runs, latents)) in enumerate(zip(sung, drawn)):
+        began = time.perf_counter()
+        sound, _spent = splice(models, old, latents, region, chosen, progress,
+                               _part(Playing.DECODE, index, len(seeds)), cancelled)
+        timing["decode"] = time.perf_counter() - began
+        edited = _made(song, sound, prefix, unconditional, codec, runs, latents, lyrics, score)
+        log.info("[yue2_comfy.inpaint] take %d of %d, seed %d: a break of %d bars put in at frame "
+                 "%d as %d frames for %d, join %.3f, in %.1f s", index + 1, len(sung), seed, bars,
+                 start, chosen, region.length, scores[chosen], sum(timing.values()))
+        takes.append(Take(seed=seed, waveform=sound, song=edited, count=chosen,
+                          join=scores[chosen], joins=scores, ended=False, timing=timing))
     return takes
 
 

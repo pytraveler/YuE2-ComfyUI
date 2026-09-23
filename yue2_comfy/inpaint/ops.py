@@ -4,8 +4,9 @@ An edit replaces the old frames ``start`` to ``stop`` of a song with new ones.
 A retake sings the same stretch again with the same words and lets the join
 choose how many frames it takes; a cut takes the stretch out, and only the seam
 where the two sides now meet is drawn again; a song that goes on replaces
-everything from where its singing ends, and ends itself. Everything here is
-arithmetic on frames, noise runs and text. ``core`` does what needs the model.
+everything from where its singing ends, and ends itself; a break takes nothing
+out, and new frames go in between two old ones. Everything here is arithmetic
+on frames, noise runs and text. ``core`` does what needs the model.
 
 The numbers are the ones the inpainting stand settled on and measured on
 2026-09-19, three songs by three seeds on an RTX 5090: every retake sang its
@@ -132,6 +133,30 @@ def extend(start: int, frames: int, length: int) -> Region:
     if isinstance(length, bool) or not isinstance(length, int) or length < 1:
         raise ValueError("A song that goes on sings at least a frame.")
     return Region(start, frames, length, 0)
+
+
+def insert(start: int, frames: int, length: int, prompt_tokens: int) -> Region:
+    """The region of a break put in at frame ``start`` of a song of ``frames``: about ``length`` new frames, nothing old taken out.
+
+    The join chooses the length, as a retake's does, and scores it on the
+    old frames after ``start`` -- which are still all there -- so the
+    context has to hold the prompt, every frame before ``start``, the break
+    at its longest and ``JOIN_FRAMES`` after it; the search narrows to what
+    is left over.
+    """
+    for value in (start, frames, length):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("An edit is measured in whole frames of the song.")
+    if not 0 < start < frames:
+        raise ValueError("A break goes between two frames of the song, and frame {} of {} is not "
+                         "one.".format(start, frames))
+    if length < 1:
+        raise ValueError("A break plays at least a frame.")
+    room = CONTEXT - int(prompt_tokens) - start - length - JOIN_FRAMES
+    if room < 0:
+        raise ValueError("This song's prompt and the part before the break leave no room in the "
+                         "model's context of {} tokens for the break.".format(CONTEXT))
+    return Region(start, start, length, max(0, min(WIDTH, length // 3, room)))
 
 
 def runs_between(runs, start: int, stop: int) -> list:
@@ -514,6 +539,82 @@ def move_words(lyrics: str, score: str, first: int, stop: int, to: int) -> Movin
     if not text.endswith(("\n", "\r")) and joined_text.endswith(ending):
         joined_text = joined_text[:-len(ending)]
     return Moving(joined_text, tuple(blocks[index]["tag"] for index in going), True, tagged)
+
+
+INTERLUDE_TAG = "[Interlude]"
+"""The tag a break is written into the words under: a section with no lines, which the model plays."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Breaking:
+    """The lyrics a break leaves: ``INTERLUDE_TAG`` where the break is, or the words as they were when ``matched`` is False."""
+
+    text: str
+    matched: bool
+
+
+def _paired_ahead(labels, sections) -> list:
+    """The score sections the first lyrics sections are sung in, by name, as far as that goes.
+
+    ``_paired`` pairs every lyrics section or none. A break needs only the
+    sections before it: the model often sings a song's last sections in an
+    order of its own -- a bridge where the words have a verse, an interlude
+    between -- and that should not stop a break going in near the start.
+    """
+    found = []
+    at = 0
+    for label in labels:
+        while at < len(sections) and sections[at][0] != label:
+            at += 1
+        if at == len(sections):
+            break
+        found.append(at)
+        at += 1
+    return found
+
+
+def break_words(lyrics: str, score: str, bar: int) -> Breaking:
+    """The lyrics with an empty ``INTERLUDE_TAG`` where a break before bar ``bar`` of ``score`` goes.
+
+    Each lyrics section with lines is paired with the score section it is
+    sung in by name, as far as the names pair them from the start (see
+    ``_paired_ahead``), and the tag goes before the first lyrics section sung
+    at ``bar`` or later. Only when the names give out before that are they
+    paired as a cut pairs them (see ``_paired``), which falls back on the
+    order of the sections sung -- where an intro with a few notes in it moves
+    every section along by one. When every lyrics section is sung before
+    ``bar``, the tag goes after the last one, ahead of any tags with nothing
+    under them that close the words. When the sections sung around ``bar``
+    cannot be told, the words are left as they were.
+
+    Everything else is the text as it was, to the character.
+    """
+    text = str(lyrics or "")
+    sections = _sections(score, 0, 1)
+    starts = [section["bar"] for section in notation.read(score)["sections"]]
+    blocks = _blocks(text)
+    singing = [index for index, block in enumerate(blocks) if block["lines"]]
+    labels = [phrasing.label_of(blocks[index]["tag"]) if blocks[index]["tag"] else "verse"
+              for index in singing]
+    place = None
+    for paired in (_paired_ahead(labels, sections), _paired(labels, sections) or []):
+        where = {index: starts[at] for index, at in zip(singing, paired)}
+        later = [index for index in singing if index in where and where[index] >= bar]
+        if later:
+            place = later[0]
+            break
+        if singing and len(where) == len(singing):
+            place = singing[-1] + 1
+            break
+    if place is None:
+        return Breaking(text, False)
+    ending = "\r\n" if "\r\n" in text else chr(10)
+    head = "".join("".join(block["raw"]) for block in blocks[:place])
+    tail = "".join("".join(block["raw"]) for block in blocks[place:])
+    if tail:
+        return Breaking(head + INTERLUDE_TAG + ending + ending + tail, True)
+    closed = head.rstrip("\r\n")
+    return Breaking(closed + ending + ending + INTERLUDE_TAG + head[len(closed):], True)
 
 
 def last_sung(lyrics: str, score: str):

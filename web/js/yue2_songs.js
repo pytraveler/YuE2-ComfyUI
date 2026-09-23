@@ -137,7 +137,8 @@ function what(row) {
         const at = Array.isArray(mark.at) ? mark.at : [0, 0];
         if (mark.op === "cut") return "cut " + where(mark) + DOT + "-" + roll.clock(mark.took || 0);
         const did = mark.op === "words" ? "new words " : mark.op === "notes" ? "new notes "
-            : mark.op === "extend" ? "went on " : mark.op === "move" ? "moved " : "retake ";
+            : mark.op === "extend" ? "went on " : mark.op === "move" ? "moved "
+            : mark.op === "break" ? "break " : "retake ";
         return did + where(mark) + DOT + roll.clock(Math.max(0, at[1] - at[0]));
     }).join(", ");
 }

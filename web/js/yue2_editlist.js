@@ -4,7 +4,11 @@ export const MAX_TAKES = 4;
 
 export const SEED_CEILING = 2147483648;
 
-export const OPS = ["retake", "cut", "words", "notes", "extend", "move"];
+export const OPS = ["retake", "cut", "words", "notes", "extend", "move", "break"];
+
+export const BREAK_BARS = [1, 16];
+
+export const BREAK_LENGTH = 4;
 
 export const ONE_TAKE = ["cut", "move"];
 
@@ -73,6 +77,13 @@ function rangeOf(item, where, op) {
         }
         return { bars: null, seconds: null };
     }
+    if (op === "break") {
+        if (bars !== null || seconds !== null) {
+            throw new Error(where + " puts a break before a bar line, which 'to' names: it selects "
+                + "no bars and no seconds.");
+        }
+        return { bars: null, seconds: null };
+    }
     if (op === "move" && (bars === null || seconds !== null)) {
         throw new Error(where + " moves sections, which go by bars: it selects bars, and 'to' "
             + "names the bar line they go to.");
@@ -123,13 +134,13 @@ function editOf(item, index, takes) {
     const op = given(item, "op");
     if (!OPS.includes(op)) {
         throw new Error(where + " asks for '" + op + "', which is not something an edit does. It "
-            + "is 'retake', 'cut', 'words', 'notes', 'extend' or 'move'.");
+            + "is 'retake', 'cut', 'words', 'notes', 'extend', 'move' or 'break'.");
     }
     const span = rangeOf(item, where, op);
     if (op === "cut") {
         return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
                  vary: null, guide: null, lines: null, text: null, score: null,
-                 fade: measure(item, "fade", where, "the fade", FADE), to: null };
+                 fade: measure(item, "fade", where, "the fade", FADE), to: null, length: null };
     }
     if (op === "move") {
         const to = given(item, "to");
@@ -143,7 +154,8 @@ function editOf(item, index, takes) {
                 + "song.");
         }
         return { op, bars: span.bars, seconds: null, seed: 0, takes: 1, take: null, vary: null,
-                 guide: null, fade: null, lines: null, text: null, score: null, to };
+                 guide: null, fade: null, lines: null, text: null, score: null, to,
+                 length: null };
     }
     const seed = asked(item, "seed", 0);
     if (!whole(seed)) throw new Error(where + ": the seed is not a whole number.");
@@ -204,10 +216,32 @@ function editOf(item, index, takes) {
                 + " characters of words.");
         }
     }
+    let to = null;
+    let length = null;
+    if (op === "break") {
+        to = given(item, "to");
+        if (to === null) {
+            throw new Error(where + " puts a break before a bar line, which 'to' names: it selects "
+                + "no bars and no seconds.");
+        }
+        if (!whole(to)) {
+            throw new Error(where + ": the bar line the break goes before is not a whole number.");
+        }
+        if (to < 0) {
+            throw new Error(where + " puts a break before bar line " + (to + 1) + ", which is "
+                + "before the song.");
+        }
+        length = asked(item, "length", BREAK_LENGTH);
+        if (!whole(length)) throw new Error(where + ": the bars of the break is not a whole number.");
+        if (length < BREAK_BARS[0] || length > BREAK_BARS[1]) {
+            throw new Error(where + " asks for a break of " + length + " bars; it has "
+                + BREAK_BARS[0] + " to " + BREAK_BARS[1] + ".");
+        }
+    }
     return { op, bars: span.bars, seconds: span.seconds, seed, takes: wanted, take,
              vary: measure(item, "vary", where, "the variety", VARY),
              guide: measure(item, "guide", where, "the guide", GUIDE), fade: null,
-             lines, text: said, score, to: null };
+             lines, text: said, score, to, length };
 }
 
 export function readEdits(text, takes = 1) {
@@ -245,8 +279,12 @@ export function writeEdits(edits) {
         if (edit.op === "notes") item.score = edit.score;
         if (edit.op === "extend") item.text = edit.text;
         if (edit.op === "move") item.to = edit.to;
+        if (edit.op === "break") {
+            item.to = edit.to;
+            item.length = edit.length;
+        }
         if (edit.op === "retake" || edit.op === "words" || edit.op === "notes"
-            || edit.op === "extend") {
+            || edit.op === "extend" || edit.op === "break") {
             item.seed = edit.seed;
             item.takes = edit.takes;
             if (edit.take !== null && edit.take !== undefined) item.take = edit.take;
@@ -379,17 +417,20 @@ function goingOn(edit) {
 export function describeEdit(edit, index, count = 0) {
     const named = { cut: "Cut", words: "New words", retake: "Retake", notes: "New notes",
                     move: "Move" };
-    const what = edit.op === "extend" ? goingOn(edit) : named[edit.op] || "Retake";
+    const what = edit.op === "extend" ? goingOn(edit)
+        : edit.op === "break" ? "A break of " + edit.length + (edit.length === 1 ? " bar" : " bars")
+        : named[edit.op] || "Retake";
     let where = "";
     if (edit.op === "move") {
         where = barsText(edit.bars[0], edit.bars[1]) + (count && edit.to >= count ? " to the end"
             : " before bar " + (edit.to + 1));
-    } else if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
+    } else if (edit.op === "break") where = "before bar " + (edit.to + 1);
+    else if (edit.bars) where = barsText(edit.bars[0], edit.bars[1]);
     else if (edit.seconds) where = spanText(edit.seconds[0], edit.seconds[1]);
     else if (edit.lines) where = linesText(edit.lines[0], edit.lines[1]);
     else if (edit.op !== "extend") where = "the bars they change";
     const joiner = edit.op === "extend" ? "" : edit.op === "words" ? " for "
-        : edit.op === "notes" ? " in " : edit.op === "move" ? " " : " of ";
+        : edit.op === "notes" ? " in " : edit.op === "move" || edit.op === "break" ? " " : " of ";
     const kept = !ONE_TAKE.includes(edit.op) && edit.take !== null && edit.take !== undefined
         ? ", take " + (edit.take + 1) + " of " + edit.takes : "";
     const extra = [];
@@ -497,6 +538,21 @@ export function editFor(selection, op, takes, seed, knobs = {}) {
         edit.fade = knobs.fade;
     }
     return edit;
+}
+
+export function breakFor(to, length, takes, seed, knobs = {}) {
+    const edit = { op: "break", bars: null, seconds: null, seed,
+                   takes: Math.max(1, Math.min(MAX_TAKES, takes)), take: null,
+                   vary: null, guide: null, fade: null, lines: null, text: null, score: null, to,
+                   length: Math.max(BREAK_BARS[0], Math.min(BREAK_BARS[1], Math.round(length))) };
+    if (typeof knobs.vary === "number") edit.vary = knobs.vary;
+    if (typeof knobs.guide === "number") edit.guide = knobs.guide;
+    return edit;
+}
+
+export function breakLines(grid) {
+    const count = barCount(grid);
+    return sectionLines(grid).filter((bar) => bar > 0 && bar < count);
 }
 
 export function moveFor(first, stop, to) {

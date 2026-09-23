@@ -12,6 +12,7 @@ window writes::
      {"op": "notes", "score": "X:1 ...", "bars": [4, 6], "seed": 12},
      {"op": "extend", "text": "[Chorus]\nhold on ...", "seed": 9},
      {"op": "move", "bars": [13, 22], "to": 5},
+     {"op": "break", "to": 13, "length": 4, "seed": 5, "takes": 2},
      {"op": "retake", "seconds": [48.0, 64.0], "seed": 7}]
 
 Bars count from 0 and the second number is not included: [12, 16] is bars 13
@@ -38,7 +39,10 @@ own way. A move takes whole sections to the bar line ``to``, where another
 section starts or the song ends. The words and the score go with the sound,
 and the last bar before each seam is sung again so that the song runs on
 across it; the model chooses its seeds itself, so like a cut a move has no
-seed and one take.
+seed and one take. A break puts ``length`` bars of playing before the bar
+line ``to``, where a section starts: the model writes their score itself, as
+it does for a song that goes on, and plays them, and the section after goes
+on as it was sung. It has seeds and takes as a retake has.
 
 What an edit does to the words and the score is worked out here as well, so
 the window can show it and the node can sing it without either of them
@@ -60,10 +64,13 @@ from . import grid, ops
 MAX_TAKES = 4
 """The most takes one edit may ask for at a time. Suno offers two; four is room to choose without a long wait."""
 
-OPS = ("retake", "cut", "words", "notes", "extend", "move")
+OPS = ("retake", "cut", "words", "notes", "extend", "move", "break")
 
 ONE_TAKE = ("cut", "move")
 """The edits that sing nothing new, so they have no seed and come out one way."""
+
+WRITTEN = ("extend", "break")
+"""The edits whose takes write their own score: the song after one has the score of the take kept."""
 
 NOT_A_LIST = ("The edits field does not hold a JSON list. The track window writes it -- open the "
               "track, or clear the field to start again.")
@@ -118,6 +125,30 @@ BARE_HEAD = ("The song now opens where the {} began in the middle of the song, w
 BARE_TAIL = ("The song now ends where the {} ended in the middle of the song, just before what came "
              "next. Go on from there for a new ending, or retake its last bars.")
 
+NO_BREAK = ("This song was sung with 'cot' set to 'off', so it has no score and no sections to put "
+            "a break between. Retake a stretch of it instead.")
+
+BREAK_WHERE = ("{} puts a break before a bar line, which 'to' names: it selects no bars and no "
+               "seconds.")
+
+BREAK_SECTION = ("{} puts a break before bar line {}, which is inside the {}. A break goes between "
+                 "two sections, before the first bar of one.")
+
+BREAK_EDGE = ("{} puts a break before bar line {}, and a break goes between two sections: after the "
+              "first bar of the song and before its end. Go on past the end for a new ending.")
+
+BREAK_BARS = (1, 16)
+"""How many bars a break may have.
+
+Measured on 2026-09-23 with four, on the stand's three songs and a user's:
+bars the model writes itself after the section before, with no note to sing
+in them, were played without a voice in seven takes of twelve, and the
+section after went on with every word. Sixteen is a long instrumental; more
+is another song."""
+
+BREAK_LENGTH = 4
+"""The bars a break has when the edit does not say."""
+
 
 @dataclasses.dataclass(frozen=True)
 class Edit:
@@ -143,8 +174,11 @@ class Edit:
     changes when ``bars`` is None. It is None for anything else.
 
     ``to`` belongs to a move: the bar line the bars go to, counted as bars
-    are, the score's bar count for after its last bar. None for anything
-    else.
+    are, the score's bar count for after its last bar. A break has one too:
+    the bar line it goes before. None for anything else.
+
+    ``length`` belongs to a break: how many bars of playing it puts in. None
+    for anything else.
     """
 
     op: str
@@ -160,6 +194,7 @@ class Edit:
     text: str | None = None
     score: str | None = None
     to: int | None = None
+    length: int | None = None
 
     def seeds(self) -> tuple:
         """The seed of every take this edit asks for, counted on from its own."""
@@ -200,6 +235,13 @@ class Step:
     lay it: the stretch before the seam that is sung again, the last bar of
     what comes before it (see ``SUNG_LEAST``). ``pulse`` is the grid's eighth
     note in seconds, which the beat across a seam is read by.
+
+    A break takes nothing in hand: ``start`` and ``stop`` are the one frame
+    it goes in at. Like a song that goes on, its score is written by each
+    take for itself, so ``score`` is what the model writes on from
+    (``notation.interlude_head``), ``bars`` the bars the break becomes in
+    the score after it, and ``seam`` where it opens in units of L, which the
+    notes sung after it are moved from (``notation.interluded``).
     """
 
     kind: str
@@ -216,6 +258,7 @@ class Step:
     stretches: tuple = ()
     sung: tuple = ()
     pulse: float | None = None
+    seam: int | None = None
 
 
 VARY = (0.0, 5.0)
@@ -270,6 +313,10 @@ def _range(item, index: int, op: str = "retake"):
     if op == "extend":
         if bars is not None or seconds is not None:
             raise ValueError(EXTEND_WHERE.format(where))
+        return None, None
+    if op == "break":
+        if bars is not None or seconds is not None:
+            raise ValueError(BREAK_WHERE.format(where))
         return None, None
     if op == "move" and (bars is None or seconds is not None):
         raise ValueError(MOVE_WHERE.format(where))
@@ -368,6 +415,25 @@ def _going(item, where: str) -> str:
     return words
 
 
+def _breaking(item, where: str) -> tuple:
+    """The bar line a break goes before and how many bars it has, checked.
+
+    Whether a section starts at that line is ``_break``'s business, which
+    reads it against the song's score.
+    """
+    if item.get("to") is None:
+        raise ValueError(BREAK_WHERE.format(where))
+    to = _whole(item.get("to"), "{}: the bar line the break goes before".format(where))
+    if to < 0:
+        raise ValueError("{} puts a break before bar line {}, which is before the song.".format(
+            where, to + 1))
+    length = _whole(item.get("length", BREAK_LENGTH), "{}: the bars of the break".format(where))
+    if not BREAK_BARS[0] <= length <= BREAK_BARS[1]:
+        raise ValueError("{} asks for a break of {} bars; it has {} to {}.".format(
+            where, length, BREAK_BARS[0], BREAK_BARS[1]))
+    return to, length
+
+
 def _edit(item, index: int, takes: int) -> Edit:
     where = "Edit {}".format(index + 1)
     if not isinstance(item, dict):
@@ -375,7 +441,7 @@ def _edit(item, index: int, takes: int) -> Edit:
     op = item.get("op")
     if op not in OPS:
         raise ValueError("{} asks for '{}', which is not something an edit does. It is 'retake', "
-                         "'cut', 'words', 'notes', 'extend' or 'move'.".format(where, op))
+                         "'cut', 'words', 'notes', 'extend', 'move' or 'break'.".format(where, op))
     bars, seconds = _range(item, index, op)
     if op == "cut":
         return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None,
@@ -401,17 +467,19 @@ def _edit(item, index: int, takes: int) -> Edit:
         take = _whole(take, "{}: the take kept".format(where))
         if not 0 <= take < wanted:
             raise ValueError("{} keeps take {} of {}.".format(where, take + 1, wanted))
-    lines, words, score = None, None, None
+    lines, words, score, to, length = None, None, None, None, None
     if op == "words":
         lines, words = _rewrite(item, where)
     if op == "notes":
         score = _new_score(item, where)
     if op == "extend":
         words = _going(item, where)
+    if op == "break":
+        to, length = _breaking(item, where)
     return Edit(op=op, bars=bars, seconds=seconds, seed=seed, takes=wanted, take=take,
                 vary=_measure(item, "vary", where, "the variety", VARY),
                 guide=_measure(item, "guide", where, "the guide", GUIDE),
-                lines=lines, text=words, score=score)
+                lines=lines, text=words, score=score, to=to, length=length)
 
 
 def read(text, takes: int = 1) -> tuple:
@@ -454,7 +522,10 @@ def written(edits) -> str:
             item["text"] = edit.text
         if edit.op == "move":
             item["to"] = edit.to
-        if edit.op in ("retake", "words", "notes", "extend"):
+        if edit.op == "break":
+            item["to"] = edit.to
+            item["length"] = edit.length
+        if edit.op in ("retake", "words", "notes", "extend", "break"):
             item["seed"] = edit.seed
             item["takes"] = edit.takes
             if edit.take is not None:
@@ -741,6 +812,49 @@ def _move(state: State, edit: Edit, level=None) -> Step:
                 pulse=pulse)
 
 
+def _break(state: State, edit: Edit) -> Step:
+    """A break worked out: where it goes in, what the model writes it from, and the words around it.
+
+    It goes before a bar line where a section starts, and in at the frame a
+    retake of that section would open at (``grid.opening``): as far ahead of
+    the line as the section's first phrase begins, so that phrase is heard
+    after the break and not cut off before it. The score the model writes on
+    from is the old one up to that line, less the notes of that phrase
+    (``notation.interlude_head``); the words get an empty ``ops.INTERLUDE_TAG``
+    where the break is (``ops.break_words``).
+    """
+    if state.sheet is None or state.clock is None:
+        raise ValueError(NO_BREAK)
+    sheet = state.sheet
+    count = len(sheet["bars"])
+    where = "The edit"
+    if not 0 < edit.to < count:
+        raise ValueError(BREAK_EDGE.format(where, edit.to + 1))
+    named = {section["bar"] for section in sheet["sections"]}
+    if edit.to not in named:
+        inside = next(section["name"] for section in sheet["sections"]
+                      if section["bar"] < edit.to < section["bar"] + section["bars"])
+        raise ValueError(BREAK_SECTION.format(where, edit.to + 1, inside))
+    beat, margin = grid._beat_and_margin(sheet, state.clock)
+    opened = grid.opening(grid.seams(sheet)[edit.to], beat, margin)
+    start = state.clock.moment(edit.to, opened)
+    if not 0 < start < state.frames:
+        raise ValueError("Bar line {} lies outside the song as it was sung.".format(edit.to + 1))
+    seam = int(round(sheet["bars"][edit.to]["start"] - opened))
+    words = ops.break_words(state.lyrics, state.score, edit.to)
+    notices = () if words.matched else (("warn", UNMATCHED),)
+    return Step(kind="break", start=start, stop=start, bars=(edit.to, edit.to + edit.length),
+                lyrics=words.text, score=notation.interlude_head(state.score, edit.to, seam),
+                dropped=(), notices=notices, seam=seam)
+
+
+def break_frames(state: State, step: Step, sheet) -> int:
+    """Frames the break lasts under ``sheet``, a score one of its takes wrote: its bars at the song's own tempo."""
+    first, stop = step.bars
+    starts = grid.starts_of(sheet)
+    return max(1, state.clock.frames(starts[stop] - starts[first]))
+
+
 def placed(step: Step, sung=()) -> tuple:
     """The frames the bars a move took now lie at, in the song after it.
 
@@ -788,6 +902,8 @@ def plan(state: State, edit: Edit, span=None, level=None) -> Step:
         return _extend(state, edit)
     if edit.op == "move":
         return _move(state, edit, level)
+    if edit.op == "break":
+        return _break(state, edit)
     start, stop = _frames(state, edit, span)
     if edit.op == "words":
         rewrite = ops.change_words(state.lyrics, edit.lines[0], edit.lines[1], edit.text)
@@ -836,7 +952,9 @@ def after(state: State, step: Step, count: int, score: str | None = None, sung=(
     old bars where they were, and the new ones after them. A move lays the
     bars with their pieces, and then as ``sung`` left them: each stretch
     before a seam that was sung again, ``core.Take.sung``, is a retake of
-    its own.
+    its own. A break has the score its take wrote too, ``score``: its bars go
+    in before the section it was put before, and everything after moves by
+    ``count``.
     """
     frames = state.frames - (step.stop - step.start) + count
     if step.kind == "move":
@@ -851,6 +969,11 @@ def after(state: State, step: Step, count: int, score: str | None = None, sung=(
     if step.kind == "extend":
         sheet = notation.read(score)
         clock = grid.after_extend(state.clock, grid.starts_of(sheet), step.bars[0])
+        return State(lyrics=step.lyrics, score=score, sheet=sheet, clock=clock, frames=frames)
+    if step.kind == "break":
+        sheet = notation.read(score)
+        first, stop = step.bars
+        clock = grid.after_break(state.clock, grid.starts_of(sheet), first, stop - first, count)
         return State(lyrics=step.lyrics, score=score, sheet=sheet, clock=clock, frames=frames)
     if step.kind == "cut" and step.bars is not None:
         sheet = notation.read(step.score)
@@ -881,6 +1004,9 @@ def _spelled(edit: Edit, seed) -> dict:
         item["text"] = edit.text
     if edit.op == "move":
         item["to"] = edit.to
+    if edit.op == "break":
+        item["to"] = edit.to
+        item["length"] = edit.length
     for key, value in (("vary", edit.vary), ("guide", edit.guide)):
         if value is not None:
             item[key] = value

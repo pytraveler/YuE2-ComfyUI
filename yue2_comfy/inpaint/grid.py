@@ -515,6 +515,28 @@ def after_retake(grid: "Grid", start: int, stop: int, count: int) -> "Grid":
     return dataclasses.replace(grid, lines=tuple(lines))
 
 
+def after_break(grid: "Grid", starts, bar: int, bars: int, count: int) -> "Grid":
+    """The grid of a song with ``bars`` bars of playing put before bar line ``bar``, ``count`` frames of them.
+
+    ``starts`` are the bar starts of the score with the break in it. The
+    break goes in a little before that line, where the section after it
+    begins its first phrase, and the new frames go on in the song's time:
+    the line itself stays where it was, as the break's first downbeat, and
+    everything after it moves by the frames that came in. The break's own
+    lines are spread over those frames in the proportions of its bars, as a
+    retake's are (see ``after_retake``).
+    """
+    starts = tuple(starts)
+    lines = grid.bar_seconds()
+    moved = count * FRAME_SECONDS
+    line = lines[bar]
+    span = float(starts[bar + bars] - starts[bar])
+    inside = tuple(line + (starts[bar + step] - starts[bar]) * moved / span
+                   for step in range(bars)) if span > 0 else (line,) * bars
+    placed = tuple(lines[:bar]) + inside + tuple(second + moved for second in lines[bar:])
+    return dataclasses.replace(grid, starts=starts, lines=placed)
+
+
 def after_extend(grid: "Grid", starts, bar: int) -> "Grid":
     """The grid of a song that went on from bar line ``bar`` under a score whose bars start at ``starts``.
 

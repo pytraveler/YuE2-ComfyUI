@@ -287,6 +287,11 @@ DESCRIPTION = (
     "bars go where you drop it, and the last bar before each seam where it now meets other "
     "sections is sung again, so that the song runs on across the seam in time. The sections "
     "themselves are not sung again.\n\n"
+    "Press 'Break...' to put bars of playing between two sections: choose the section it goes "
+    "before and how many bars it plays. The model writes the break's tune itself and plays it "
+    "with no voice, and the section after comes in later, as it was sung. Every take is "
+    "listened to for a voice left in the break, and one with none is kept; a rap keeps its "
+    "ad-libs even there.\n\n"
     "Finding where the score sits in the song listens to its voice, so the first edit of a song "
     "downloads the separator Vocals Only uses (0.85 GB, MIT) if it is not there yet."
 )
@@ -338,17 +343,23 @@ def _voice_near(sound, rate: int, windows, settings, progress):
     silence between them, in one pass; the separator is let go afterwards
     unless the run keeps what it loads.
     """
+    return _voices_in([(sound, start, stop) for start, stop in windows], rate, settings, progress)
+
+
+def _voices_in(pieces, rate: int, settings, progress):
+    """``_voice_near`` for ``(sound, start, stop)`` windows of several sounds at once, in one pass."""
     import torch
 
     from . import devices, download
     from .vocals import runtime as vocal_runtime
 
     path = download.ensure_vocals(settings, progress)
-    samples = sound[0] if sound.dim() == 3 else sound
-    samples = samples.detach().to(device="cpu", dtype=torch.float32)
-    gap = torch.zeros((samples.shape[0], rate), dtype=torch.float32)
-    parts, spans, at = [], [], 0
-    for start, stop in windows:
+    parts, spans, at, gap = [], [], 0, None
+    for sound, start, stop in pieces:
+        samples = sound[0] if sound.dim() == 3 else sound
+        samples = samples.detach().to(device="cpu", dtype=torch.float32)
+        if gap is None:
+            gap = torch.zeros((samples.shape[0], rate), dtype=torch.float32)
         first = max(0, int((start - VOICE_CONTEXT) * rate))
         last = min(int(samples.shape[-1]), int(math.ceil((stop + VOICE_CONTEXT) * rate)))
         if last <= first:
@@ -373,6 +384,108 @@ def _voice_near(sound, rate: int, windows, settings, progress):
         loud = 20.0 * torch.log10(piece.pow(2).mean(dim=1).sqrt() + 1e-9)
         found.append((first / float(rate), [float(value) for value in loud]))
     return found
+
+
+BREAK_AROUND = 3.0
+"""Seconds on each side of a break whose singing the voice left in the break is measured against."""
+
+BREAK_EDGE = 0.25
+"""Seconds at each end of a break left out when the voice in it is measured: the seams, drawn again."""
+
+BREAK_FLOOR = -30.0
+"""The dB the singing around a break is taken to reach at the least.
+
+A break can sit between two stretches of playing, and then there is little
+singing around it to measure against; a break that is quiet by that measure
+has to be quiet in dB as well, so the measure never stands on less than
+this."""
+
+BREAK_SHARE = 0.9
+"""Of an edit's share of the bar, what a break's singing takes; listening for the voice left in it has the rest."""
+
+
+BREAK_BLOCK = 0.1
+"""Seconds the voice's loudness is taken over when a break is listened to, as the measure of 2026-09-23 took it."""
+
+
+def _share(loud, first: float, spans) -> float | None:
+    """The 95th percentile loudness over the ``(start, stop)`` seconds ``spans``, in blocks of ``BREAK_BLOCK``.
+
+    ``loud`` is dB every VOICE_HOP from the second ``first``.
+    """
+    width = max(1, int(round(BREAK_BLOCK / VOICE_HOP)))
+    found = []
+    for start, stop in spans:
+        low = max(0, int((start - first) / VOICE_HOP))
+        high = min(len(loud), int((stop - first) / VOICE_HOP))
+        for at in range(low, high - width + 1, width):
+            power = sum(10.0 ** (value / 10.0) for value in loud[at:at + width]) / width
+            found.append(10.0 * math.log10(power + 1e-18))
+    if not found:
+        return None
+    found.sort()
+    return found[min(len(found) - 1, int(0.95 * len(found)))]
+
+
+def _voices_in_breaks(takes, start: int, rate: int, settings, progress) -> None:
+    """``Take.voice`` for every take of a break put in at frame ``start``, in one pass of the separator.
+
+    The voice in the break against the singing in the ``BREAK_AROUND``
+    seconds on each side of it, never less than ``BREAK_FLOOR``; see
+    ``core.VOICE_LEFT``. Left None for every take when the separator cannot
+    be had -- no separator on the machine and 'download' off, say. Never
+    fatal but for a cancel.
+    """
+    opening = start * FRAME_SECONDS
+    pieces = [(take.waveform, opening - BREAK_AROUND, opening + take.count * FRAME_SECONDS + BREAK_AROUND)
+              for take in takes]
+    try:
+        found = _voices_in(pieces, rate, settings, progress)
+    except InterruptedError:
+        raise
+    except Exception:
+        log.warning("[yue2_comfy.edit_track] the voice in the break could not be separated, so "
+                    "the takes are kept by the join alone", exc_info=True)
+        return
+    for take, (first, loud) in zip(takes, found):
+        closing = opening + take.count * FRAME_SECONDS
+        inside = _share(loud, first, [(opening + BREAK_EDGE, closing - BREAK_EDGE)])
+        around = _share(loud, first, [(opening - BREAK_AROUND, opening),
+                                      (closing, closing + BREAK_AROUND)])
+        if inside is not None:
+            take.voice = inside - (BREAK_FLOOR if around is None else max(BREAK_FLOOR, around))
+
+
+BREAK_VOICED = ("Every take of the break still has a voice in it, the quietest {:.0f} dB against the "
+                "singing around it. Ask for more takes: the model plays some breaks with no voice and "
+                "sings in others. A rap keeps its ad-libs even in its own bars without notes.")
+
+BREAK_KEPT_VOICED = ("The take of the break kept still has a voice in it, {:.0f} dB against the "
+                     "singing around it, and take {} has none.")
+
+BREAK_UNHEARD = ("The takes of the break were not listened to for a voice left in them -- the voice "
+                 "separator is not on this machine and 'download' is off -- so the one whose join "
+                 "the model scored best was kept.")
+
+
+def _break_notices(takes, pick: int) -> list:
+    """What to say about the takes of a break once one was kept: a voice left in it, or no ear to tell."""
+    from .inpaint import core
+
+    sung = [take for take in takes if take is not None]
+    kept = takes[pick]
+    if kept is None or not sung:
+        return []
+    heard = [getattr(take, "voice", None) for take in takes]
+    if all(voice is None for voice in heard):
+        return [("notice", BREAK_UNHEARD)]
+    if not core.voiced(kept):
+        return []
+    clean = [index for index, (take, voice) in enumerate(zip(takes, heard))
+             if take is not None and voice is not None and not core.voiced(take)]
+    if clean:
+        return [("warn", BREAK_KEPT_VOICED.format(heard[pick], clean[0] + 1))]
+    return [("warn", BREAK_VOICED.format(min(voice for voice in heard if voice is not None)))]
 
 
 def _voice_level(sound, rate: int, windows, settings, label: str, progress):
@@ -928,18 +1041,21 @@ def _take_facts(take, index: int, chosen: int, name: str, rate: int, prior, step
     ``prior`` is the song's state before this edit and ``step`` the edit's
     plan. See ``TAKE_FILES`` for what the files cost.
     """
-    from .inpaint import grid, track
+    from .inpaint import core, grid, track
 
     entry = _write_wave(take.waveform, rate, "{}_{}.wav".format(name[:16], take.seed))
     drawn = _wave(take.waveform)
     own = track.after(prior, step, take.count,
-                      take.song.score if step.kind == "extend" else None,
+                      take.song.score if step.kind in track.WRITTEN else None,
                       getattr(take, "sung", ()))
     laid = None
     if own.sheet is not None and own.clock is not None:
         laid = grid.layout(own.sheet, own.clock, own.frames)
     heard = getattr(take, "heard", None)
+    voice = getattr(take, "voice", None)
     return {"seed": int(take.seed), "index": index, "kept": index == chosen, "sung": True,
+            "voice": None if voice is None else round(voice, 1),
+            "voiced": core.voiced(take),
             "seconds": round(take.count * FRAME_SECONDS, 3),
             "total": round(int(take.waveform.shape[-1]) / float(rate), 3),
             "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": laid, "lines": lines,
@@ -971,6 +1087,7 @@ def _was_facts(waveform, rate: int, prior, step, name: str, lines=None, said=Non
     if prior.sheet is not None and prior.clock is not None:
         laid = grid.layout(prior.sheet, prior.clock, prior.frames)
     return {"seed": None, "index": -1, "kept": False, "sung": True,
+            "voice": None, "voiced": False,
             "seconds": round((step.stop - step.start) * FRAME_SECONDS, 3),
             "total": round(int(waveform.shape[-1]) / float(rate), 3),
             "peaks": drawn["peaks"], "rms": drawn["rms"], "grid": laid, "lines": lines,
@@ -1058,7 +1175,7 @@ def _take_gap(seed: int, index: int) -> dict:
     gives, so the row is an offer, not a loss.
     """
     return {"seed": int(seed), "index": index, "kept": False, "sung": False,
-            "seconds": None, "total": None, "peaks": [], "rms": [], "grid": None, "lines": None,
+            "voice": None, "voiced": False, "seconds": None, "total": None, "peaks": [], "rms": [], "grid": None, "lines": None,
             "join": None, "natural": None, "heard": None, "said": None, "mumbled": False,
             "ended": False, "flagged": False, "audio": None}
 
@@ -1344,7 +1461,7 @@ class YuE2EditTrack:
                     prior, earlier = state, sound
                     edge = _edge(step, state.frames)
                     state = track.after(state, step, kept.count,
-                                        kept.song.score if step.kind == "extend" else None,
+                                        kept.song.score if step.kind in track.WRITTEN else None,
                                         getattr(kept, "sung", ()))
                     current, sound = kept.song, kept.waveform
                     if edge and edit.fade:
@@ -1374,6 +1491,14 @@ class YuE2EditTrack:
                             for start, stop in step.pieces], sung=[
                             (start * FRAME_SECONDS, stop * FRAME_SECONDS, count * FRAME_SECONDS)
                             for start, stop, count in getattr(kept, "sung", ())])
+                    if step.kind == "break":
+                        at = step.start * FRAME_SECONDS
+                        for take in ordered:
+                            if take is not None:
+                                went[track.sound_name(name, history[:-1] + [(edit, take.seed)])] = (
+                                    dict(before, pieces=[(0.0, at), (at, prior.frames * FRAME_SECONDS)],
+                                         sung=[(at, at, take.count * FRAME_SECONDS)]))
+                        notices.extend(_break_notices(ordered, pick))
                 released()
                 if wanted:
                     keyed = _remember(sound, _stamped(current, sound, name, song, marks))
@@ -1765,6 +1890,18 @@ class YuE2EditTrack:
                                       band, interrupted)
                 for take in fresh:
                     entry["takes"][take.seed] = take
+            elif step.kind == "break":
+                first, stop = step.bars
+                fresh = core.broke(loaded(), song, waveform, step.start, step.score, step.lyrics,
+                                   stop - first, missing, settings,
+                                   lambda written: notation.interluded(state.score, written, first,
+                                                                       stop - first, step.seam),
+                                   lambda sheet: track.break_frames(state, step, sheet),
+                                   Band(band, 0.0, BREAK_SHARE), interrupted)
+                _voices_in_breaks(fresh, step.start, int(song.sample_rate), settings,
+                                  Band(band, BREAK_SHARE, 1.0))
+                for take in fresh:
+                    entry["takes"][take.seed] = take
             else:
                 region = ops.retake(step.start, step.stop, state.frames, len(song.prefix))
                 fresh = core.retakes(loaded(), song, waveform, region, missing, settings, band,
@@ -1850,6 +1987,9 @@ class YuE2EditTrack:
         if step.kind == "move":
             payload["placed"] = [round(frame * FRAME_SECONDS, 3) for frame in
                                  track.placed(step, getattr(ordered[pick], "sung", ()))]
+        elif step.kind == "break" and ordered[pick] is not None:
+            payload["placed"] = [round(step.start * FRAME_SECONDS, 3),
+                                 round((step.start + ordered[pick].count) * FRAME_SECONDS, 3)]
         payload["dropped"] = list(step.dropped)
         payload["asked"] = entry.get("asked")
         timings = timed.get("takes") or {}

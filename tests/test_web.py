@@ -1254,6 +1254,22 @@ EDIT_LISTS = [
     '[{"op": "move", "bars": [5, 13], "seconds": [1.0, 2.0], "to": 3}]',
     '[{"op": "move", "bars": [5, 5], "to": 3}]',
     '[{"op": "retake", "bars": [1, 2], "to": 3}]',
+    '[{"op": "break", "to": 13, "length": 4, "seed": 5, "takes": 2, "take": 1}]',
+    '[{"op": "break", "to": 13, "seed": 5}]',
+    '[{"op": "break", "to": 13.0, "length": 2.0, "vary": 1.5, "guide": 3.0}]',
+    '[{"op": "break", "to": 13, "length": 0}]',
+    '[{"op": "break", "to": 13, "length": 17}]',
+    '[{"op": "break", "to": 13, "length": 2.5}]',
+    '[{"op": "break", "to": 13, "length": null}]',
+    '[{"op": "break", "to": 13, "length": "4"}]',
+    '[{"op": "break", "length": 4}]',
+    '[{"op": "break", "to": null}]',
+    '[{"op": "break", "to": -1}]',
+    '[{"op": "break", "to": "3"}]',
+    '[{"op": "break", "to": 13, "bars": [13, 17]}]',
+    '[{"op": "break", "to": 13, "seconds": [1.0, 2.0]}]',
+    '[{"op": "break", "to": 13, "takes": 9}]',
+    '[{"op": "retake", "bars": [1, 2], "length": 4}]',
     '["retake"]',
     "[null]",
 ]
@@ -1284,7 +1300,7 @@ def spelled(edit):
             "seed": edit.seed, "takes": edit.takes, "take": edit.take,
             "vary": edit.vary, "guide": edit.guide, "fade": edit.fade,
             "lines": None if edit.lines is None else list(edit.lines), "text": edit.text,
-            "score": edit.score, "to": edit.to}
+            "score": edit.score, "to": edit.to, "length": edit.length}
 
 
 @needs_node
@@ -1327,13 +1343,13 @@ def test_what_the_window_writes_is_what_the_node_sings():
     assert [spelled(edit) for edit in edits] == [
         {"op": "retake", "bars": [12, 16], "seconds": None, "seed": 831001, "takes": 3,
          "take": 2, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None, "score": None, "to": None},
+         "text": None, "score": None, "to": None, "length": None},
         {"op": "cut", "bars": [20, 24], "seconds": None, "seed": 0, "takes": 1, "take": None,
          "vary": None, "guide": None, "fade": None, "lines": None, "text": None, "score": None,
-         "to": None},
+         "to": None, "length": None},
         {"op": "retake", "bars": None, "seconds": [4.5, 9.25], "seed": 7, "takes": 4,
          "take": None, "vary": None, "guide": None, "fade": None, "lines": None,
-         "text": None, "score": None, "to": None},
+         "text": None, "score": None, "to": None, "length": None},
     ]
     assert json.loads(track.written(edits)) == json.loads(written[0])
     assert len(track.read(written[1], 1)) == 2
@@ -2134,7 +2150,8 @@ def test_the_picker_tells_a_change_of_words_from_a_retake():
     source = SONGS.read_text(encoding="utf-8")
     what = source[source.index("function what(row) {"):source.index("function swapSaid(")]
     assert 'mark.op === "words" ? "new words " : mark.op === "notes" ? "new notes "' in what
-    assert 'mark.op === "extend" ? "went on " : mark.op === "move" ? "moved " : "retake "' in what
+    assert 'mark.op === "extend" ? "went on " : mark.op === "move" ? "moved "' in what
+    assert 'mark.op === "break" ? "break " : "retake "' in what
     mark = source[source.index("function badges(row, chosen) {"):source.index("function matches(")]
     assert '(mark.op === "words" || mark.op === "extend") && (mark.was || mark.now)' in mark
     assert "NEW_WORDS" in mark and "swapSaid" in mark, (
@@ -2208,8 +2225,8 @@ def test_a_change_of_words_offers_its_takes_as_a_retake_does():
     """The takes of new words were sung and compared but never shown: none could be heard side by
     side, none kept but the join's, and More takes was not there. A change of notes has takes too."""
     source = TRACK.read_text(encoding="utf-8")
-    assert ('return op === "retake" || op === "words" || op === "notes" || op === "extend";'
-            in source)
+    assert ('return op === "retake" || op === "words" || op === "notes" || op === "extend" '
+            '|| op === "break";' in source)
     assert source.count('op === "retake"') == 1
     for pattern in ('op !== "retake"', 'kind === "retake"', 'kind !== "retake"'):
         assert pattern not in source, pattern
@@ -2308,3 +2325,43 @@ def test_a_section_is_dropped_on_the_section_line_nearest_the_pointer():
     assert got["end"] == "2. Move bars 1-2 to the end"
     edit = track.read(got["written"])[0]
     assert (edit.op, edit.bars, edit.to) == ("move", (2, 5), 0)
+
+
+@needs_node
+def test_the_break_the_window_writes_is_the_break_the_node_plays():
+    """A break names the bar line it goes before and how many bars it plays; it has takes as a retake has."""
+    from yue2_comfy.inpaint import track
+
+    got = run_edits("""
+        const made = [e.breakFor(13, 4, 3, 831001, {vary: 1.5}), e.breakFor(2, 99, 9, 5)];
+        console.log(JSON.stringify({written: e.writeEdits(made),
+            said: made.map((edit, index) => e.describeEdit(edit, index, 40))}));
+    """)
+    first, second = track.read(got["written"], 1)
+    assert (first.op, first.to, first.length, first.takes, first.seed, first.vary) == (
+        "break", 13, 4, 3, 831001, 1.5)
+    assert (second.to, second.length, second.takes) == (2, 16, 4), (
+        "the window keeps a break to the bars and takes the node plays")
+    assert got["said"] == ["1. A break of 4 bars before bar 14, variety 1.50",
+                          "2. A break of 16 bars before bar 3"]
+
+
+@needs_node
+def test_a_break_goes_before_a_section_after_the_first_and_before_the_end():
+    got = run_edits("console.log(JSON.stringify(e.breakLines({})));".format(json.dumps(TRACK_GRID)))
+    assert got == [2], "the chorus is the one section a break can go before on that grid"
+
+
+def test_the_track_offers_a_break_beside_going_on_and_says_why_it_cannot():
+    source = TRACK.read_text(encoding="utf-8")
+    assert 'element("button", "", "Break\\u2026")' in source
+    paint = source[source.index("    paintButtons() {"):source.index("    paintList() {")]
+    assert "this.breakButton.disabled" in paint and "NO_BREAK_HERE" in paint
+    takes = source[source.index("    paintTakes() {"):source.index("    paintWords() {")]
+    assert "voiceFacts(take)" in takes and "PICK_BREAK" in takes and "VOICE_LEFT_WHY" in takes
+    assert "if (this.stopBreaking())" in source, "Escape puts the break box away"
+    for method in ("    whyNotMore(selection) {", "    whyNotNotes() {", "    whyNotGoOn() {",
+                   "    whyNotBreak() {"):
+        start = source.index(method)
+        body = source[start:source.index("\n    }\n", start)]
+        assert 'edit.op === "break"' in body, method

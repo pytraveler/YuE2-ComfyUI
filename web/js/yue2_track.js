@@ -172,7 +172,7 @@ function typing(target) {
 }
 
 function singsAgain(op) {
-    return op === "retake" || op === "words" || op === "notes" || op === "extend";
+    return op === "retake" || op === "words" || op === "notes" || op === "extend" || op === "break";
 }
 
 const WORDS_WHERE =
@@ -249,6 +249,46 @@ const MOVE_NOWHERE =
 const RENDER_FIRST_MOVE =
     "Press Render first: a move not yet rendered puts sections somewhere else, so the track "
     + "drawn here is no longer where this edit would land.";
+
+const NEXT_BREAK = "Play a break";
+
+const BREAK_WHY =
+    "Put bars of playing between two sections. The model writes their tune itself after the "
+    + "section before and plays them with no voice, and the section after comes in later by the "
+    + "break's length, as it was sung.";
+
+const NO_BREAK_HERE =
+    "This song was sung with 'cot' set to 'off', so it has no score and no sections to put a "
+    + "break between.";
+
+const BREAK_HOW =
+    "Choose the section the break goes before and how many bars it plays. The model writes the "
+    + "break's tune after the section before it, the way it writes a song; nothing is sung in "
+    + "it, and every bar after comes in later by its length.";
+
+const BREAK_SUNG =
+    "Each take writes and plays its own break. The node listens to every take for a voice left "
+    + "in the break and keeps one with none, the join choosing among those. The model sings in "
+    + "some breaks anyway, and a rap keeps its ad-libs even in its own bars without notes.";
+
+const BREAK_BARS_WHY = "How many bars the break plays, " + list.BREAK_BARS[0] + " to "
+    + list.BREAK_BARS[1] + ".";
+
+const BREAK_BEFORE_WHY =
+    "The section the break goes before. Selecting a section on the strip before pressing "
+    + "Break\u2026 chooses it here.";
+
+const PICK_BREAK =
+    "A take with no voice left in its break, the join choosing among those; it is the one the "
+    + "node keeps unless the list says otherwise.";
+
+const VOICE_LEFT_WHY =
+    "The voice separated out of this take's break, against the singing around it. Above -20 dB "
+    + "it is heard: ad-libs, a shout, the next section begun early.";
+
+const RENDER_FIRST_BREAK =
+    "Press Render first: a break not yet rendered moves every bar after it, so the track drawn "
+    + "here is no longer where this edit would land.";
 
 const HINT =
     "Drag across the wave to select, and drag either end of a selection to stretch it; hold Alt "
@@ -615,9 +655,9 @@ function soundUrl(entry, stamp, viaView) {
     return api.apiURL ? api.apiURL(route) : route;
 }
 
-function takeFacts(take) {
+function takeFacts(take, kind) {
     if (take.sung === false) return NOT_SUNG;
-    const parts = [take.seconds.toFixed(1) + " s sung"];
+    const parts = [take.seconds.toFixed(1) + (kind === "break" ? " s played" : " s sung")];
     if (take.join !== null && take.join !== undefined) {
         parts.push("join " + take.join.toFixed(2)
             + (take.natural === null || take.natural === undefined
@@ -634,8 +674,14 @@ function heardFacts(take) {
         + (take.heard[1] === 1 ? " word" : " words");
 }
 
+function voiceFacts(take) {
+    if (typeof take.voice !== "number") return "";
+    return take.voiced ? "voice left, " + take.voice.toFixed(0) + " dB" : "no voice";
+}
+
 function wasFacts(was, kind) {
-    const parts = ["the " + roll.clock(was.seconds || 0)
+    const parts = [kind === "break" ? "the song without the break" : "the "
+        + roll.clock(was.seconds || 0)
         + (kind === "words" ? " the new words replaced"
             : kind === "notes" ? " the new notes replaced"
                 : kind === "extend" ? " of ending the new part replaced" : " the retake replaced")];
@@ -715,6 +761,8 @@ class TrackWindow {
         this.wordArea = null;
         this.going = null;
         this.goArea = null;
+        this.breaking = null;
+        this.breaking = null;
         this.overSaid = null;
         this.playhead = 0;
         this.drag = null;
@@ -869,6 +917,10 @@ class TrackWindow {
         this.goOnButton.title = GO_ON_WHY;
         this.goOnButton.addEventListener("click", () => this.openGoOn());
         chosen.appendChild(this.goOnButton);
+        this.breakButton = element("button", "", "Break\u2026");
+        this.breakButton.title = BREAK_WHY;
+        this.breakButton.addEventListener("click", () => this.openBreak());
+        chosen.appendChild(this.breakButton);
         this.undoButton = element("button", "", "Undo last edit");
         this.undoButton.title = "Take the last edit off the list. What it was made on is still in "
             + "memory, so this costs nothing.";
@@ -953,6 +1005,9 @@ class TrackWindow {
                 return;
             }
             if (this.stopGoing()) {
+                return;
+            }
+            if (this.stopBreaking()) {
                 return;
             }
             if (this.sound) {
@@ -1057,6 +1112,7 @@ class TrackWindow {
         this.wordArea = null;
         this.going = null;
         this.goArea = null;
+        this.breaking = null;
         this.setWorking(false);
         this.adoptTakes();
         this.box.title = this.payload && !this.hasScore() ? NO_SCORE_HERE : "";
@@ -1078,6 +1134,12 @@ class TrackWindow {
             return "The move is in the song: what played at " + list.spanText(at[0], at[1])
                 + " now plays at " + list.spanText(placed[0], placed[1])
                 + ", and the last bar before each seam was sung again.";
+        }
+        if (at && this.payload.kind === "break") {
+            const made = this.madeSpan();
+            return "The break is in the song: " + roll.clock(Math.max(0, made[1] - made[0]))
+                + " of playing from " + roll.clock(made[0]) + ", and what came after now starts at "
+                + roll.clock(made[1]) + ". Listen to the takes, or keep another one.";
         }
         if (at) {
             const made = this.madeSpan();
@@ -1249,8 +1311,8 @@ class TrackWindow {
         const edge = this.cutEdge();
         const canRetake = Boolean(this.payload) && !this.retakeButton.disabled;
         const canFade = Boolean(this.payload) && !this.cutButton.disabled && Boolean(edge);
-        const sings = canRetake || ((Boolean(this.editing) || Boolean(this.going))
-            && !this.working);
+        const sings = canRetake || ((Boolean(this.editing) || Boolean(this.going)
+            || Boolean(this.breaking)) && !this.working);
         this.knobsRow.hidden = !sings && !canFade;
         this.seedKnob.hidden = !sings;
         this.varyKnob.box.hidden = !sings;
@@ -1294,6 +1356,9 @@ class TrackWindow {
         this.notesButton.title = drawn && !this.payload?.score ? NO_NOTES_HERE : NOTES_WHY;
         this.goOnButton.disabled = busy || !drawn || !this.payload?.goes_on;
         this.goOnButton.title = drawn && !this.payload?.goes_on ? NO_GO_ON_HERE : GO_ON_WHY;
+        const breaks = list.breakLines(this.grid()).length > 0;
+        this.breakButton.disabled = busy || !drawn || !breaks;
+        this.breakButton.title = drawn && !breaks ? NO_BREAK_HERE : BREAK_WHY;
         this.undoButton.disabled = busy || !edits.length;
         this.songsButton.disabled = busy;
         this.renderButton.disabled = busy;
@@ -1361,6 +1426,11 @@ class TrackWindow {
         if (edit.op === "cut") {
             return { head: head, facts: this.cutFacts(edit), label: NEXT_CUT, why: RUN_WHY };
         }
+        if (edit.op === "break") {
+            const facts = [this.breakFact(edit.to, edit.length), BREAK_SUNG, this.takeFact(edit),
+                           SUNG_ONCE];
+            return { head: head, facts: facts.filter(Boolean), label: NEXT_BREAK, why: RUN_WHY };
+        }
         if (edit.op === "extend") {
             const facts = [this.goOnFact()];
             const sung = list.sungLines(edit.text);
@@ -1387,6 +1457,10 @@ class TrackWindow {
     takeFact(edit) {
         if (edit.take !== null && edit.take !== undefined) {
             return "Sings take " + (edit.take + 1) + " of " + edit.takes + " and keeps it.";
+        }
+        if (edit.op === "break") {
+            return "Plays it " + edit.takes + (edit.takes === 1 ? " time" : " times")
+                + ", each take writing its own tune, and keeps one with no voice left in it.";
         }
         if (edit.op === "extend") {
             return "Sings it " + edit.takes + (edit.takes === 1 ? " time" : " times")
@@ -1435,6 +1509,18 @@ class TrackWindow {
         return moved.charAt(0).toUpperCase() + moved.slice(1) + ", " + list.spanText(from, to)
             + ", goes " + this.movedTo(edit.to) + ", at " + roll.clock(list.lineAt(grid, edit.to))
             + " on the track as it is drawn.";
+    }
+
+    breakFact(to, length) {
+        const grid = this.grid();
+        if (!list.barCount(grid)) return "";
+        const section = (grid.sections || []).find((item) => item.bar === to);
+        const bar = list.lineAt(grid, to);
+        const next = list.lineAt(grid, Math.min(list.barCount(grid), to + 1));
+        const about = Math.max(0, next - bar) * length;
+        return "Plays " + length + (length === 1 ? " bar" : " bars") + " before the "
+            + (section ? section.name : "bar " + (to + 1)) + " at " + roll.clock(bar)
+            + ", about " + about.toFixed(1) + " s; everything after it comes in that much later.";
     }
 
     goOnFact() {
@@ -1579,12 +1665,14 @@ class TrackWindow {
         const mine = same && last >= 0 && singsAgain(edits[last].op);
         const shown = this.shownTake();
         const going = this.payload.kind === "extend";
+        const playing = this.payload.kind === "break";
         const words = this.payload.kind === "words" || going;
         const head = element("div", "yue2-t-takehead");
         const where = !this.payload.at ? ""
-            : going ? roll.clock(this.payload.at[0])
+            : going || playing ? roll.clock(this.payload.at[0])
                 : list.spanText(this.payload.at[0], this.payload.at[1]);
         head.appendChild(element("span", "", (going ? "Takes of the song going on from "
+            : playing ? "Takes of the break at "
             : words ? "Takes of the new words at "
             : this.payload.kind === "notes" ? "Takes of the new notes at " : "Takes of the retake at ")
             + where + " -- the one chosen is the track above, so playing compares them in place."));
@@ -1631,7 +1719,13 @@ class TrackWindow {
                 row.appendChild(box);
             }
             row.appendChild(element("span", "yue2-t-takename", "Take " + (take.index + 1)));
-            row.appendChild(element("span", "yue2-t-dim", takeFacts(take)));
+            row.appendChild(element("span", "yue2-t-dim", takeFacts(take, this.payload.kind)));
+            const voice = voiceFacts(take);
+            if (voice) {
+                const tag = element("span", take.voiced ? "yue2-t-warn" : "yue2-t-heard", voice);
+                tag.title = VOICE_LEFT_WHY;
+                row.appendChild(tag);
+            }
             const heard = heardFacts(take);
             if (heard) {
                 const tag = element("span", take.mumbled ? "yue2-t-warn" : "yue2-t-heard", heard);
@@ -1643,7 +1737,7 @@ class TrackWindow {
             }
             if (take.kept) {
                 const mark = element("span", "yue2-t-dim", "the model's pick");
-                mark.title = going ? PICK_GO_ON
+                mark.title = going ? PICK_GO_ON : playing ? PICK_BREAK
                     : (words ? PICK_WORDS : heardAny ? PICK_HEARD : PICK_JOIN);
                 row.appendChild(mark);
             }
@@ -1681,12 +1775,13 @@ class TrackWindow {
         this.marked = "";
         const text = this.payload?.lyrics || "";
         this.goArea = null;
-        if (!text.trim() && !this.going) {
+        if (!text.trim() && !this.going && !this.breaking) {
             this.words.hidden = true;
             return;
         }
         this.words.hidden = false;
         this.words.appendChild(element("div", "yue2-t-wordhead", "Words"));
+        if (this.breaking) this.words.appendChild(this.breakBox());
         const raw = this.rawLines();
         let at = 0;
         this.wordArea = null;
@@ -1789,6 +1884,10 @@ class TrackWindow {
     }
 
     saidSpan() {
+        if (this.breaking && !this.overSaid && list.barCount(this.grid())) {
+            const line = list.lineAt(this.grid(), this.breaking.to);
+            return [Math.max(0, line - 0.15), Math.min(this.total(), line + 0.15)];
+        }
         const going = this.going && this.payload?.goes_on;
         if (going && !this.overSaid) return [going.second, Math.max(going.second, this.total())];
         let over = this.overSaid;
@@ -1843,6 +1942,7 @@ class TrackWindow {
             this.editing = { first: number, stop: number + 1,
                              text: this.linesText(number, number + 1) };
         }
+        if (this.editing) this.breaking = null;
         this.paintWords();
         if (this.wordArea) {
             this.wordArea.focus();
@@ -1963,6 +2063,7 @@ class TrackWindow {
         }
         this.editing = null;
         this.wordArea = null;
+        this.breaking = null;
         if (!this.going) this.going = { text: "" };
         this.paintWords();
         this.paintKnobs();
@@ -1972,6 +2073,180 @@ class TrackWindow {
             this.goArea.scrollIntoView?.({ block: "nearest" });
         }
         this.setStatus(GO_ON_HOW);
+    }
+
+    breakBox() {
+        const box = element("div", "yue2-t-wordbox yue2-t-gobox yue2-t-breakbox");
+        box.appendChild(element("div", "yue2-t-tag", "A break"));
+        const grid = this.grid();
+        const row = element("div", "yue2-t-wordrow");
+        const bars = document.createElement("input");
+        bars.type = "number";
+        bars.className = "yue2-t-seed";
+        bars.min = String(list.BREAK_BARS[0]);
+        bars.max = String(list.BREAK_BARS[1]);
+        bars.step = "1";
+        bars.value = String(this.breaking.length);
+        bars.title = BREAK_BARS_WHY;
+        bars.addEventListener("change", () => {
+            const wanted = Math.round(Number(bars.value));
+            if (!this.breaking) return;
+            this.breaking.length = Number.isFinite(wanted)
+                ? Math.max(list.BREAK_BARS[0], Math.min(list.BREAK_BARS[1], wanted))
+                : list.BREAK_LENGTH;
+            bars.value = String(this.breaking.length);
+            this.paintBreakFact();
+        });
+        bars.addEventListener("keydown", (event) => this.breakKey(event));
+        row.appendChild(bars);
+        row.appendChild(element("span", "yue2-t-dim", "bars before"));
+        const before = document.createElement("select");
+        before.title = BREAK_BEFORE_WHY;
+        for (const bar of list.breakLines(grid)) {
+            const section = (grid.sections || []).find((item) => item.bar === bar);
+            const option = document.createElement("option");
+            option.value = String(bar);
+            option.textContent = (section ? "the " + section.name : "bar " + (bar + 1)) + " at "
+                + roll.clock(list.lineAt(grid, bar)) + ", bar " + (bar + 1);
+            before.appendChild(option);
+        }
+        before.value = String(this.breaking.to);
+        before.addEventListener("change", () => {
+            if (!this.breaking) return;
+            this.breaking.to = Number(before.value);
+            this.paintBreakFact();
+            this.draw();
+        });
+        before.addEventListener("keydown", (event) => this.breakKey(event));
+        row.appendChild(before);
+        box.appendChild(row);
+        this.breakBars = bars;
+        const buttons = element("div", "yue2-t-wordrow");
+        const go = element("button", "yue2-t-go", NEXT_BREAK);
+        go.title = BREAK_WHY;
+        go.disabled = this.working;
+        go.addEventListener("click", () => this.putBreak());
+        buttons.appendChild(go);
+        const stop = element("button", "", "Cancel");
+        stop.addEventListener("click", () => this.stopBreaking());
+        buttons.appendChild(stop);
+        box.appendChild(buttons);
+        this.breakWhy = element("div", "yue2-t-wordwhy", "");
+        box.appendChild(this.breakWhy);
+        this.paintBreakFact();
+        return box;
+    }
+
+    paintBreakFact() {
+        if (!this.breakWhy || !this.breaking) return;
+        this.breakWhy.replaceChildren();
+        this.breakWhy.appendChild(document.createTextNode(
+            [BREAK_HOW, this.breakFact(this.breaking.to, this.breaking.length)]
+                .filter(Boolean).join(" ")));
+        this.breakWhy.appendChild(element("div", "yue2-t-wordknobs", WORDS_KNOBS));
+    }
+
+    breakKey(event) {
+        if (event.key === "Escape") {
+            event.stopPropagation();
+            this.stopBreaking();
+        } else if (event.key === "Enter") {
+            event.preventDefault();
+            event.target.dispatchEvent(new Event("change"));
+            this.putBreak();
+        }
+    }
+
+    breakBefore() {
+        const grid = this.grid();
+        const lines = list.breakLines(grid);
+        if (!lines.length) return null;
+        if (this.selection && this.selection.first !== null && this.selection.first !== undefined) {
+            if (lines.includes(this.selection.first)) return this.selection.first;
+            const seconds = lines.map((bar) => list.lineAt(grid, bar));
+            return lines[list.nearestIn(seconds, list.lineAt(grid, this.selection.first))];
+        }
+        const chorus = (grid.sections || []).find((section) => lines.includes(section.bar)
+            && list.labelOf(section.name) === "chorus");
+        return chorus ? chorus.bar : lines[0];
+    }
+
+    openBreak() {
+        const why = this.whyNotBreak();
+        if (why) {
+            this.setStatus(why, true);
+            return;
+        }
+        const to = this.breakBefore();
+        if (to === null) {
+            this.setStatus(NO_BREAK_HERE, true);
+            return;
+        }
+        this.editing = null;
+        this.wordArea = null;
+        this.going = null;
+        this.goArea = null;
+        this.breaking = { to, length: this.breaking ? this.breaking.length : list.BREAK_LENGTH };
+        this.paintWords();
+        this.paintKnobs();
+        this.draw();
+        if (this.breakBars) {
+            this.breakBars.focus();
+            this.breakBars.scrollIntoView?.({ block: "nearest" });
+        }
+        this.setStatus(BREAK_HOW);
+    }
+
+    stopBreaking() {
+        if (!this.breaking) return false;
+        this.breaking = null;
+        this.breakBars = null;
+        this.breakWhy = null;
+        this.paintWords();
+        this.paintKnobs();
+        this.draw();
+        return true;
+    }
+
+    putBreak() {
+        if (!this.breaking || this.working) return;
+        const why = this.whyNotBreak();
+        if (why) {
+            this.setStatus(why, true);
+            return;
+        }
+        const { edits, error } = nodeList(this.node);
+        if (error) {
+            this.setStatus(error, true);
+            return;
+        }
+        const made = list.breakFor(this.breaking.to, this.breaking.length, nodeTakes(this.node),
+            this.knobs.seed, { vary: this.knobs.vary, guide: this.knobs.guide });
+        writeList(this.node, [...edits, made]);
+        paintSummary(this.node);
+        this.breaking = null;
+        this.breakBars = null;
+        this.breakWhy = null;
+        this.selection = null;
+        this.refresh();
+        this.setStatus(list.describeEdit(made, edits.length).slice(3) + " is on the list. "
+            + BY_ITSELF);
+    }
+
+    whyNotBreak() {
+        if (!this.payload) return NOT_DRAWN;
+        if (!list.breakLines(this.grid()).length) return NO_BREAK_HERE;
+        const drawn = list.readEdits(this.payload.edits || "", nodeTakes(this.node));
+        const mine = nodeList(this.node);
+        if (drawn.error) return "";
+        if (mine.error) return mine.error;
+        const spelled = (edit) => list.writeEdits([{ ...edit, take: null }]);
+        let shared = 0;
+        while (shared < drawn.edits.length && shared < mine.edits.length
+            && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
+        const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
+        return apart.some((edit) => edit.op === "cut" || edit.op === "extend"
+            || edit.op === "move" || edit.op === "break") ? RENDER_FIRST_BREAK : "";
     }
 
     stopGoing() {
@@ -2864,6 +3139,7 @@ class TrackWindow {
         if (apart.some((edit) => edit.op === "cut")) return RENDER_FIRST_CUT;
         if (apart.some((edit) => edit.op === "extend")) return RENDER_FIRST_GO_ON;
         if (apart.some((edit) => edit.op === "move")) return RENDER_FIRST_MOVE;
+        if (apart.some((edit) => edit.op === "break")) return RENDER_FIRST_BREAK;
         if (selection.first === undefined || selection.first === null) return RENDER_FIRST_SECONDS;
         return "";
     }
@@ -2933,7 +3209,8 @@ class TrackWindow {
             && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
         const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
         return apart.some((edit) => edit.op === "cut" || edit.op === "notes"
-            || edit.op === "extend" || edit.op === "move") ? RENDER_FIRST_NOTES : "";
+            || edit.op === "extend" || edit.op === "move" || edit.op === "break")
+            ? RENDER_FIRST_NOTES : "";
     }
 
     whyNotGoOn() {
@@ -2949,7 +3226,8 @@ class TrackWindow {
             && spelled(drawn.edits[shared]) === spelled(mine.edits[shared])) shared += 1;
         const apart = drawn.edits.slice(shared).concat(mine.edits.slice(shared));
         return apart.some((edit) => edit.op === "cut" || edit.op === "notes"
-            || edit.op === "extend" || edit.op === "move") ? RENDER_FIRST_GOING : "";
+            || edit.op === "extend" || edit.op === "move" || edit.op === "break")
+            ? RENDER_FIRST_GOING : "";
     }
 
     openNotes() {

@@ -532,3 +532,91 @@ def test_the_stretch_sung_again_comes_out_as_long_as_puts_the_beat_back(models, 
     allowed = beat.counts_on_beat(15, region.shortest, region.longest, 0.09, 0.25, FRAME_SECONDS)
     assert allowed == [13, 19] and count in allowed
 
+
+
+HEAD = ("X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=120\nV: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\n"
+        "V: Ins clef=treble name=\"Ins Melody\" snm=\"Inst.\"\nK:C\n% verse\nV: Vocal\nC16|D16|\n"
+        "V: Ins\nZ|Z|\n% interlude\n")
+"""A score the model writes a break on from: two bars of a verse and the section of playing begun."""
+
+BUILT = HEAD + "V: Vocal\nz16|z16|\nV: Ins\nC16|E16|\n"
+"""The score with the break laid in: the verse and two bars of playing."""
+
+
+def a_writer(written, failing=0):
+    """A stand-in for the model writing a break: what it was asked, and the head back with a mark."""
+    def score_on(models, song, lyrics, head, seed, settings, progress=None, band=None,
+                 cancelled=None, most=None):
+        written.append((seed, most, lyrics))
+        return head + ("bad" if len(written) <= failing else "V: Vocal\nz16|\nV: Ins\nC16|\n")
+    return score_on
+
+
+def test_a_break_plays_new_frames_between_two_old_ones_and_keeps_the_rest(models, song, monkeypatch):
+    made, sound = song
+    written, built = [], []
+    monkeypatch.setattr(core, "score_on", a_writer(written))
+
+    def build(text):
+        built.append(text)
+        return BUILT
+
+    takes = core.broke(models, made, sound, 40, HEAD, "[verse]\nla\n\n[Interlude]", 2, [1, 2],
+                       SETTINGS, build, lambda sheet: 12)
+    room = math.ceil(len(Words().encode(HEAD)) / 2.0 * 2 * core.BREAK_TOKENS) + 32
+    assert [(seed, most) for seed, most, _lyrics in written] == [(1, room), (2, room)], (
+        "each take writes the break's bars from its own seed, with room for a few bars only")
+    assert built == [HEAD + "V: Vocal\nz16|\nV: Ins\nC16|\n"] * 2, "what the model wrote is laid in"
+    old = core.latents_of(made)
+    region = ops.insert(40, FRAMES, 12, len(takes[0].song.prefix))
+    for seed, take in zip((1, 2), takes):
+        count = take.count
+        assert region.shortest <= count <= region.longest
+        assert take.join == take.joins[count] == max(take.joins.values()), "the join chose freely"
+        assert list(take.song.codec[:40]) == list(made.codec[:40])
+        assert list(take.song.codec[40 + count:]) == list(made.codec[40:]), "nothing old is gone"
+        assert take.song.noise == ops.edited_noise(made.noise, region, seed, count)
+        new = core.latents_of(take.song)
+        assert torch.equal(new[:40 - ops.MARGIN], old[:40 - ops.MARGIN])
+        assert torch.equal(new[40 + count + ops.MARGIN:], old[40 + ops.MARGIN:])
+        assert take.waveform.shape[-1] == sound.shape[-1] + count * HOP
+        assert torch.equal(take.waveform[..., :HOP], sound[..., :HOP])
+        assert torch.equal(take.waveform[..., -HOP:], sound[..., -HOP:])
+        assert (take.song.lyrics, take.song.score) == ("[verse]\nla\n\n[Interlude]", BUILT)
+        assert take.voice is None and not take.ended
+    assert list(takes[0].song.prefix) == prompt("[verse]\nla\n\n[Interlude]",
+                                                Words().encode(takes[0].song.score))
+
+
+def test_a_break_that_cannot_be_laid_into_the_score_is_written_again_with_more_room(models, song,
+                                                                                    monkeypatch):
+    made, sound = song
+    written = []
+    monkeypatch.setattr(core, "score_on", a_writer(written, failing=1))
+
+    def build(text):
+        if text.endswith("bad"):
+            raise ValueError("the model wrote 0 whole bars of the break where 2 were asked for")
+        return BUILT
+
+    take = core.broke(models, made, sound, 40, HEAD, "[verse]\nla", 2, [5], SETTINGS, build,
+                      lambda sheet: 12)[0]
+    assert [seed for seed, _most, _lyrics in written] == [5, 5 + core.SCORE_SEED_STEP]
+    assert written[1][1] == 2 * written[0][1]
+    assert take.seed == 5 and take.song.score == BUILT, "the take keeps its own seed"
+    monkeypatch.setattr(core, "score_on", a_writer([], failing=core.SCORE_TRIES))
+    with pytest.raises(ValueError, match="none of them could be laid"):
+        core.broke(models, made, sound, 40, HEAD, "[verse]\nla", 2, [5], SETTINGS, build,
+                   lambda sheet: 12)
+
+
+def test_a_take_with_no_voice_left_in_its_break_is_kept_before_one_that_sings():
+    def take(voice, join):
+        return core.Take(seed=0, waveform=None, song=None, count=1, join=join, joins={},
+                         ended=False, timing={}, voice=voice)
+
+    assert core.best([take(-5.0, -3.0), take(-30.0, -5.0)]) == 1, "a voice outweighs any join"
+    assert core.best([take(-30.0, -5.0), take(-60.0, -4.0)]) == 1, "among clean ones, the join"
+    assert core.best([take(-2.0, -3.0), take(-9.0, -5.0)]) == 1, "among singing ones, the quieter"
+    assert core.best([take(None, -3.0), take(None, -5.0)]) == 0, "unheard, the join"
+    assert core.voiced(take(core.VOICE_LEFT + 0.1, 0)) and not core.voiced(take(core.VOICE_LEFT, 0))

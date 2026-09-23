@@ -1282,6 +1282,241 @@ def moved(text: str, first: int, stop: int, to: int) -> str:
     return leading + result.strip() + trailing
 
 
+INTERLUDE = "interlude"
+"""The name a break is written under: the one the model gives its own playing between two sections."""
+
+NOT_BROKEN = (
+    "The break could not be written into the score: {reason}.\n\n"
+    "Nothing was changed. The score is as it was."
+)
+
+KEY_CHANGE_BREAK = (
+    "Bar {bar} changes key halfway through, and a break next to it would split that change. Put "
+    "the break before another section."
+)
+
+
+def _sung_before(sheet, seam: int) -> list:
+    """The Vocal notes of *sheet* that start before *seam*, each cut short there if it runs past it."""
+    kept = []
+    for note in sheet["notes"]["Vocal"]:
+        if note["start"] >= seam:
+            continue
+        end = min(note["start"] + note["length"], seam)
+        kept.append(dict(note, length=end - note["start"]))
+    return kept
+
+
+def interlude_head(text: str, stop: int, seam: int) -> str:
+    """The first *stop* bars of *text* with a section of playing begun after them, for the model to write.
+
+    This is how a break is written: the model goes on writing the score from
+    here, as it does for a song that goes on (see ``head``), and the comment
+    ``% interlude`` at the end tells it that what comes next is played, not
+    sung. *seam* is where the break opens, in units of L from the start of the
+    song, a little before bar *stop*: the notes sung from there on are the
+    first phrase of the section after the break, which comes after it, so they
+    are taken out of the bars kept (see ``interluded``).
+
+    ``write`` hands its text back without the newline it ended with, and the
+    model has to start on a line of its own, so that newline is put back.
+    """
+    kept = head(text, stop)
+    sheet = read(kept)
+    vocal = _sung_before(sheet, seam)
+    if vocal != sheet["notes"]["Vocal"]:
+        sheet["notes"]["Vocal"] = vocal
+        kept = write(kept, sheet)["abc"]
+    ending = "\r\n" if "\r\n" in kept else "\n"
+    if not kept.endswith(("\n", "\r")):
+        kept += ending
+    return kept + "% " + INTERLUDE + ending
+
+
+def head_bars(text: str) -> int:
+    """How many bars a score the model is to write on from holds, the section comment it may end on aside.
+
+    ``interlude_head`` ends on a comment with no music under it yet, which
+    ``read`` refuses as a score; the bars before it are what it holds.
+    """
+    body = (text or "").rstrip()
+    last = body.rsplit("\n", 1)[-1]
+    while last.startswith("% "):
+        body = body[:len(body) - len(last)].rstrip()
+        last = body.rsplit("\n", 1)[-1]
+    return len(read(body)["bars"])
+
+
+def _written_blocks(bodies: list) -> list:
+    """The whole groups of a score the model may have stopped writing halfway through.
+
+    A score whose writing ran out of tokens ends inside a group, or inside a
+    line; the groups before that are whole, and those are the ones kept.
+    """
+    found = []
+    cursor = HEADER_LINES
+    while cursor < len(bodies):
+        names = []
+        while cursor < len(bodies) and bodies[cursor].startswith("% "):
+            names.append(bodies[cursor][2:].strip())
+            cursor += 1
+        block = {"names": names, "voices": {}}
+        for name in abc_tools.VOICES:
+            if cursor >= len(bodies) or bodies[cursor].split(":", 1)[-1].split()[:1] != [name] \
+                    or not bodies[cursor].startswith("V:"):
+                return found
+            head_lines = [bodies[cursor]]
+            cursor += 1
+            while cursor < len(bodies) and bodies[cursor].startswith(("M:", "K:")):
+                head_lines.append(bodies[cursor])
+                cursor += 1
+            if cursor >= len(bodies) or not bodies[cursor].rstrip().endswith("|"):
+                return found
+            block["voices"][name] = {"head": head_lines, "music": bodies[cursor].rstrip()}
+            cursor += 1
+        found.append(block)
+    return found
+
+
+def _cut_at(blocks: list, bars: list) -> list:
+    """``(start, block)`` for the groups of *blocks*, cut so that each of *bars* starts one."""
+    starts = []
+    at = 0
+    for block in blocks:
+        starts.append(at)
+        at += _bar_count(block["voices"]["Vocal"]["music"])
+    for bar in sorted(set(bars)):
+        if 0 < bar < at and bar not in starts:
+            index = max(place for place, start in enumerate(starts) if start < bar)
+            blocks[index:index + 1] = _split_block(blocks[index], bar - starts[index])
+            starts.insert(index + 1, bar)
+    return list(zip(starts, blocks))
+
+
+def _untied(music: str) -> str:
+    return music.rstrip()[:-2] + "|" if music.rstrip().endswith("-|") else music
+
+
+def _broken_back(before, after, bar: int, bars: int, vocal) -> None:
+    """The score with a break read back: the old bars where they were and after it, the notes asked for."""
+    if len(after["bars"]) != len(before["bars"]) + bars:
+        raise ValueError("the score has {} bars where {} should be".format(
+            len(after["bars"]), len(before["bars"]) + bars))
+    for number, old in enumerate(before["bars"]):
+        new = after["bars"][number if number < bar else number + bars]
+        if (new["length"], new["meter"], new["key"]) != (old["length"], old["meter"], old["key"]):
+            raise ValueError("bar {} changed its length or its key".format(number + 1))
+    if after["bpm"] != before["bpm"] or after["unit"] != before["unit"]:
+        raise ValueError("the tempo or the note length changed")
+    wanted = sorted((note["start"], note["length"], note["pitch"]) for note in vocal)
+    found = sorted((note["start"], note["length"], note["pitch"]) for note in after["notes"]["Vocal"])
+    if wanted != found:
+        raise ValueError("the sung notes did not come out where they were put")
+
+
+def interluded(text: str, written: str, bar: int, bars: int, seam: int) -> str:
+    """*text* with *bars* bars of playing before bar *bar*: the ones the model wrote in *written*.
+
+    *written* is what the model wrote on from ``interlude_head``: that head,
+    then the bars it went on with, of which the first *bars* are the break,
+    whatever they turned into after it -- it may name them otherwise halfway,
+    or write notes to sing in them. They come under ``% interlude``, and none
+    of their notes is sung: the break is the model's playing alone.
+
+    Everything the song sings is where the song sings it. The notes sung from
+    *seam* on, in units of L from the start of the song, move later by the
+    length of the break: *seam* lies before bar *bar* by as much as the first
+    phrase of the section there begins before its downbeat, so that phrase
+    goes on after the break with the rest of its section, the way the sound
+    does, and the bars before the break keep the rest that was there. A note
+    held across *seam* is cut there, and what was left of it is struck again
+    after the break, where that sound now is. The old bars keep their
+    characters but for the ones those notes leave or reach, which are written
+    again (see ``write``); a tie into the break or out of it is taken off, as
+    ``moved`` takes off a tie that no longer holds into the same note.
+    Everything around the score is kept, its final newline included.
+
+    The result is read back before it is returned: the old bars with their
+    lengths, meters and keys, *bars* more of them, and the sung notes where
+    they were put. A bar next to the break that changes key halfway through is
+    refused, see ``KEY_CHANGE_BREAK``.
+    """
+    source, score, lines, _pieces, sections, inline = _parsed(text)
+    count = len(score.voices["Vocal"].bars)
+    if not (_whole(bar) and _whole(bars) and 0 < bar < count and bars > 0):
+        raise ValueError("A break of {} bars cannot go before bar {} of a score of {} bars.".format(
+            bars, bar + 1 if _whole(bar) else bar, count))
+    locked = sorted(number for number in inline if bar - 1 <= number <= bar)
+    if locked:
+        raise ValueError(KEY_CHANGE_BREAK.format(bar=locked[0] + 1))
+    bodies = [line.rstrip("\r\n") for line in lines]
+    ending = lines[0][len(bodies[0]):] or "\n"
+    try:
+        old = _cut_at(_blocks(bodies), [bar])
+        new = _cut_at(_written_blocks([line.rstrip("\r\n") for line in
+                                       str(written or "").strip().splitlines()]), [bar, bar + bars])
+        playing = [(start, block) for start, block in new if bar <= start < bar + bars]
+        got = sum(_bar_count(block["voices"]["Vocal"]["music"]) for _start, block in playing)
+        if got != bars or not playing or playing[0][0] != bar:
+            raise ValueError("the model wrote {} whole bars of the break where {} were asked "
+                             "for".format(got, bars))
+        state = {name: ("M:" + bodies[2][2:], "K:" + bodies[7][2:]) for name in abc_tools.VOICES}
+        out = [body + ending for body in bodies[:HEADER_LINES]]
+        stretches = ([block for start, block in old if start < bar],
+                     [block for _start, block in playing],
+                     [block for start, block in old if start >= bar])
+        for which, chosen in enumerate(stretches):
+            for place, block in enumerate(chosen):
+                names = list(block["names"])
+                if which == 1:
+                    names = [INTERLUDE] if place == 0 else []
+                elif which == 2 and place == 0 and not names and sections[bar][1]:
+                    names = [sections[bar][1]]
+                out.extend("% " + name + ending for name in names)
+                for name in abc_tools.VOICES:
+                    head_lines = list(block["voices"][name]["head"])
+                    if which == 2 and place == 0:
+                        voice = score.voices[name]
+                        start, _length, meter = voice.bars[bar]
+                        wanted = ("M:{}/{}".format(*meter), "K:" + _key_at(voice.keys, start))
+                        for field, have in zip(wanted, state[name]):
+                            if field != have and not any(line.startswith(field[:2])
+                                                         for line in head_lines[1:]):
+                                head_lines.insert(1, field)
+                    meter, key = state[name]
+                    for line in head_lines[1:]:
+                        if line.startswith("M:"):
+                            meter = line
+                        elif line.startswith("K:"):
+                            key = line
+                    state[name] = (meter, key)
+                    music = block["voices"][name]["music"]
+                    if which < 2 and place == len(chosen) - 1:
+                        music = _untied(music)
+                    out.extend(line + ending for line in head_lines)
+                    out.append(music + ending)
+        result = "".join(out)
+        before = read(source)
+        laid = read(result)
+        shift = laid["bars"][bar + bars]["start"] - laid["bars"][bar]["start"]
+        vocal = _sung_before(before, seam)
+        for note in before["notes"]["Vocal"]:
+            if note["start"] >= seam:
+                vocal.append(dict(note, start=note["start"] + shift))
+            elif note["start"] + note["length"] > seam:
+                vocal.append(dict(note, start=seam + shift,
+                                  length=note["start"] + note["length"] - seam))
+        laid["notes"]["Vocal"] = vocal
+        result = write(result, laid)["abc"]
+        _broken_back(before, read(result), bar, bars, vocal)
+    except (ValueError, KeyError, IndexError) as error:
+        raise ValueError(NOT_BROKEN.format(reason=_reason(error))) from error
+    raw = str(text or "")
+    leading = raw[:len(raw) - len(raw.lstrip())]
+    trailing = raw[len(raw.rstrip()):]
+    return leading + result.strip() + trailing
+
+
 NOT_THE_BARS = (
     "The new score {what}. Only its notes and chords can change while the rest of the song is "
     "kept as it was sung: sing the song again for that, or change the notes alone."

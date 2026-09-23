@@ -115,6 +115,7 @@ def no_ears_of_the_machine(monkeypatch):
     monkeypatch.setattr(edit_track, "_speech_folder", lambda settings, progress, notices: None)
     monkeypatch.setattr(edit_track, "_ears_at_hand", lambda settings: None)
     monkeypatch.setattr(edit_track, "_voice_level", lambda *args, **kwargs: None)
+    monkeypatch.setattr(edit_track, "_voices_in", lambda *args, **kwargs: [])
 
 
 @pytest.fixture
@@ -183,12 +184,35 @@ def stand(torch, monkeypatch):
                          song=a_song(frames, score_text, lyrics), count=count, join=None,
                          joins={}, ended=False, timing={}, sung=made)
 
+    def broke(models, old, waveform, start, head, lyrics, bars, seeds, settings, build, frames_for,
+              progress=None, cancelled=None):
+        calls.append(("break", start, bars, tuple(seeds)))
+        words.append(lyrics)
+        scores.append(head)
+        made = []
+        for index, seed in enumerate(seeds):
+            written = build(head + played(bars))
+            count = frames_for(notation.read(written)) + index
+            frames = old.frames + count
+            made.append(core.Take(seed=seed, waveform=a_wave(torch, frames, 0.1 * (index + 1)),
+                                  song=a_song(frames, score_text=written, lyrics=lyrics),
+                                  count=count, join=-4.0 + index, joins={}, ended=False,
+                                  timing={}))
+        return made
+
     monkeypatch.setattr(core, "retakes", retakes)
     monkeypatch.setattr(core, "cut", cut)
     monkeypatch.setattr(core, "extended", extended)
     monkeypatch.setattr(core, "moved", moved)
+    monkeypatch.setattr(core, "broke", broke)
     return types.SimpleNamespace(song=song, wave=wave, name=name, calls=calls, words=words,
                                  scores=scores, audio={"waveform": wave, "sample_rate": RATE})
+
+
+def played(bars):
+    """What the stand-in for the model writes after the score a break is written from: bars of playing."""
+    return ("V: Vocal\n" + "|".join(["z16"] * bars) + "|\nV: Ins\n" + "|".join(["C16"] * bars)
+            + "|\n% chorus\nV: Vocal\nc16|\nV: Ins\nZ|\n")
 
 
 def sung_by_stand(sung):
@@ -1826,3 +1850,116 @@ def test_a_move_cuts_where_the_separated_voice_rests_and_hears_it_once(stand, mo
     assert wanted[1][0] == state.clock.moment(4, quiet) != step.pieces[1][0]
     run(stand, MOVE)
     assert asked == [windows], "the voice of a sound is not separated twice"
+
+
+BREAK = '[{"op": "break", "to": 4, "length": 2, "seed": 9, "takes": 2}]'
+"""Two bars of playing before the chorus, two takes."""
+
+
+def break_step():
+    state = track.opened(a_song(), a_clock())
+    return state, track.plan(state, track.read(BREAK)[0])
+
+
+def break_written(step):
+    """The score the stand-in's take lays in, and how long its bars last at the song's tempo."""
+    state = track.opened(a_song(), a_clock())
+    written = notation.interluded(RAP, step.score + played(2), 4, 2, step.seam)
+    return written, track.break_frames(state, step, notation.read(written))
+
+
+def loud_in_break(inside):
+    """The separator stood in: the singing around every break at -10 dB, in each break as ``inside`` says."""
+    def voices(pieces, rate, settings, progress):
+        found = []
+        for (_sound, start, stop), level in zip(pieces, inside):
+            first = max(0.0, start - edit_track.VOICE_CONTEXT)
+            count = int((stop + edit_track.VOICE_CONTEXT - first) / edit_track.VOICE_HOP)
+            opening, closing = start + edit_track.BREAK_AROUND, stop - edit_track.BREAK_AROUND
+            found.append((first, [level if opening <= first + at * edit_track.VOICE_HOP < closing
+                                  else -10.0 for at in range(count)]))
+        return found
+    return voices
+
+
+def test_a_break_is_played_before_its_section_and_what_comes_after_moves_by_it(stand, monkeypatch):
+    said = said_by(monkeypatch)
+    drawn = payload(run(stand, BREAK))
+    state, step = break_step()
+    written, length = break_written(step)
+    assert stand.calls == [("break", step.start, 2, (9, 10))]
+    assert stand.words == [step.lyrics] and "six\n\n[Interlude]\n\n[Chorus]" in step.lyrics
+    assert stand.scores == [step.score] and step.score.endswith("% interlude\n")
+    assert drawn["kind"] == "break" and drawn["chosen"] == 1, "unheard, the join keeps the take"
+    assert drawn["at"] == [round(step.start * FRAME_SECONDS, 3)] * 2
+    assert drawn["placed"] == [round(step.start * FRAME_SECONDS, 3),
+                               round((step.start + length + 1) * FRAME_SECONDS, 3)]
+    assert drawn["seconds"] == pytest.approx((FRAMES + length + 1) * FRAME_SECONDS)
+    left = track.after(state, step, length + 1, written)
+    assert drawn["grid"] == grid.layout(left.sheet, left.clock, left.frames)
+    assert [section["name"] for section in drawn["grid"]["sections"]] == [
+        "intro", "verse", "interlude", "chorus", "outro"]
+    assert (drawn["score"], drawn["lyrics"]) == (written, step.lyrics)
+    assert [(take["voice"], take["voiced"]) for take in drawn["takes"]] == [(None, False)] * 2
+    assert drawn["before"]["voice"] is None, "every row of the list has the same keys"
+    assert ("notice", edit_track.BREAK_UNHEARD) in said
+    mark = songs.store().get(drawn["song"]).edit[0]
+    assert (mark["op"], mark["at"], mark["seed"]) == ("break", drawn["placed"], 10)
+    run(stand, BREAK)
+    assert len(stand.calls) == 1, "the same break is not played twice"
+
+
+def test_a_break_keeps_the_take_with_no_voice_left_in_it_over_a_better_join(stand, monkeypatch):
+    said = said_by(monkeypatch)
+    monkeypatch.setattr(edit_track, "_voices_in", loud_in_break([-60.0, -12.0]))
+    drawn = payload(run(stand, BREAK))
+    assert drawn["chosen"] == 0
+    assert [take["voiced"] for take in drawn["takes"]] == [False, True]
+    assert [take["voice"] for take in drawn["takes"]] == [-50.0, -2.0], (
+        "the voice in the break against the singing around it")
+    assert not [finding for finding in said if finding[0] == "warn"]
+    kept = run(stand, BREAK.replace('"takes": 2', '"takes": 2, "take": 1'))
+    assert len(stand.calls) == 1, "keeping the other take sings nothing"
+    assert payload(kept)["chosen"] == 1
+    assert ("warn", edit_track.BREAK_KEPT_VOICED.format(-2.0, 1)) in said
+
+
+def test_a_break_that_sings_in_every_take_says_so(stand, monkeypatch):
+    said = said_by(monkeypatch)
+    monkeypatch.setattr(edit_track, "_voices_in", loud_in_break([-8.0, -14.0]))
+    drawn = payload(run(stand, BREAK))
+    assert drawn["chosen"] == 1, "the quieter of two that sing"
+    assert ("warn", edit_track.BREAK_VOICED.format(-4.0)) in said
+
+
+def test_an_edit_after_a_break_is_made_on_the_song_the_break_left(stand):
+    run(stand, json.dumps(json.loads(BREAK) + [{"op": "retake", "bars": [6, 8], "seed": 3}]))
+    state, step = break_step()
+    written, length = break_written(step)
+    left = track.after(state, step, length + 1, written)
+    wanted = grid.retake_frames(left.sheet, left.clock, grid.seams(left.sheet), 6, 8, left.frames)
+    assert stand.calls[1][:3] == ("retake",) + wanted
+
+
+def test_the_words_after_a_break_are_lit_later_by_it_and_not_heard_again(stand, monkeypatch):
+    from yue2_comfy.inpaint import lines
+
+    calls = []
+    lined(monkeypatch, calls, first=1.0, gap=1.5)
+    drawn = payload(run(stand, BREAK))
+    state, step = break_step()
+    _written, length = break_written(step)
+    said = lines.heard_text(LYRICS)
+    assert {(key, text) for key, text, _fill in calls} == {(calls[0][0], said)}, (
+        "only the song as it was is heard -- the speech runtime keeps a sound's times by its key "
+        "-- and no take is")
+    old = [(word, round(1.0 + 1.5 * index, 3), round(1.0 + 1.5 * index + 0.4, 3))
+           for index, word in enumerate(said.split())]
+    at = step.start * FRAME_SECONDS
+    times = lines.carried_along(old, said, [(0.0, at), (at, FRAMES * FRAME_SECONDS)],
+                                lines.heard_text(step.lyrics))
+    times = lines.stretched(times, [(at, at, (length + 1) * FRAME_SECONDS)])
+    assert drawn["lines"] == [[number, round(start, 3), round(stop, 3)]
+                              for number, start, stop in lines.placed(step.lyrics, times)]
+    assert drawn["lines"][-1][1] > at + (length + 1) * FRAME_SECONDS - 0.5, (
+        "the chorus is lit after the break")

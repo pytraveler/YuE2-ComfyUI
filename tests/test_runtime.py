@@ -1,11 +1,13 @@
 """The per-run swaps in runtime.py, checked without a card.
 
-The one that matters for memory is ``fused_attention``: it widens grouped K/V
-so the acoustic attention lands in a kernel that streams instead of building
-the whole matrix. Whether that kernel is actually chosen is a property of the
-machine and was measured on one; what is checked here is everything that is not
--- which calls get widened, that the widening is the same attention, that the
-call reaches upstream unchanged otherwise, and that the module is put back.
+The one that matters for memory is ``fused_attention``: it sends grouped K/V to
+cuDNN as they are, or widens them where cuDNN turns the call down, so the
+acoustic attention lands in a kernel that streams instead of building the whole
+matrix. Whether that kernel is actually chosen is a property of the machine and
+was measured on one; what is checked here is everything that is not -- which
+calls go where, that a refusal and only a refusal is widened, that the widening
+is the same attention, that the call reaches upstream unchanged otherwise, and
+that the module is put back.
 """
 
 from __future__ import annotations
@@ -59,29 +61,111 @@ def test_nothing_else_is_touched():
     assert not runtime._grouped(object(), k, v)
 
 
-def test_the_widened_call_repeats_only_the_key_heads():
-    """K and V gain the group; Q and the keyword arguments arrive untouched."""
+REFUSAL = "No available kernel. Aborting execution."
+
+
+def swapped(nar, recorder):
+    """nar.attention replaced by ``recorder`` for a with-block, put back after."""
+
+    class Swap:
+        def __enter__(self):
+            self.original = nar.attention
+            nar.attention = recorder
+
+        def __exit__(self, *exc):
+            nar.attention = self.original
+            return False
+
+    return Swap()
+
+
+def test_the_grouped_call_asks_cudnn_first_with_the_key_heads_as_they_are(monkeypatch):
+    """No copy, and cuDNN alone allowed, so a refusal raises instead of landing in math."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch.nn.attention")
     nar = pytest.importorskip("yue2_comfy.vendor.yue2.nar")
+    monkeypatch.setattr(runtime, "_REFUSED", set())
     seen = {}
 
     def recorder(q, k, v, **kwargs):
-        seen.update(q=q, k=k, v=v, kwargs=kwargs)
+        seen.update(q=q, k=k, v=v, kwargs=kwargs, cudnn=torch.backends.cuda.cudnn_sdp_enabled(),
+                    efficient=torch.backends.cuda.mem_efficient_sdp_enabled(),
+                    math=torch.backends.cuda.math_sdp_enabled())
         return "attended"
 
-    original = nar.attention
-    nar.attention = recorder
-    try:
-        q, k, v = trio()
+    q, k, v = trio()
+    with swapped(nar, recorder):
         with runtime.fused_attention():
             assert nar.attention is not recorder
             assert nar.attention(q, k, v, causal=True, backend="sdpa") == "attended"
-    finally:
-        nar.attention = original
+
+    assert seen["q"] is q and seen["k"] is k and seen["v"] is v
+    assert seen["kwargs"] == {"causal": True, "backend": "sdpa"}
+    assert seen["cudnn"] and not seen["efficient"] and not seen["math"]
+    assert not runtime._REFUSED
+
+
+def test_a_refused_call_repeats_only_the_key_heads(monkeypatch):
+    """Where cuDNN says no, K and V gain the group; Q and the keyword arguments arrive untouched."""
+    nar = pytest.importorskip("yue2_comfy.vendor.yue2.nar")
+    monkeypatch.setattr(runtime, "_REFUSED", set())
+    seen = {}
+
+    def recorder(q, k, v, **kwargs):
+        if k.shape[1] == 8:
+            raise RuntimeError(REFUSAL)
+        seen.update(q=q, k=k, v=v, kwargs=kwargs)
+        return "attended"
+
+    q, k, v = trio()
+    with swapped(nar, recorder):
+        with runtime.fused_attention():
+            assert nar.attention(q, k, v, causal=True, backend="sdpa") == "attended"
 
     assert seen["q"] is q
     assert seen["k"].shape == (4, 16, 128) and seen["k"].repeats == (2, 1)
     assert seen["v"].shape == (4, 16, 128) and seen["v"].repeats == (2, 1)
     assert seen["kwargs"] == {"causal": True, "backend": "sdpa"}
+    assert len(runtime._REFUSED) == 1
+
+
+def test_a_refusal_is_remembered_for_that_shape_only(monkeypatch):
+    """The same call is not offered to cuDNN twice; a call of another shape still is."""
+    pytest.importorskip("torch.nn.attention")
+    nar = pytest.importorskip("yue2_comfy.vendor.yue2.nar")
+    monkeypatch.setattr(runtime, "_REFUSED", set())
+    offered = []
+
+    def recorder(q, k, v, **kwargs):
+        if k.shape[1] == 8:
+            offered.append(q.shape[0])
+            raise RuntimeError(REFUSAL)
+        return "attended"
+
+    with swapped(nar, recorder):
+        with runtime.fused_attention():
+            for tokens in (4, 4, 6, 4, 6):
+                nar.attention(*trio(tokens=tokens), causal=False)
+    assert offered == [4, 6]
+
+
+def test_other_errors_are_not_taken_for_a_refusal(monkeypatch):
+    """Running out of memory is a RuntimeError too; widening would only ask for more."""
+    pytest.importorskip("torch.nn.attention")
+    nar = pytest.importorskip("yue2_comfy.vendor.yue2.nar")
+    monkeypatch.setattr(runtime, "_REFUSED", set())
+    shapes = []
+
+    def recorder(q, k, v, **kwargs):
+        shapes.append(k.shape)
+        raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+
+    with swapped(nar, recorder):
+        with runtime.fused_attention():
+            with pytest.raises(RuntimeError, match="out of memory"):
+                nar.attention(*trio())
+    assert shapes == [(4, 8, 128)]
+    assert not runtime._REFUSED
 
 
 def test_the_ungrouped_call_reaches_upstream_as_it_is():
@@ -146,5 +230,5 @@ def test_widening_the_key_heads_is_the_same_attention():
 def test_the_backend_names_still_exist_on_this_torch():
     """A name that moves must fail loudly here, not silently cost 10 GiB."""
     attention = pytest.importorskip("torch.nn.attention")
-    for name in runtime.FUSED_BACKENDS:
+    for name in runtime.FUSED_BACKENDS + (runtime.GROUPED_BACKEND,):
         assert hasattr(attention.SDPBackend, name), name

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import warnings
 
 log = logging.getLogger(__name__)
 
@@ -88,32 +89,125 @@ def pinned_attention(backend: str):
     import. sampling.generate_tokens imports GraphAR inside the function body,
     so replacing the module attribute is enough, and it is put back afterwards.
 
-    This covers the AR stages only. The NAR stage takes its backend as an
-    argument and accepts sdpa, math or flash -- never cudnn -- so it is always
-    called with sdpa.
+    Upstream's step always runs its public-SDPA branch here. With 'fast' or
+    'flash' the one attention call in that branch is answered by the engine in
+    ``attention.py``: the module's ``F`` is swapped for one whose SDPA knows
+    which graph is decoding, and the graph says so around each step, so the
+    rest of upstream's step -- projections, rotary, the cache writes, the fused
+    matrices -- runs as it was written. Whether the engine can run is asked when
+    a graph is built, so a run on the processor, which builds none, is never
+    refused for it. An old 'cudnn' is read as 'fast'; see ``attention.LEGACY``.
+
+    This covers the AR stages only. The acoustic stage has its own kernel; see
+    ``fused_attention``.
     """
+    from . import attention
     from .vendor.yue2 import cuda_graph
 
-    original = cuda_graph.GraphAR
+    name = attention.resolve(backend)
+    original, functional = cuda_graph.GraphAR, cuda_graph.F
+    answering = [None]
 
     class PinnedGraphAR(original):
         def __init__(self, *args, **kwargs):
-            kwargs["attention_backend"] = backend
+            kwargs["attention_backend"] = attention.SDPA
             super().__init__(*args, **kwargs)
+            self.engine = attention.engine_for(name, self.device)
+            if self.engine is not None:
+                if answering[0] is None:
+                    answering[0] = attention.Functional(functional, self.engine)
+                    cuda_graph.F = answering[0]
+                self.engine.prepare(self)
+                self.attention_backend = attention.LABELS[name]
+
+        def _decode(self):
+            if self.engine is None:
+                return super()._decode()
+            import torch
+
+            with torch.inference_mode():
+                self.engine.begin(self)
+            answering[0].decoding = self
+            try:
+                return super()._decode()
+            finally:
+                answering[0].decoding = None
 
     cuda_graph.GraphAR = PinnedGraphAR
     try:
         yield
     finally:
         cuda_graph.GraphAR = original
+        cuda_graph.F = functional
 
+
+GROUPED_BACKEND = "CUDNN_ATTENTION"
+"""The SDPA kernel the acoustic call asks for first, with K/V grouped as they come.
+
+cuDNN takes ``enable_gqa`` itself, so nothing is copied and no matrix is built.
+Measured on 2026-09-24 on an RTX 5090 (torch 2.11, cuDNN 9.19) against the
+widened call through the efficient kernel: the acoustic stage of a 100-second
+song 5.8 -> 4.4 s, of a 180-second one 12.9 -> 8.6 s, of a 236-second one
+21.2 -> 12.9 s, at the same peak. Every run gave the same latents to the bit, in
+one process, across processes and with 3 GiB of the card left free. The latents
+lie 25-40 dB from the efficient kernel's, which is as far as those lie from the
+math kernel's; Qwen3-ASR heard the same words in three songs of four and a WER
+of 0.155 against 0.138 in the fourth.
+
+cuDNN's attention is not reproducible everywhere: stepped one query at a time
+over a filling cache, as the token loops use it, the same inputs gave different
+bytes in 2-4 steps of 400. The acoustic calls are whole blocks of queries and
+never did.
+"""
 
 FUSED_BACKENDS = ("EFFICIENT_ATTENTION", "MATH")
 """Which SDPA kernels the widened acoustic call is allowed to land in.
 
 The fused one first, math kept enabled underneath it so that a shape the fused
-kernel refuses still runs instead of raising.
+kernel refuses still runs instead of raising. Only a call cuDNN turns down comes
+this way -- on a card older than Ampere, say.
 """
+
+_REFUSED = set()
+"""Acoustic calls cuDNN has turned down in this process, by shape, dtype and causality.
+
+Whether a kernel takes a call depends on nothing else, so remembering the answer
+sends a call the way asking again would -- one song's calls go the same way on
+every run -- without paying for the refusal and its warnings each time.
+"""
+
+
+def _call_key(q, k, kwargs) -> tuple:
+    """What decides whether cuDNN takes an acoustic call."""
+    device = getattr(q, "device", None)
+    return (getattr(device, "type", None), getattr(device, "index", None), str(getattr(q, "dtype", "")),
+            tuple(q.shape), tuple(k.shape), bool(kwargs.get("causal", False)))
+
+
+def _is_refusal(error: Exception) -> bool:
+    """Whether an error is SDPA saying that no kernel it may use takes the call, and nothing else.
+
+    Out of memory is a RuntimeError too, and must not be read as a refusal: the
+    widened path would only ask for more.
+    """
+    return "No available kernel" in str(error)
+
+
+@contextlib.contextmanager
+def _only_grouped_kernel():
+    """GROUPED_BACKEND alone for the length of one call, so a refusal raises instead of landing in math.
+
+    A torch without that kernel, or without ``sdpa_kernel``, refuses the same way.
+    """
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+    except ImportError:
+        raise RuntimeError("No available kernel: this torch has no sdpa_kernel") from None
+    backend = getattr(SDPBackend, GROUPED_BACKEND, None)
+    if backend is None:
+        raise RuntimeError("No available kernel: this torch has no %s" % GROUPED_BACKEND)
+    with sdpa_kernel(backend):
+        yield
 
 
 def _grouped(q, k, v) -> bool:
@@ -156,7 +250,11 @@ def _fused_kernel(device_type: str):
 
 @contextlib.contextmanager
 def fused_attention():
-    """Widen grouped K/V so the acoustic attention gets a kernel that streams.
+    """Give the acoustic attention a kernel that streams: cuDNN, or the efficient one on widened K/V.
+
+    Since 2026-09-24 a grouped call goes to cuDNN first, K/V as they are -- see
+    GROUPED_BACKEND for what that measured. Only where cuDNN turns a call down
+    does it take the path below, which was the only one before.
 
     ``nar.attention`` asks SDPA for grouped-query attention with
     ``enable_gqa=True``: 16 query heads against 8 key heads. The memory-efficient
@@ -178,18 +276,33 @@ def fused_attention():
     Upstream is not edited: ``CachedNAR`` looks the function up in its module
     when it runs, the way ``pinned_attention`` replaces GraphAR.
 
-    It is not byte-identical with the songs this pack made before 0.7.0. The
-    score and the semantic tokens come out the same; only the last stage renders
-    differently, about 30 dB below the song's own level. Two runs of one seed
-    still agree with each other to the byte.
+    It is not byte-identical with the songs this pack made before 0.7.0, and the
+    cuDNN path is not with the songs made between then and 2026-09-24. The score
+    and the semantic tokens come out the same; only the last stage renders
+    differently, 20-40 dB below the song's own level. Two runs of one seed still
+    agree with each other to the byte.
     """
     from .vendor.yue2 import nar
 
     original = nar.attention
 
     def attention(q, k, v, **kwargs):
-        """Upstream's attention, with the group repeated into the key heads."""
+        """Upstream's attention: grouped through cuDNN, or with the group repeated into the key heads."""
         if _grouped(q, k, v):
+            key = _call_key(q, k, kwargs)
+            if key not in _REFUSED:
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        with _only_grouped_kernel():
+                            return original(q, k, v, **kwargs)
+                except RuntimeError as error:
+                    if not _is_refusal(error):
+                        raise
+                    if not _REFUSED:
+                        log.info("[yue2_comfy.runtime] cuDNN does not take the acoustic attention on this "
+                                 "card, so its K/V are widened for the efficient kernel instead")
+                    _REFUSED.add(key)
             groups = int(q.shape[1]) // int(k.shape[1])
             k = k.repeat_interleave(groups, dim=1)
             v = v.repeat_interleave(groups, dim=1)

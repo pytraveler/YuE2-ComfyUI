@@ -15,9 +15,9 @@ import time
 from . import devices, edits, phrasing, songs, transpose
 from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
-    DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES, LORA_INPUT_TOOLTIP,
-    LORA_TYPE, LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE, QUANTIZATION_CHOICES,
-    SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, TRANSPOSE_LIMIT, VAE_CHOICES, WRITER_AUTO,
+    DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES, LEGACY_ATTENTION,
+    LORA_INPUT_TOOLTIP, LORA_TYPE, LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE,
+    QUANTIZATION_CHOICES, SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, TRANSPOSE_LIMIT, VAE_CHOICES, WRITER_AUTO,
     WRITER_LENGTH_CHOICES,
     WRITER_LENGTH_DEFAULT, WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS,
     WRITER_REPETITION_PENALTY, WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P,
@@ -138,11 +138,10 @@ KEEP_TOOLTIP = (
 )
 
 ATTENTION_TOOLTIP = (
-    "Which attention kernel the decode loop uses.\n\n"
-    "'sdpa' is the default and is reproducible: the same seed gives the same song. "
-    "'cudnn' is about 17 percent faster and is NOT reproducible -- measured over four "
-    "runs of one seed it produced four different songs. Use it only when you are "
-    "exploring and do not need to come back to a result."
+    "How the model attends while it writes the song, token by token.\n\n"
+    "'sdpa' is the default and sings a seed as before. 'fast' is quicker and needs "
+    "nothing extra. 'flash' is the quickest and needs the flash-attn package.\n\n"
+    "Each one repeats a seed, but each sings it its own way."
 )
 
 DOWNLOAD_TOOLTIP = (
@@ -308,6 +307,21 @@ class YuE2Options:
     RETURN_NAMES = ("options",)
     FUNCTION = "build"
     CATEGORY = CATEGORY
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, attention_backend=DEFAULT_OPTIONS["attention_backend"]):
+        """Let a workflow saved with an attention choice that is gone still run.
+
+        ComfyUI checks a list widget against its list unless this names the
+        input, and then asks this instead. 'cudnn' was on the list until
+        2026-09-24; a workflow saved with it would otherwise stop at the queue
+        with "Value not in list". It runs as what replaced it; see
+        ``attention.LEGACY``.
+        """
+        if attention_backend in ATTENTION_CHOICES or attention_backend in LEGACY_ATTENTION:
+            return True
+        return "attention_backend must be one of {}, not {!r}".format(
+            ", ".join(ATTENTION_CHOICES), attention_backend)
 
     def build(self, **kwargs):
         options = dict(DEFAULT_OPTIONS)

@@ -92,7 +92,9 @@ WIDENED_KV_BYTES = 2 * HEADS * HEAD_DIM * ELEMENT_BYTES
 
 It repeats the 8 key heads into 16 so that a kernel which streams takes the
 call, which costs K and V once more at the full head count: 8 KiB a position,
-against the matrix it no longer builds."""
+against the matrix it no longer builds. Since 2026-09-24 the copy is made only
+where cuDNN turns the grouped call down; the estimate keeps it, which is the
+safe side, and cuDNN's own work measured no higher than the copy's."""
 
 ROW_BYTES = 48 * 1024
 """What one row the acoustic half computes costs beyond attention.

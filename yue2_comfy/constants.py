@@ -159,7 +159,11 @@ VAE_ALLOW = (WEIGHTS_NAME, CONFIG_NAME, MANIFEST_NAME)
 
 COT_CHOICES = ("full", "melody", "off")
 VAE_CHOICES = ("standard", "legacy")
-ATTENTION_CHOICES = ("sdpa", "cudnn")
+ATTENTION_CHOICES = ("sdpa", "fast", "flash")
+LEGACY_ATTENTION = {"cudnn": "fast"}
+"""Attention choices this pack once offered, and what a workflow or a song that still names one gets.
+
+'cudnn' could not repeat a seed; see ``attention.py``."""
 DOWNLOAD_CHOICES = ("auto", "comfy-org", "original", "off")
 QUANTIZATION_CHOICES = ("bf16", "int8")
 OFFLOAD_CHOICES = ("auto", "on", "off")
@@ -248,7 +252,7 @@ LYRICS_TOOLTIP = (
 
 SEED_TOOLTIP = (
     "The same seed with the same settings gives the same song, byte for byte.\n\n"
-    "That holds only while 'attention_backend' is 'sdpa', which is the default."
+    "'attention_backend' is one of those settings: each choice sings a seed its own way."
 )
 """These three describe the same inputs on the plain node and on the staged ones,
 so they live here rather than in either module. A song and the score it grew from

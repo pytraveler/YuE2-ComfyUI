@@ -65,14 +65,21 @@ def _score_problem(error) -> dict:
 
 
 def answer_score_read(body) -> tuple:
-    """``(payload, status)`` for the score editor asking to draw a score."""
+    """``(payload, status)`` for the score editor asking to draw a score.
+
+    A score cut off where the model ran out of room is drawn up to its last
+    whole group, and the sheet says so with ``cut``.
+    """
     if not isinstance(body, dict) or not isinstance(body.get("abc"), str):
         return {"ok": False, "error": "Send a JSON object with the score as 'abc'."}, 400
 
     from . import notation
 
     try:
-        return {"ok": True, "sheet": notation.read(body["abc"])}, 200
+        text, cut = notation.editable(body["abc"])
+        sheet = notation.read(text)
+        sheet["cut"] = cut
+        return {"ok": True, "sheet": sheet}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         return _score_problem(error), 200
 
@@ -83,6 +90,10 @@ def answer_score_write(body) -> tuple:
     The answer carries the new text, the bars that were written again, and the
     new text read back, so the window redraws from what the score now says
     rather than from what it asked for.
+
+    A cut score is written on its whole groups, so an edit leaves the
+    unfinished end out; an edit that changes nothing hands the score back as it
+    came, end and all, so taking an edit back leaves the node as it was.
     """
     if not isinstance(body, dict) or not isinstance(body.get("abc"), str) \
             or "sheet" not in body:
@@ -92,9 +103,13 @@ def answer_score_write(body) -> tuple:
     from . import notation
 
     try:
-        written = notation.write(body["abc"], body["sheet"])
-        return {"ok": True, "abc": written["abc"], "bars": written["bars"],
-                "sheet": notation.read(written["abc"])}, 200
+        text, cut = notation.editable(body["abc"])
+        written = notation.write(text, body["sheet"])
+        sheet = notation.read(written["abc"])
+        same = cut and written["abc"].strip() == text.strip()
+        sheet["cut"] = same
+        return {"ok": True, "abc": body["abc"] if same else written["abc"], "bars": written["bars"],
+                "sheet": sheet}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         return _score_problem(error), 200
 
@@ -119,7 +134,7 @@ def answer_score_length(body) -> tuple:
         return {"ok": False, "error": "'bpm' must be a whole number."}, 400
     try:
         text = notation.blank(body["bars"], bpm) if not body["abc"].strip() \
-            else notation.lengthened(body["abc"], body["bars"])
+            else notation.lengthened(notation.editable(body["abc"])[0], body["bars"])
         notation.read(text)
         return {"ok": True, "abc": text}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
@@ -160,11 +175,12 @@ def answer_score_midi(body) -> tuple:
 
     import base64
 
-    from . import edits
+    from . import edits, notation
     from .midi import export
 
     try:
-        data = export.midi_of(edits.read(body["abc"]).score)
+        score = edits.read(body["abc"]).score
+        data = export.midi_of(notation.whole_groups(score) or score)
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         return _score_problem(error), 200
     return {"ok": True, "data": base64.b64encode(data).decode("ascii")}, 200

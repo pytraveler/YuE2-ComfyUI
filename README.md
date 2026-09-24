@@ -88,6 +88,19 @@ switch on the song nodes, `vocals_only` in `YuE2 Options`:
 
 See [YuE2 Vocals Only](#yue2-vocals-only).
 
+A sixth node changes part of a song the pack has sung and keeps the rest of it:
+a stretch sung again, cut out, given new words or notes, or moved, and the song
+carried on past its end or given an instrumental break:
+
+    [YuE2 Generate Song] -> [YuE2 Edit Track] -> [Save Audio]
+                              Edit track...  (the song as a track)
+
+See [YuE2 Edit Track](#yue2-edit-track).
+
+If this pack is useful to you, a star on GitHub helps other people find it. Bug
+reports are just as welcome, and so are songs that came out wrong: they go in
+[Issues](https://github.com/pytraveler/YuE2-ComfyUI/issues).
+
 ## Contents
 
 - [What you need before installing](#what-you-need-before-installing)
@@ -96,8 +109,8 @@ See [YuE2 Vocals Only](#yue2-vocals-only).
 - [Nodes](#nodes) - [YuE2 Generate Song](#yue2-generate-song) -
   [YuE2 Write Song](#yue2-write-song) - [YuE2 Transcribe](#yue2-transcribe) -
   [YuE2 Load MIDI](#yue2-load-midi) - [YuE2 Vocals Only](#yue2-vocals-only) -
-  [YuE2 LoRA](#yue2-lora) - [YuE2 Options](#yue2-options) -
-  [Staged nodes](#staged-nodes)
+  [YuE2 Edit Track](#yue2-edit-track) - [YuE2 LoRA](#yue2-lora) -
+  [YuE2 Options](#yue2-options) - [Staged nodes](#staged-nodes)
 - [Song length](#song-length)
 - [Writing lyrics](#writing-lyrics) -
   [Stress, and what capital letters really do](#stress-and-what-capital-letters-really-do)
@@ -114,8 +127,8 @@ See [YuE2 Vocals Only](#yue2-vocals-only).
 | Resource | Requirement |
 |---|---|
 | GPU | An NVIDIA GPU with BF16 support. CPU works and is roughly an hour per song |
-| VRAM | **~4.4 GiB** for a 40-second song and **~4.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card, or **~3.1 GiB** for either with `low_vram` on. A card with room to spare keeps the whole model on it and uses about 10 GiB for either. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.3 GiB while it recognises the words of a three-minute song. Separating the voice, with `vocals_only` or `YuE2 Vocals Only`, peaks at 2.5 GiB |
-| Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words. `vocals_only` and `YuE2 Vocals Only` add 0.85 GB |
+| VRAM | **~4.4 GiB** for a 40-second song and **~4.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card, or **~3.1 GiB** for either with `low_vram` on. A card with room to spare keeps the whole model on it and uses about 10 GiB for either. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.5 GiB while it recognises the words of a four-minute song, 3.5 with `low_vram`. Separating the voice, with `vocals_only` or `YuE2 Vocals Only`, peaks at 2.5 GiB. An edit in `YuE2 Edit Track` peaks no higher than singing the song did |
+| Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words. `vocals_only`, `YuE2 Vocals Only` and `YuE2 Edit Track` add 0.85 GB, and new words in `YuE2 Edit Track` 1.84 GB for the word aligner and the 3.80 GB speech model. Songs the pack remembers take up to 4 GiB in ComfyUI's user folder, 8 with their sounds kept |
 | Packages | `tiktoken`, which ComfyUI does not ship. It is the only thing this pack adds; `requests`, which the downloader uses, is already in every ComfyUI install. `llama-cpp-python` is optional -- `YuE2 Write Song` uses it when it is there and official llama.cpp binaries when it is not |
 
 If `tiktoken` is missing the node says so, with the right pip line for the
@@ -137,7 +150,7 @@ live until the server restarts.
 
 ## Example workflows
 
-Ten workflows ship with the pack and appear in ComfyUI's template browser
+Eleven workflows ship with the pack and appear in ComfyUI's template browser
 (*Workflow -> Browse Templates*) under this node pack's name once it is
 installed. Each is a card of its own and each runs on its own: nothing is
 bypassed on open, and there is no second branch to mute before pressing Run.
@@ -154,8 +167,9 @@ bypassed on open, and there is no second branch to mute before pressing Run.
 | 8 | **Cover a song** -- a recording's tune and words, sung again in another style | the YuE2 weights, SheetSage2 (1.29 GB), and for the words Qwen3-ASR (3.8 GB) and a 2.7 GB writer |
 | 9 | **An a cappella song** -- a song with nothing but the voice | the YuE2 weights and the 0.85 GB voice separator |
 | 10 | **A song with LoRA** -- the same song node with adapters in front of it | the YuE2 weights and a LoRA of your own |
+| 11 | **Edit a song** -- a song, then part of it sung again, cut, moved or carried on | the YuE2 weights and the 0.85 GB voice separator; for new words the 1.84 GB aligner and Qwen3-ASR (3.8 GB) |
 
-Templates 1 to 3 and 7 to 10 use the `YuE2` menu. Templates 4 to 6 open a run
+Templates 1 to 3 and 7 to 11 use the `YuE2` menu. Templates 4 to 6 open a run
 up into its stages, which is what `YuE2/Advanced` is for.
 
 Every one carries a **Read me first** note: what it does, what it downloads,
@@ -247,6 +261,11 @@ rather than filling it in.*
 - A style or lyrics that arrive through a wire, from `YuE2 Write Song` for
   instance, are shown by the name of the node they come from and are edited
   there.
+- The right button gives the browser's own menu -- copy, paste, select all --
+  in the text fields and on selected lyrics, and the editor's menu on a line or
+  a tag with nothing selected. Rows of lyrics copied from the window come out
+  as the model reads them, with a section's tag when its chip is selected, and
+  without the buttons and token counts drawn beside them.
 
 ![The Examples list open over the song editor. At the top the row it drops from, Take a style that was really run...; then the group Covers and editing with Jazz-funk (English), Jazz ballad (Chinese), Chamber folk (Chinese), Brass funk (Chinese), Heavy metal (English), Christmas pop, Hard rock (English) under the pointer, Acoustic pop (Chinese), Vocal jazz (Chinese) and Swing jazz (Chinese); then the group Genre explorer with Ambient (Chinese), Bachata (English), Big Band (Chinese), Boogie Woogie (English), City Pop (Chinese), Country Gospel (English), Electropop (Chinese), Emo-Pop (English), Eurobeat (English), Folktronica (Russian), Glam Metal (English), Honky Tonk (English), Industrial Metal (Chinese), Jump Blues (English), Lo-Fi Hip Hop (Chinese), Nu-Disco (Chinese), Southern Gospel (English) and Yacht Rock (Japanese). Behind the list the Examples and Style line rows of the style card, and the LYRICS card below](docs/lyrics_examples.png)
 
@@ -265,15 +284,16 @@ a summary of the score they will sing. The button opens a window over the
 canvas with three views of one score, and nothing is written to the node until
 Apply.
 
-<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key Fm, 4/4, 98 BPM, 92 bars, 3:45. Under them Play and From start, then the voice box ticked with synth beside it, instrument ticked with piano, chords unticked with pluck, and a Tempo slider with 98 in the box next to it. On the row below, the Voice part list, an Eighth notes grid, Add bars..., the zoom buttons and Whole song, with greyed-out Undo and Redo under them. The roll shows bars 1 to 8, a section lane naming intro over the bar numbers, and the chord Fm in the lane under them from the third bar on. The voice has nothing to sing in the intro, so only the instrument part stands on the roll, drawn faintly. The keyboard names only the Cs, C2 to C6, in bold. Under the roll the line No changes. This is the score as it came in, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Cancel and Apply on the right">
+<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key Fm, 4/4, 98 BPM, 93 bars, 3:47. Under them Play and From start, then the voice box ticked with synth beside it, instrument ticked with piano, chords unticked with pluck, and a Tempo slider with 98 in the box next to it. On the row below, the Voice, Instrument and Both switch with Voice lit, an Eighth notes grid, Add bars..., the zoom buttons and Whole song, then greyed-out Undo and Redo and the greyed-out -oct, -1, +1 and +oct buttons. The roll shows bars 8 to 15 of the intro, with the chords Fm, Fm, Cm, Fm7, Bb, Fm7, Bb and Fm7 in the lane under the bar numbers. The voice has nothing to sing in the intro, so only the instrument part stands on the roll, drawn faintly. The keyboard names the Cs, C2 to C6. Under the roll a scroll slider, the line No changes. This is the score as it came in, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Cancel and Apply on the right">
 
 *The window on `YuE2 Generate Song`, on the score the node wrote on its last
 run: a sound list beside each of the three boxes, the tempo slider next to the
-play controls, the section lane and the chords over the roll, and a keyboard
-that names its Cs. This is the intro, where the voice has nothing to sing yet
-and only the instrument part stands on the roll. Nothing has been edited here,
-so Undo and Redo are both grey and the line under the roll says the score is as
-it came in.*
+play controls, the `Voice | Instrument | Both` switch and the buttons that move
+what is selected by a semitone or an octave, the section lane and the chords
+over the roll, and a keyboard that names its Cs. This is the intro, where the
+voice has nothing to sing yet and only the instrument part stands on the roll.
+Nothing has been edited or selected, so Undo, Redo and the move buttons are
+grey and the line under the roll says the score is as it came in.*
 
 On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
 run, so run it once first. The next run sings the edit instead of writing a
@@ -286,14 +306,21 @@ its own only when it is one.
 - **Piano roll**, in the look most music software shares: green notes
   with their names on them, a blue-grey grid and a keyboard down the
   side: C is named in every octave, and the row the pointer is on says
-  what it is, black keys included. The voice part and the instrument
-  part are edited one at a time, with the other drawn faintly behind;
-  the sections run along the top, and a chord lane sits under the bar
+  what it is, black keys included. `Voice | Instrument | Both` picks what
+  is edited: one part, with the other drawn faintly behind, or both parts
+  and the chords at once, to move a whole stretch of the song -- in `Both`
+  a box, a click, the arrows and Delete take them all, and no note is
+  drawn. The sections run along the top, and a chord lane sits under the bar
   numbers. A click draws a note, a drag moves it, and a right-click or
   Delete removes it. The right edge stretches a note, into the next one too,
   which then starts later and keeps its end. Shift or Ctrl with a click or a
   drag selects several, and selected notes turn red; the arrow keys move them
-  by the grid or a semitone, and by an octave with Shift or Ctrl. Alt, or the
+  by the grid or a semitone, and by an octave with Shift or Ctrl, and so do
+  the `-oct -1 +1 +oct` buttons. The status line warns when the middle of the
+  voice line leaves C4 to A#5, where the model's own scores keep it. A
+  stretch moved up or down is sung at its new pitch with `K:` left alone: the
+  first chorus of a pop song and of a Russian ballad, moved down a tone, came
+  back a tone down, with the verse before it where it was. Alt, or the
   right Alt of a keyboard with AltGr, draws, moves and stretches between the
   grid lines, in steps of the shortest note the score is written in. A part
   sings one note at a time, so a note drawn on top of another is refused, and a
@@ -363,6 +390,14 @@ point and dims the bars after it, the facts above the roll end in
 Edited bars that fall after the line are named in both places, because they
 will not be heard until the ceiling moves. Raising `max_seconds` keeps the edit;
 like any change of `max_seconds`, it sings a new take.
+
+**A score the model did not finish.** A score that ran out of tokens stops in
+the middle of a line. The editor opens it up to its last whole group of bars
+and says that the end was cut, and an edit is written without the unfinished
+tail. Such a score usually comes from lyrics too short for the style: one line
+under a long description of an instrumental build got no note for the voice in
+8 scores of 8, and 5 of them ran out of tokens; nine lines under the same style
+gave the voice its notes in 4 of 4, and none ran out.
 
 Checked on the card with one song and the edit from the window. With the box
 empty, `YuE2 Generate Song` gave the same audio as before the box existed,
@@ -794,6 +829,214 @@ downloaded on first use, 0.85 GB under MIT; see
 
 Template 9, *An a cappella song*, is the switch set up with such a style.
 
+### YuE2 Edit Track
+
+Part of a finished song changed, and the rest of it kept. A stretch is sung
+again, cut out, given new words or new notes, or moved to another place; the
+song goes on past its end, or takes an instrumental break. The node hands back
+the whole song, and everything outside the edits is the old recording to the
+sample. Upstream YuE2 has no local editing, and neither ComfyUI core nor any
+other YuE2 pack has it either.
+
+    [YuE2 Edit Track]
+      audio    (optional: a song this pack sang)
+      takes    (1 to 4)
+      options  (optional)
+      -> audio
+
+![YuE2 Edit Track before its first run, titled Edit the song. The audio input wired in from the left with a green ticked square beside it, options under it, and the audio output wired on to the right. The takes widget at 2, then the Edit track..., Saved songs... and Reset track buttons over a panel reading No edits: the song is handed on as it came in. Not drawn yet: open the track and press Render](docs/node_edit_song.png)
+
+*The node as template 11 has it. The ticked square beside `audio` is the switch:
+untick it, and the song chosen with `Saved songs...` is edited instead, without
+running the node that sings into `audio`.*
+
+**Outputs**
+
+| Name | Contents |
+|---|---|
+| `audio` | The song with every edit on the list made, 48 kHz stereo, or the song as it came when the list is empty |
+
+**Inputs**
+
+- `audio` -- a song this install has sung: the output of `YuE2 Generate Song`,
+  `YuE2 Render Plan` or `YuE2 Decode Latents`, or a FLAC or WAV of one loaded
+  with `Load Audio`. Optional: with nothing joined, the node opens the song
+  chosen with `Saved songs...`. The square beside this input on the node
+  switches it off -- then the chosen song is edited, and the node wired in is
+  not run for it, so a song sung before a restart is not sung again to edit
+  one bar of it.
+- `takes` -- how many takes a retake, new words, new notes or a song that goes
+  on sings, to choose between by ear. Two by default. A cut and a move have one
+  result each.
+- `options` -- only what the run decides is read from it: `device`, `offload`,
+  `low_vram`, `vae`, `quantization`, `attention_backend`, `download` and
+  `keep_model_loaded`. How the song was sung -- `cot`, the sampling,
+  `cfg_scale` and the LoRA adapters it was sung with -- comes from the song
+  itself, so that an edit sounds like the song it goes into.
+- `edits`, `song_key` -- the list of edits and the chosen song, written by the
+  track window and by `Saved songs...` and hidden behind them.
+
+**Which songs.** The pack keeps every song it sings -- its score, its tokens
+and its latents, see [Saved songs](#saved-songs) -- and the node finds the song
+by its sound. A FLAC or WAV from `Save Audio` is found again after a restart;
+an MP3 or any other lossy file changes nearly every sample, and the node says
+that this is why it cannot find the song. A song made with `vocals_only` is
+refused: edit the whole song and take the voice afterwards. A recording the
+pack never sang cannot be edited yet.
+
+#### The track window
+
+`Edit track...` opens the song as a track: the waveform, and over it the bars
+and sections of the song's score, laid onto the sound by the separated voice;
+the words beside it, lit up as they are sung; under it the takes of the last
+edit.
+
+![The track window, titled Track -- YuE2 Edit Track, with the line The song as this node hands it on. Nothing is sung until Render, and every take already sung is kept, so undoing an edit or keeping another take costs nothing. On top Play, a greyed-out Play selected, 0:00 / 3:43, a greyed-out Fit and Saved songs..., and a blue Render button on the right. The section strip reads intro, verse, chorus, verse, chorus, bridge, chorus, interlude, verse, chorus, outro over bar numbers from 4 to 91, above the waveform of the whole song and a time ruler from 0:00 to 3:30. Under it Nothing selected, greyed-out Retake and Cut, then Notes..., Go on..., Break... and a greyed-out Undo last edit. On the right a Words panel with the song's Russian lyrics under [Verse], [Chorus], [Verse], [Chorus], [Verse], [Chorus], [Bridge] and [Outro]. At the bottom the lines The track is drawn. Select a stretch and press Retake or Cut. and No edits yet: the node hands the song on as it came in., the help on dragging, Alt, sections, the wheel, Space and Escape, and a Close button](docs/track_editor_window.png)
+
+*A 3:43 song opened for the first time, with nothing selected yet. The names on
+the strip are the sections of the score the model wrote, and they need not match
+the tags of the lyrics beside them: here the score has a bridge where the lyrics
+have their third verse. The window lays the words on the score's sections by the
+same rule the node uses.*
+
+- **Selecting.** A drag selects whole bars and snaps to them, and with Alt
+  held, beats. A click on the section strip selects a section, either end of a
+  selection can be dragged, and `Clear` or Escape drops it. The wheel zooms,
+  Shift with the wheel and the slider scroll, and `Fit` shows the whole song.
+- **Playing.** Space or `Play` plays from the cursor or the selection, and
+  `Play selected` stops at the end of it. Escape stops the sound first, then
+  puts a message away, then clears the selection, and closes the window last.
+- **Singing.** The buttons write an edit onto the node's list and sing
+  nothing. `Render` runs this node alone, so several edits go in one run and a
+  slip of the mouse costs no minute of the card. A blue box over the takes says
+  what the next run will do, with a button that does it: `Sing it`, `Cut it`,
+  `Move it`, `Keep this take`. The node's progress and a Cancel show in the
+  window, and the list stays locked while the node runs.
+- **Takes.** Every take is a whole song. Choosing one changes the waveform, the
+  length and the sound in place, and while the song plays it goes on from the
+  same second, so takes are compared at one point. `As it was` is the song
+  before the edit. `More takes` sings another, and keeping a different take
+  sings nothing, since they are all sung already. The takes live in this
+  session's memory: after a restart only the kept one is sung again, and the
+  rest show `Sing it`, the same seed giving back the same take.
+- **Knobs.** `Seed`, `Variety` and `Guide` set one edit's seed, temperature and
+  text guidance; left alone they are what the song was sung with. `Fade`
+  appears when a cut touches the first or last bar.
+- `Undo last edit` takes the last edit off the list, and `Reset track` on the
+  node clears it. What an edit was made on is still in memory, so neither
+  sings anything.
+
+#### What an edit can do
+
+- **Retake** sings the selected bars again. The model sings on from the bar
+  before, and the join is put where the next three seconds of the old song are
+  likeliest, within two seconds either way; it lands on the bar line by
+  itself. 9 retakes of 9 came back clean over three songs and three seeds.
+  With Qwen3-ASR already on the machine the take that sings the most of the
+  words there is kept, and otherwise the one whose join the model likes best.
+  A take whose join sits well below the song's own at that point is marked
+  "may be heard".
+- **Cut** takes the selected bars out and draws the two sides together; a
+  section cut by more than half leaves the lyrics as well. The seam follows the
+  phrases of the score, so a pickup into the next section stays with it. A cut
+  at either end of the song gets a fade, 0.2 s in and 1.5 s out by default,
+  which moves without singing anything.
+- **New words.** A click on a line in the words panel opens it for typing, and
+  Shift takes a second line of the same section; `Sing these words` writes the
+  edit. The stretch opens on the last word of the line before, which the model
+  sings again and runs on from into the new line. Where the lines fall comes
+  from Qwen3-ForcedAligner, and the take heard singing the most of the new
+  words is kept. A pop line came back whole in both takes, a rap line with 8
+  and 9 words of 10.
+- **Notes...** opens the [score editor](#the-score-editor) on the song. The
+  bars whose notes changed are sung again, and changes far apart become edits
+  of their own; the tempo, the bars, the key and the sections are fixed there.
+  Four bars of new notes were sung 49 times in 50 in a pop song, 61 in 81 in a
+  rap and 17 in 24 in a Russian ballad, and the old score over the same bars
+  sang none of them: the model follows most changed notes, not every one.
+- **Go on...** carries the song on past its last line, with new lines under
+  `After the last line`, or with a new ending alone. The model writes the score
+  of the new part itself, from the song's score up to that point, and ends the
+  song by itself: 45 takes of 45 did. A new four-line bridge was heard at 86 to
+  100 percent of its words. `The last section again` fills in the words of the
+  last section.
+- **Move.** Drag a section along the strip above the track; a yellow line shows
+  where it will go, which is where another section starts, or the end. The
+  pieces are cut where the separated voice is quietest near their bar lines,
+  and the bar before each seam is sung again so that the beat holds: on a real
+  song 2 to 24 ms off at the seams, where the pieces joined as they were left
+  it 76 to 146 ms off, and that was heard.
+- **Break...** puts an instrumental break of 1 to 16 bars, four by default,
+  before a section; the arrows move it by beats, for a phrase that runs across
+  the bar line. The model writes those bars with nothing for the voice, and the
+  take with the least voice in them is kept. Over four songs 7 breaks of 12
+  came out free of the voice, and a rap was sung over every time, so the node
+  says when a voice is left.
+
+A song sung with `cot` at `off` has no score and so no bars. It is selected and
+edited by seconds, and the edits that need a score -- notes, going on, a move
+and a break -- say so.
+
+#### Saved songs
+
+Every song the pack sings is remembered in `ComfyUI/user/yue2_comfy/songs`:
+its score, tokens and latents, about 0.8 MB for four minutes. `Saved songs...`,
+on the node and in the track window, lists them newest first -- the date, the
+style, the first lines, where the song came from, its length and its seed --
+with the edits made of each song folded under it, every one with a strip of
+the song and the edited stretch marked.
+
+![The Saved songs window. Under the title, the line on what is remembered and that opening a song brings its sound back without singing it again, then the search box, Find by style, words, seed, note or where it came from. Keep each song's sound beside it is ticked, with 4 songs, 92 MB of 4.0 GB beside it and a Delete them button. One song, selected and outlined in blue: dated 24 September, 17:58, with the badges on this node now and 3 edits, a pencil and a cross; its style, groovy soulful Jazz-Funk, tight live rhythm section, active electric bass, clean guitar chord stabs, electric piano, tenor saxophone, warm vocal; its first Russian lines; and YuE2 Generate Song, 3:43, seed 46434451238521. Folded under it three edits, each with a strip of the song and its stretch marked in blue: at 18:00 retake bars 1-18, 0:39; at 18:02 that and retake bars 19-26, 0:20; at 18:03 both and new words 1:12-1:19, 0:07, with a text replace badge. At the foot 4 songs remembered, Open this song and Close](docs/saved_songs_window.png)
+
+*One song and the three edits made of it, each a song of its own that can be
+opened and edited further. The sounds kept beside the four take 92 MB;
+`Delete them` deletes those sounds and keeps the songs, since a sound is one
+decode away.*
+
+- A double click, or `Open this song`, puts the song on the node, which then
+  opens it without singing anything: the song is decoded from its latents, 1.1
+  to 1.7 seconds for four minutes. The bars found on a song are kept beside
+  it, so opening it again takes about two seconds instead of ten.
+- `Keep each song's sound beside it` keeps the sound as well, as FLAC -- 53
+  percent of the samples' size, read back in 0.2 s, sample for sample.
+  `Delete them` beside it deletes the kept sounds and leaves the songs.
+- The search finds a song by its style, words, seed or note; the pencil writes
+  a note of up to 80 characters on it, and the bin deletes a song with its
+  edits, or one edit alone.
+- Songs and sounds get 4 GiB each, and the one used longest ago goes first.
+  The folder can be deleted at any time; a song sung again with the same seed
+  is found again.
+
+#### What it runs
+
+- **YuE2 itself**, with the song's own settings and adapters. The acoustic
+  stage redraws a window of about 40 seconds around the edit rather than the
+  whole song, which matches the whole-song result within its own spread.
+- **The voice separator** (0.85 GB, the one `YuE2 Vocals Only` uses) places the
+  bars on the sound the first time a song is opened: the chroma of the mix
+  alone put a rock song's bars 14 seconds off where the model had sung its
+  intro nine bars short, and the voice placed all seven songs tried. Without
+  it the bars come from the chroma alone, and the node says so.
+- **Qwen3-ForcedAligner-0.6B** (1.84 GB) finds where each line is sung. It is
+  downloaded with the first change of words; with it on the machine, the lines
+  light up by their real times.
+- **Qwen3-ASR-1.7B** (3.8 GB) hears the takes. New words and a song that goes
+  on with new lines always use it, and fetch it; a retake or new notes use it
+  only when it is already there.
+
+The listening models are unloaded after the run unless `keep_model_loaded` is
+on, and Unload Models releases them, the takes of the session included.
+
+**Measured** through the node on an RTX 5090, on a four-minute song: a retake of
+a few bars in about 10 seconds, a cut in 7, a move in 19, a new ending in 11,
+against about a hundred seconds to sing the song again. On a three-minute song
+with `offload` at `auto`, `on` and `on` with `low_vram`, a retake reserved
+10.93, 5.15 and 3.09 GiB of the card, where singing the song had reserved
+10.98, 5.46 and 3.48. Outside the edit the audio is the old file's own samples.
+
+Template 11, *Edit a song*, puts the node after a song and saves what it hands
+back. The window is in English only.
+
 ### YuE2 LoRA
 
 LoRA adapters for YuE2, one row each. The node hands them to the nodes that
@@ -904,8 +1147,16 @@ are the ones a small card wants: `offload`, and `low_vram` under it.*
   numbers.
 - `device`, `keep_model_loaded` -- where the model runs and whether it stays
   resident between runs.
-- `attention_backend` -- `sdpa` by default. `cudnn` is about 17 percent faster
-  and **not reproducible**; see below.
+- `attention_backend` -- the attention kernel for writing the score and
+  singing it. `sdpa`, the default, is torch's own; `fast` splits the attention
+  over torch's efficient kernel and needs nothing installed; `flash` uses
+  flash-attn's kernel and needs the `flash-attn` package in the Python ComfyUI
+  runs on, which the pack does not install. Tokens a second of the performance
+  on an RTX 5090: 103, 130 and 152, and in one user's ComfyUI a song took 68
+  seconds on `fast` against 95 on `sdpa`. Each repeats a seed to the bit and
+  each sings a given seed its own way; see
+  [Reproducibility](#reproducibility). A workflow saved with the old `cudnn`
+  runs as `fast`.
 - `download`, `quantization` -- where the weights come from when they are not
   on the machine yet, and which build to fetch. See
   [Where the weights go](#where-the-weights-go).
@@ -951,6 +1202,10 @@ are the ones a small card wants: `offload`, and `low_vram` under it.*
   took 110 seconds instead of 104. Both takes were read back by this pack's own
   speech recognition: the four-minute one sang the lyric through, and 98.6 percent
   of the words heard were words of the lyrics, the same as the BF16 take scored.
+  In `YuE2 Transcribe` and `YuE2 Edit Track` the switch also holds the speech
+  model's 28 text layers in INT8 and runs its convolutions and the word
+  aligner's 40 seconds at a time: on a four-minute song 3.5 GiB instead of 5.5
+  for the speech model and 2.2 instead of 3.5 for the aligner, a fifth slower.
 
 ### Staged nodes
 
@@ -1008,6 +1263,15 @@ The resolved value is logged, so the console says `length ceiling 60 s, from 4
 sung lines` rather than leaving you to guess. The score editor draws the same
 ceiling as a dashed line across its piano roll; see
 [The score editor](#the-score-editor).
+
+The ceiling stops the singing, not the score. The score has a budget of its own,
+4096 tokens -- about five minutes of music -- and is written whole whatever
+`max_seconds` says: one seed wrote the same score to the token at 0, 30 and 240.
+Nor does a long score take seconds from the song. Sung at 30 seconds behind
+scores of 511, 843 and 4096 tokens, every song got its 30 seconds; at the
+360-second maximum there is still room in the model's context for the longest
+score. What a low ceiling costs is the time spent writing bars that will not be
+sung: 8 seconds, on a 124-second score sung for 30.
 
 The ceiling is not a free parameter. It sizes the static KV cache and the
 captured CUDA graph, which changes the order the attention reduction runs in,
@@ -1067,13 +1331,23 @@ first, and that is where it decides which syllable lands on a strong beat.
 ## Reproducibility
 
 The same seed with the same settings gives the same song, byte for byte. This
-holds because the pack pins the decode attention kernel to `sdpa`. The `cudnn`
-kernel is about 17 percent faster and is not reproducible -- over four runs of
-one seed it produced four different songs -- so it is an opt-in in the options
-node, clearly labelled.
+holds because the pack pins the attention kernel of every stage rather than
+letting torch pick one per call.
 
-"The same settings" includes `max_seconds` and the exact text of the lyrics,
-capitalisation included, for the reasons above.
+"The same settings" includes `attention_backend`. `sdpa`, `fast` and `flash`
+each repeat a seed to the bit, within one process and between processes, and
+each sings a given seed its own way, because they add up the same numbers in a
+different order; the words come out as clearly from any of them. The `cudnn`
+choice of earlier versions did not repeat -- its kernel raced, and two to four
+steps in four hundred came out differently -- so it is gone, and a workflow that
+still names it runs as `fast`.
+
+Since 0.9.0 the acoustic stage runs on cuDNN's attention, which repeats to the
+bit and is faster. A seed kept from 0.8 gives the same score and the same
+performance, and a sound 20 to 40 dB below the song apart from the old one.
+
+"The same settings" also includes `max_seconds` and the exact text of the
+lyrics, capitalisation included, for the reasons above.
 
 ## Where the weights go
 
@@ -1154,6 +1428,21 @@ safetensors conversion of it by its tensors -- such as kijai's
 `MelBandRoformer_fp16.safetensors`, which ComfyUI-MelBandRoFormer keeps in
 `models/diffusion_models`. The `.ckpt` is read with torch's `weights_only`, which
 loads tensors and runs no code.
+
+`YuE2 Edit Track` finds the bars with that same separator, and for new words it
+uses the speech model of `YuE2 Transcribe` and a word aligner, fetched with the
+first change of words:
+
+| File | Size | Repository | Licence |
+| --- | --- | --- | --- |
+| `YuE2/Qwen3-ForcedAligner-0.6B/model.safetensors`, `config.json` | 1.84 GB | [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B) | Apache-2.0 |
+
+Qwen ships the aligner without the one-file tokenizer this pack reads, and the
+speech model's `tokenizer.json` is the same tokenizer -- the same entries and
+merges, compared -- so that file is used, or fetched beside the aligner when the
+speech model is not there. A copy of the aligner already on disk is recognised
+by the model type its `config.json` names, since its files are named like the
+speech model's.
 
 `ComfyUI/models/YuE2/` is registered with ComfyUI, so `extra_model_paths.yaml`
 can redirect it like any other model folder, and `checkpoints` is whatever that
@@ -1258,6 +1547,14 @@ applies process-wide and never puts back. This pack sets them for the length of
 one run and restores them afterwards, so nothing else in your graph is quietly
 changed until the next restart.
 
+**Sound that stops on Windows.** ComfyUI sends files through the system's
+`sendfile`, and on the client editions of Windows one request held open by a
+browser's audio player -- which keeps it open while a long file plays -- stalls
+every other file the server sends, the page and the previews included, until it
+lets go. The track window of `YuE2 Edit Track` plays through a route of the
+pack's own and is not affected. For the rest of ComfyUI, start it with the
+environment variable `AIOHTTP_NOSENDFILE=1`.
+
 **Network paths are refused.** A UNC path reaching the pack from a downloaded
 workflow or an API request is not followed: merely looking at one authenticates
 this machine against whatever host it names. Map the share to a drive letter
@@ -1272,9 +1569,10 @@ trusts. Nothing is skipped: the certificate is still verified.
 
 ## Licence
 
-The code here is Apache-2.0, the SheetSage2, Qwen3-ASR and Mel-Band RoFormer
-implementations included. The YuE2 and SheetSage2 weights are CC BY-NC 4.0,
-which is non-commercial, and the vendored upstream inference code keeps its own
-licence. The writer's default language model and the Qwen3-ASR speech model are
-Apache-2.0, the voice separator's weights are MIT, and they belong to neither.
+The code here is Apache-2.0, the SheetSage2, Qwen3-ASR, Qwen3-ForcedAligner
+and Mel-Band RoFormer implementations included. The YuE2 and SheetSage2 weights
+are CC BY-NC 4.0, which is non-commercial, and the vendored upstream inference
+code keeps its own licence. The writer's default language model, the Qwen3-ASR
+speech model and the Qwen3-ForcedAligner word aligner are Apache-2.0, the voice
+separator's weights are MIT, and they belong to neither.
 See [NOTICE.md](NOTICE.md).

@@ -7,6 +7,205 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.9.0 - 2026-09-24
+
+### Added
+
+- **`YuE2 Edit Track`: change part of a finished song and keep the rest of
+  it.** A new node that goes between the song node and `Save Audio`. Its
+  `Edit track...` button opens the song as a track -- the waveform, the bars
+  and sections of its score, and its words beside them -- where a stretch is
+  sung again, cut out, given new words or new notes, or moved, and where the
+  song can go on past its end or take an instrumental break. The node hands
+  back the whole song, and everything outside the edit is the old recording
+  to the sample. Edits stack, each made on the song the one before it left,
+  and `Undo last edit` takes one off without singing anything. Upstream YuE2
+  has no local editing, and neither ComfyUI core nor any other YuE2 pack has
+  it either.
+
+  It edits songs this install has sung, and finds them by their sound: since
+  0.8.0 the pack has kept every song's score, tokens and latents beside it, a
+  change that went unmentioned then. A FLAC or WAV from `Save Audio`, loaded
+  back with `Load Audio`, is found; an MP3 changes nearly every sample, and
+  the node says that this is why the song cannot be found. A recording the
+  pack never sang cannot be edited yet.
+
+  Measured through the node on an RTX 5090, on a four-minute song: a retake
+  of a few bars in about 10 seconds, a cut in 7, a move in 19, a new ending in
+  11 -- against about a hundred seconds to sing it again. An edit peaks no
+  higher on the card than singing the song did, in every `offload` mode.
+- **Seven kinds of edit**, each a button or a gesture in the window:
+  - **Retake** sings the selected bars again, as many takes as `takes` asks
+    for -- two by default, up to four -- each from its own seed. The model
+    sings on from the bar before, and the join is put where the old song's
+    next three seconds are likeliest, within two seconds either way; it lands
+    on the bar line by itself. 9 retakes of 9 came back clean over three songs
+    and three seeds. When Qwen3-ASR is already on the machine, the take that
+    sings the most of the words there is kept, and otherwise the one whose
+    join the model likes best; on a rap verse the words kept a take that sang
+    41 words of 42 where the join would have kept one that sang 37. A
+    take whose join sits well below the song's own at that point is marked
+    "may be heard", and the window offers more takes or a wider selection.
+  - **Cut** takes the selected bars out and draws the two sides together, and
+    a section cut by more than half leaves the lyrics too. The seam follows
+    the phrases of the score, so a pickup into the next section stays with it:
+    cut on the downbeat, as first built, a rap lost the "we rise" that opens
+    its chorus, and a retake after the cut sang 81 percent of the words; with
+    the pickup kept, 85 to 100. A cut at either end of the song gets a fade,
+    0.2 s in and 1.5 s out by default, which moves without singing anything.
+  - **New words.** A click on a line in the words panel opens it for typing,
+    and Shift takes a second line of the same section. The stretch opens on
+    the last word of the line before, which the model sings again and runs
+    on from into the new line. Where the words fall comes from
+    Qwen3-ForcedAligner, and the take heard singing the most of the new words
+    is kept. A pop line came back whole in both takes, a rap line with 8 and 9
+    words of 10: the best of several is what takes are for.
+  - **Notes...** opens the score editor on the song. The bars whose notes
+    changed are sung again, and changes far apart become edits of their own;
+    the tempo, the bars, the key and the sections are fixed there. Four bars
+    of new notes were sung 49 times in 50 in a pop song, 61 in 81 in a rap
+    and 17 in 24 in a Russian ballad, while the old score over the same bars
+    sang none of them: the model follows most changed notes, not every one.
+  - **Go on...** carries the song on past its last line, with new lines or
+    with a new ending alone. The model writes the score of the new part
+    itself, from the song's score up to that point -- the old score alone left
+    silence after the end in 7 takes of 9 -- and ends the song by itself: 45
+    takes of 45 did, at 0.87 to 1.05 of the length they had written. A new
+    four-line bridge was heard at 86 to 100 percent of its words.
+    `The last section again` fills in the last section's words, and the
+    model, writing the notes itself, repeated the chorus's tune to within one
+    to three notes in 5 scores of 6.
+  - **Move.** A section dragged along the strip above the track goes where
+    another section starts, or to the end. The pieces are cut at the same
+    distance from their bar lines, where the separated voice is quietest,
+    because a singer often comes in before the score does; then the bar
+    before each seam is sung again so that the beat holds. On a real song the
+    beat was 2 to 24 ms off at the seams, where the pieces joined as they were
+    left it 76 to 146 ms off, and that was heard.
+  - **Break...** puts an instrumental break of 1 to 16 bars, four by default,
+    before a section. The model writes those bars itself with nothing for the
+    voice, and the take with the least voice in them is kept. Over four songs
+    7 breaks of 12 came out free of the voice, and a rap was sung over in all
+    21 takes, so the node says when a voice is left. Arrows move the break by
+    beats, for a phrase that runs across the bar line. An instrumental LoRA
+    made no difference, 7 of 12 again, and taking
+    the voice out with the separator left artefacts, so neither is used.
+
+  A song sung with `cot` at `off` has no score and so no bars: it is edited by
+  seconds, and the edits that need a score -- notes, going on, a move and a
+  break -- say so.
+- **The track window.** The waveform is drawn under the score's bars and
+  sections, laid onto the sound by the separated voice: the chroma of the mix
+  alone put a rock song's bars 14 seconds off where the model had sung its
+  intro nine bars short, and the voice placed all seven songs tried, bar lines
+  within 18 to 114 ms of the voice's pitch where that could be read. A drag
+  selects whole bars, Alt selects beats, and a click on the section strip
+  selects a section. Space plays from the selection and `Play selected`
+  stops at its end. Takes switch in place while the song plays, at the same
+  second, beside `As it was`, and `More takes` sings another. The words sit
+  beside the track and light up as they are sung, by the aligner's word times
+  when it is on the machine. `Seed`, `Variety` and `Guide` set one edit's
+  seed, temperature and guidance. Nothing is sung by a click: `Render` runs
+  this node alone, and a blue box over the takes says what the next run will
+  do, with a button that does it. The window shows the node's progress and a
+  Cancel, and holds the list of edits still while the node runs.
+
+  The window plays its sounds through a route of the pack's own. On Windows,
+  ComfyUI's file responses let one held audio request stall every other file
+  on the machine, which showed as silence after a take was switched.
+- **Saved songs.** `Saved songs...`, on the node and in the window, lists what
+  this install has sung, newest first: the date, the style, the first lines,
+  where it came from, its length and its seed. The edits made of a song fold
+  under it, each with a strip of the song and the edited stretch marked. A
+  song is found by its style, words, seed or a note of up to 80 characters
+  written on it; a double click opens it, and the bin deletes a song with its
+  edits, or one edit alone. Opening one sings nothing: the song is decoded
+  from its latents, 1.1 to 1.7 seconds for four minutes, and the bars measured
+  on it are kept beside it, so opening it again takes about two seconds
+  instead of ten. With `Keep each song's sound beside it` on, the sound is
+  kept too, as FLAC -- 53 percent of the samples' size, read back in 0.2 s,
+  sample for sample. Songs and sounds get 4 GiB each in
+  `ComfyUI/user/yue2_comfy/songs`, and the one used longest ago goes first.
+  The folder can be deleted; a song sung again with the same seed is found
+  again.
+- **A switch on the `audio` input.** The square beside it on the node turns
+  the input off: the song chosen in `Saved songs...` is edited instead, and
+  the node wired in is not run for it. On a live ComfyUI, with the switch off
+  nothing above ran at all -- so a workflow opened after a restart does not
+  sing its song again to edit one bar of it.
+- **Template 11, *Edit a song***: a song, the edit node after it, and the file
+  it saves.
+- **The score editor moves both parts at once.** `Voice | Instrument | Both`
+  replaces the part list. In `Both` a box, a click, the arrows and Delete take
+  the notes of both parts and the chords together. `-oct -1 +1 +oct` move what
+  is selected, as the arrow keys do, and the status line warns when the middle
+  of the voice line leaves C4 to A#5, where YuE2's own scores keep it. A moved
+  stretch is sung at its new pitch without touching `K:`: the first chorus of
+  a pop song and of a Russian ballad, moved down a tone, came back a tone
+  down, the verse before it stayed where it was, and the words held.
+- **A right-click in the song editor.** The browser's own menu -- copy, paste,
+  select all -- in its text fields and on selected lyrics; on a line or a tag
+  with nothing selected the right button still opens the editor's menu.
+  Lyric rows copied from the window are the lyrics as the model reads them,
+  with a section's tag when its chip is selected. They used to carry the row
+  buttons and the token count of every line, which is how a lyric sent in to
+  us came to have "26 tok" in it.
+
+### Changed
+
+- **The acoustic stage runs on cuDNN's attention**, which takes YuE2's grouped
+  heads as they are instead of copying them out. On an RTX 5090 the stage went
+  from 5.7 to 4.1 s for a 100-second song and from 21.2 to 12.9 s for a
+  four-minute one, and a retake from 11.1 to 8.7 s. It repeats to the bit.
+  The score and the performance are the ones 0.8.4 wrote; the sound of a seed
+  differs from 0.8.4's by 20 to 40 dB below the song, the distance there is
+  between any two attention kernels. A shape cuDNN refuses goes the old way.
+- **`attention_backend` offers `sdpa`, `fast` and `flash`.** `fast` is the
+  pack's own split attention on torch's efficient kernel and needs no package;
+  `flash` is flash-attn's KV-cache kernel and needs flash-attn installed, which
+  the pack does not do for you. Tokens a second of the performance on an RTX
+  5090: `sdpa` 103, `fast` 130, `flash` 152; in the ComfyUI of a user, `fast`
+  114.5 against 75.1, and a song in 68 seconds instead of 95. Each repeats a
+  seed to the bit, within a process and between processes, and each sings a
+  given seed its own way. `sdpa` stays the default and writes the same scores
+  and performances as before. `cudnn` is gone: its token loop raced -- two to
+  four steps in four hundred came out differently -- so no seed ever came
+  back. A workflow saved with it runs as `fast`, and a song sung with it is
+  edited with `fast`. Sage attention was measured and left out: SageAttention
+  2 multiplies in INT8 and FP8, fifteen times further from float32 than the
+  kernels here, and SageAttention 3 faulted the GPU on every call on the
+  machine it was tried on.
+- **Speech recognition takes less memory, and `low_vram` now reaches it.**
+  Attention runs 512 queries at a time: on a four-minute song the speech model
+  peaks at 5.5 GiB instead of 5.96 and the word aligner at 3.5 instead of 3.9,
+  and 11 recordings of 12 gave the same words -- the twelfth parted at a near
+  tie. With `low_vram` the speech model's 28 text layers are held in INT8 and
+  both models' convolutions run 40 seconds at a time: 3.5 and 2.2 GiB, a fifth
+  slower. `YuE2 Transcribe` and `YuE2 Edit Track` both follow it.
+- **The pack asks its own questions.** Deleting, resetting and throwing edits
+  away asked through the browser's `confirm`, whose "don't ask again" box turns
+  every later question into a silent no. All twelve questions and both alerts
+  now come up in the pack's own window, where Escape, a click outside and
+  Cancel mean no and only the button means yes.
+
+### Fixed
+
+- **The score editor opens a score the model did not finish.** A score that
+  runs out of tokens stops in the middle of a line, and the whole of it was
+  refused -- "music line must end with a plain barline" -- leaving the roll
+  empty; a user sent in a 173-bar score that did this. It now opens up to its
+  last whole group of bars and says the end was cut, and an edit is written
+  without the unfinished tail.
+- **The arrow keys stay in the score editor.** A click on an empty part of
+  the window gave the focus to the page, and the arrows went to whatever else
+  listened: with ComfyUI-Easy-Use installed they jumped between nodes and
+  moved the canvas instead of the notes.
+- **The pack's own files live in ComfyUI's user folder, as the README says,
+  since 0.8.0** -- a fix that was not written down then. Before it the
+  llama.cpp runtime, `llama_bin.txt` and the fallback vocabulary were written
+  inside the pack's folder, which ComfyUI Manager replaces on update. Anything
+  0.7 left there can be deleted.
+
 ## 0.8.4 - 2026-09-21
 
 ### Added

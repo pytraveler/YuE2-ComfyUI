@@ -266,6 +266,39 @@ def test_lines_stanzas_and_sections_move_and_multiply():
 
 
 @needs_node
+def test_a_copy_from_the_section_view_is_lyrics_the_model_reads():
+    """Copying rows of the lyrics editor gives its words, never the badges and buttons drawn between them.
+
+    The letters picked in each row become the line, a stanza break picked whole
+    stays a break, and a header comes along only when its chip was picked, so
+    a copy over two sections pastes back as two sections.
+    """
+    lyrics = "[Verse]\nfirst line\nsecond line\n\nthird line\n\n[Chorus]\nla \U0001f3b5 la"
+    got = run_sheet("""
+        const base = s.parseLyrics({lyrics});
+        const all = base.map((block) => ({{header: true,
+            lines: Object.fromEntries(block.lines.map((line, l) => [l, [0, Infinity]]))}}));
+        console.log(JSON.stringify([
+            s.excerpt(base, all) === s.formatLyrics(base),
+            s.excerpt(base, [{{header: false, lines: {{0: [6, 10], 1: [0, 3]}}}}]),
+            s.excerpt(base, [{{header: false, lines: {{2: [0, Infinity], 3: [0, Infinity]}}}},
+                             {{header: true, lines: {{0: [0, 4]}}}}]),
+            s.excerpt(base, [{{header: false, lines: {{1: [0, Infinity], 2: [0, Infinity], 3: [0, 5]}}}}]),
+            s.excerpt(base, [{{header: false, lines: {{2: [0, Infinity]}}}}]),
+            s.excerpt(base, [null, {{header: true, lines: {{}}}}]),
+        ]));
+    """.format(lyrics=json.dumps(lyrics)))
+    assert got == [
+        True,
+        "line\nsec",
+        "third line\n\n[Chorus]\nla \U0001f3b5",
+        "second line\n\nthird",
+        "",
+        "[Chorus]",
+    ]
+
+
+@needs_node
 def test_one_click_steps_through_the_common_tags():
     got = run_sheet('console.log(JSON.stringify(["Verse", "Pre-Chorus", "Chorus", "Bridge", '
                     '"Outro", "Intro", "Hook", "Rap"].map(s.cycleTag)));')
@@ -749,6 +782,114 @@ def test_notes_cannot_overlap_leave_the_song_or_move_apart():
     assert got[4] == [[0, 65], [16, 69], [96, 69], [112, 73], [128, 72]]
     assert got[5] == [[0, 24], [24, 8]] and got[6] == 8
     assert got[7] == 0 and got[8] == 2 and got[9] == 69
+
+
+def plainest_roots(mode: str) -> list:
+    """Each pitch class named as the key with the fewest accidentals, a tie going to the sharps.
+
+    The rule transpose.py picks a moved key by, over upstream's own key table.
+    """
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    names = []
+    for pitch_class in range(12):
+        found = []
+        for name, accidentals in abc_tools.KEYS.items():
+            root, minor = name[:-1] if name.endswith("m") else name, name.endswith("m")
+            shift = {"": 0, "#": 1, "b": -1}[root[1:]]
+            if minor == (mode == "minor") and (abc_tools.NATURAL[root[0]] + shift) % 12 == pitch_class:
+                found.append((abs(accidentals), -accidentals, root))
+        names.append(min(found)[2])
+    return names
+
+
+@needs_node
+def test_a_moved_chord_is_named_by_the_plainest_key_of_its_new_root():
+    """Named from the new root alone, so two steps down spell what one move of two does."""
+    got = run_roll("""console.log(JSON.stringify({
+        major: r.MAJOR_ROOTS, minor: r.MINOR_ROOTS,
+        some: [["Am", -2], ["C/E", -2], ["F#m7b5", 1], ["Bbmaj7", 12], ["Ebm", 0], ["G#dim", 2],
+               ["Dbaug", 1], ["C7sus4", -1], ["Cm(maj7)", 3], [" D ", 1], ["x", 1], ["C", 0.5]]
+            .map(([name, step]) => r.movedChord(name, step)),
+        twice: r.movedChord(r.movedChord("C", -1), -1) === r.movedChord("C", -2),
+        all: r.QUALITIES.flatMap((q) => ["C", "F#", "Bb"].flatMap((root) =>
+            Array.from({length: 25}, (_, i) => r.movedChord(root + q + "/E", i - 12))))
+            .every((name) => r.isChord(name)),
+    }));""")
+    assert got["major"] == plainest_roots("major")
+    assert got["minor"] == plainest_roots("minor")
+    assert got["some"] == ["Gm", "Bb/D", "Gm7b5", "Bbmaj7", "Ebm", "Bbdim", "Daug", "B7sus4",
+                           "D#m(maj7)", "Eb", None, None]
+    assert got["twice"] is True and got["all"] is True
+
+
+@needs_node
+def test_the_roll_warns_about_the_voice_where_the_midi_import_would_move_it():
+    """One window for both: the middle of the voice line, as Load MIDI judges it."""
+    from yue2_comfy.midi import score
+    sheet = roll_sheet()
+    got = run_roll("""
+        const m = r.modelOf({sheet});
+        const high = r.moveNotes(m, "Vocal", m.notes.Vocal.map((n) => n.id), 0, 12, {total});
+        console.log(JSON.stringify([r.VOICE_WINDOW, r.voiceMiddle(m), r.voiceMiddle(high),
+                                    r.voiceMiddle({{notes: {{Vocal: []}}}})]));
+    """.format(sheet=json.dumps(sheet), total=sheet["total"]))
+    assert got[0] == list(score.VOICE_WINDOW)
+    pitches = sorted(n["pitch"] for n in sheet["notes"]["Vocal"])
+    assert got[1] == (pitches[(len(pitches) - 1) // 2] + pitches[len(pitches) // 2]) / 2 == 70
+    assert got[2] == 82 and got[3] is None
+
+
+@needs_node
+def test_both_parts_and_the_chords_above_them_move_as_one():
+    """What 'Both' does: notes of either part and the picked chords, all or nothing.
+
+    A box takes a chord the way it takes a note: by the stretch it lasts, here up
+    to the next chord, so a box begun just after a barline still takes that bar's.
+    """
+    from yue2_comfy import notation
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        const total = sheet.total;
+        const [, , bb, d] = m.notes.Vocal;
+        const f = m.notes.Ins[0];
+        const spans = (model) => [model.notes.Vocal.map((n) => [n.start, n.pitch]),
+                                  model.notes.Ins.map((n) => [n.start, n.pitch]),
+                                  model.chords.map((c) => [c.start, c.name])];
+        const moved = r.moveTogether(m, [bb.id, d.id, f.id], [32], 32, -2, total);
+        console.log(JSON.stringify({{
+            moved: spans(moved),
+            sheet: r.sheetOf(moved),
+            onto: r.moveTogether(m, [bb.id, d.id], [], 96, 0, total),
+            chordOnto: r.moveTogether(m, [], [0], 32, 0, total),
+            chordsInRow: spans(r.moveTogether(m, [], [0, 32], 32, 0, total))[2],
+            pastTheEnd: r.moveTogether(m, [], [128], 64, 0, total),
+            still: r.moveTogether(m, [bb.id], [32], 0, 0, total) === m,
+            chordOnly: spans(r.moveTogether(m, [], [128], 0, 5, total)),
+            parts: [r.partOf(m, bb.id), r.partOf(m, f.id), r.partOf(m, 999)],
+            boxed: [r.chordsIn(m, 0, 64), r.chordsIn(m, 64, 0), r.chordsIn(m, 1, 32), r.chordsIn(m, 100, 110),
+                    r.chordsIn(m, 130, 140)],
+            dropped: spans(r.deleteTogether(m, [bb.id, f.id], [0])),
+        }}));
+    """.format(sheet=json.dumps(sheet)))
+    vocal, ins, chords = got["moved"]
+    assert vocal == [[0, 65], [16, 69], [64, 68], [80, 72], [128, 72]]
+    assert ins == [[80, 75]] and chords == [[0, "F"], [64, "Ab"], [128, "C"]]
+    assert got["onto"] is None and got["chordOnto"] is None and got["pastTheEnd"] is None
+    assert got["chordsInRow"] == [[32, "F"], [64, "Bb"], [128, "C"]]
+    assert got["still"] is True
+    assert got["chordOnly"][0][4] == [128, 72] and got["chordOnly"][2][2] == [128, "F"]
+    assert got["parts"] == ["Vocal", "Ins", None]
+    assert got["boxed"] == [[0, 32], [0, 32], [0], [32], [128]]
+    assert got["dropped"][0] == [[0, 65], [16, 69], [48, 74], [128, 72]]
+    assert got["dropped"][1] == [] and got["dropped"][2] == [[32, "Bb"], [128, "C"]]
+    written = notation.write(ROLL_SCORE, got["sheet"])
+    assert written["bars"] == [1, 2]
+    back = notation.read(written["abc"])
+    assert [(n["start"], n["pitch"]) for n in back["notes"]["Vocal"]] == [tuple(n) for n in vocal]
+    assert [(n["start"], n["pitch"]) for n in back["notes"]["Ins"]] == [tuple(n) for n in ins]
+    assert [(c["start"], c["name"]) for c in back["chords"]] == [tuple(c) for c in chords]
 
 
 @needs_node

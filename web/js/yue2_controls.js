@@ -143,6 +143,7 @@ const WINDOW_STYLE = `
     border: 1px solid var(--border-color, #4e4e4e); border-radius: 10px;
     padding: 16px 20px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
     box-sizing: border-box; }
+.yue2-panel:focus { outline: none; }
 `;
 
 const ASKED_STYLE_ID = "yue2-asked-style";
@@ -201,12 +202,36 @@ export function warned(text, { title = "", ok = "OK" } = {}) {
     });
 }
 
+const TEXT_TYPES = new Set(["text", "search", "number", "url", "email", "tel"]);
+
+export function textMenu(event) {
+    const target = event.target;
+    if (target instanceof HTMLTextAreaElement) return true;
+    if (target instanceof HTMLInputElement) return TEXT_TYPES.has(target.type);
+    if (target?.isContentEditable) return true;
+    if (target?.closest?.("button")) return false;
+    const picked = window.getSelection();
+    if (!picked || picked.isCollapsed) return false;
+    for (let at = 0; at < picked.rangeCount; at += 1) {
+        for (const box of picked.getRangeAt(at).getClientRects()) {
+            if (event.clientX >= box.left && event.clientX <= box.right
+                && event.clientY >= box.top && event.clientY <= box.bottom) return true;
+        }
+    }
+    return false;
+}
+
 const OPEN = [];
+
+export function onTop(handle) {
+    return OPEN[OPEN.length - 1] === handle;
+}
 
 export function frame({ onClose, sticky } = {}) {
     installStyle(WINDOW_STYLE_ID, WINDOW_STYLE);
     const back = element("div", "yue2-back");
     const panel = element("div", "yue2-panel");
+    panel.tabIndex = -1;
     back.appendChild(panel);
     const me = { close };
     OPEN.push(me);

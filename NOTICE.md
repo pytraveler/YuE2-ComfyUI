@@ -134,6 +134,13 @@ with Qwen3-ASR-1.7B from
 it downloads on first use and does not redistribute. The pack runs it with its
 own code rather than with Qwen's package or transformers.
 
+`YuE2 Edit Track` uses the same model to hear the takes it sings, and finds
+where each line of a song is sung with Qwen3-ForcedAligner-0.6B from
+[Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B),
+also Apache-2.0, downloaded on first use and not redistributed. It runs on the
+same code of the pack's own, `yue2_comfy/asr/aligner.py`, and reads words with
+the speech model's tokenizer, which is the same one.
+
 ## The voice separator
 
 **MIT.**

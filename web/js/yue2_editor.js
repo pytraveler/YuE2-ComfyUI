@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import {
     ask, buttonRow, confirmed, element, frame, installStyle, panelWidget,
-    setWidgetValue, showWidget, sourceOf, warned, widgetNamed,
+    setWidgetValue, showWidget, sourceOf, textMenu, warned, widgetNamed,
 } from "./yue2_controls.js";
 import { editValue, splitMark } from "./yue2_roll.js";
 import { EXAMPLES, GENRES } from "./yue2_styles.js";
@@ -206,9 +206,11 @@ const EDITOR_STYLE = `
 .yue2-block-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .yue2-tag { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px;
     font-weight: 600; padding: 2px 9px; border-radius: 999px; cursor: pointer;
-    user-select: none; color: #fff; background: var(--yue2-tag, #999); }
+    user-select: text; color: #fff; background: var(--yue2-tag, #999); }
 .yue2-tag.yue2-none { background: transparent; color: var(--descrip-text, #999);
-    border: 1px dashed var(--border-color, #4e4e4e); font-weight: 400; }
+    border: 1px dashed var(--border-color, #4e4e4e); font-weight: 400; user-select: none; }
+.yue2-block-head, .yue2-row .yue2-acts, .yue2-count, .yue2-gap-label, .yue2-block-foot {
+    user-select: none; }
 .yue2-tag:hover { filter: brightness(1.15); }
 .yue2-block-count { font-size: 11px; color: var(--descrip-text, #999); }
 .yue2-block-head .yue2-grow { flex: 1 1 auto; }
@@ -420,7 +422,10 @@ class SongEditor {
         foot.append(this.problem, cancel, apply);
         panel.appendChild(foot);
 
-        panel.addEventListener("contextmenu", (event) => event.preventDefault());
+        panel.addEventListener("contextmenu", (event) => {
+            if (!textMenu(event)) event.preventDefault();
+        });
+        panel.addEventListener("copy", (event) => this.copyLyrics(event));
 
         this.renderStyle();
         this.renderLyrics();
@@ -868,6 +873,7 @@ class SongEditor {
             this.lyricsChanged(sheet.setTag(this.blocks, b, sheet.cycleTag(block.tag)));
         });
         chip.addEventListener("contextmenu", (event) => {
+            if (textMenu(event)) return;
             event.preventDefault();
             event.stopPropagation();
             this.tagMenu(event.clientX, event.clientY, b);
@@ -901,6 +907,7 @@ class SongEditor {
     lineView(line, b, l, start, keep) {
         const row = element("div", "yue2-row");
         row.addEventListener("contextmenu", (event) => {
+            if (textMenu(event)) return;
             event.preventDefault();
             event.stopPropagation();
             this.lineMenu(event.clientX, event.clientY, b, l);
@@ -1085,6 +1092,30 @@ class SongEditor {
         }
         this.asText = true;
         this.renderLyrics();
+    }
+
+    copyLyrics(event) {
+        const picked = window.getSelection();
+        if (this.asText || !picked || picked.isCollapsed || !picked.rangeCount) return;
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+        const range = picked.getRangeAt(0);
+        if (!this.lyricsCard.contains(range.commonAncestorContainer)) return;
+        const whole = (node) => Boolean(node) && range.comparePoint(node, 0) === 0
+            && range.comparePoint(node, node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length) === 0;
+        const picks = [...this.lyricsCard.querySelectorAll(".yue2-block")].map((view) => {
+            const lines = {};
+            view.querySelectorAll(".yue2-row").forEach((row, l) => {
+                const letters = [...row.querySelectorAll(".yue2-ch")].map((span) => whole(span.firstChild));
+                const first = letters.indexOf(true);
+                if (first >= 0) lines[l] = [first, letters.lastIndexOf(true) + 1];
+                else if (!letters.length && whole(row)) lines[l] = [0, Infinity];
+            });
+            return { header: whole(view.querySelector(".yue2-tag")?.firstChild), lines };
+        });
+        const text = sheet.excerpt(this.blocks, picks);
+        if (!text) return;
+        event.clipboardData.setData("text/plain", text);
+        event.preventDefault();
     }
 
     tagMenu(x, y, b) {

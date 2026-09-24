@@ -551,7 +551,7 @@ def test_the_read_route_draws_a_score_or_says_why_not():
     assert status == 200 and payload["ok"] is False and "cannot be read" in payload["error"]
     payload, status = routes.answer_score_read({"abc": AWKWARD})
     assert status == 200 and payload["ok"] is True
-    assert payload["sheet"] == notation.read(AWKWARD)
+    assert payload["sheet"] == dict(notation.read(AWKWARD), cut=False)
 
 
 def test_the_write_route_hands_back_the_text_and_the_score_it_now_reads_as():
@@ -563,6 +563,38 @@ def test_the_write_route_hands_back_the_text_and_the_score_it_now_reads_as():
     payload, status = routes.answer_score_write(
         {"abc": AWKWARD, "sheet": dict(sheet, chords=[{"start": 0, "name": "H7"}])})
     assert status == 200 and payload["ok"] is False and "not a chord symbol" in payload["error"]
+
+
+CUT = AWKWARD + '% chorus\nV: Vocal\n"D"d8f8a16|\nV: Ins\nd8f8a8b'
+"""AWKWARD and the start of one more group, stopped inside a line: a score whose writing ran out of tokens."""
+
+
+def test_a_score_cut_off_mid_line_is_drawn_up_to_its_last_whole_group():
+    """Upstream's reader refuses all of it; the editor's routes work on the groups before the cut."""
+    with pytest.raises(ValueError, match="plain barline"):
+        notation.read(CUT)
+    assert notation.whole_groups(CUT) == AWKWARD.strip()
+    assert notation.whole_groups(AWKWARD + '% chorus\nV: Vocal\n"D"d8f8') == AWKWARD.strip()
+    assert notation.whole_groups(AWKWARD) is None and notation.whole_groups("junk") is None
+    assert notation.editable(AWKWARD) == (AWKWARD, False) and notation.editable(CUT) == (AWKWARD.strip(), True)
+    payload, status = routes.answer_score_read({"abc": CUT})
+    assert status == 200 and payload["sheet"] == dict(notation.read(AWKWARD), cut=True)
+
+
+def test_an_edit_of_a_cut_score_leaves_the_unfinished_end_out_and_no_edit_leaves_it_all():
+    sheet = notation.read(AWKWARD)
+    payload, _status = routes.answer_score_write({"abc": CUT, "sheet": sheet})
+    assert (payload["ok"], payload["abc"], payload["bars"], payload["sheet"]["cut"]) == (True, CUT, [], True)
+    edited = copy.deepcopy(sheet)
+    edited["notes"]["Vocal"][0]["pitch"] += 1
+    payload, _status = routes.answer_score_write({"abc": CUT, "sheet": edited})
+    assert payload["ok"] and payload["bars"][0] == 0 and payload["sheet"]["cut"] is False
+    assert "d8f8a8b" not in payload["abc"] and len(notation.read(payload["abc"])["bars"]) == len(sheet["bars"])
+    assert notation.read(payload["abc"])["notes"]["Vocal"] == edited["notes"]["Vocal"]
+    payload, _status = routes.answer_score_length({"abc": CUT, "bars": len(sheet["bars"]) + 2})
+    assert payload["ok"] and len(notation.read(payload["abc"])["bars"]) == len(sheet["bars"]) + 2
+    payload, _status = routes.answer_score_midi({"abc": CUT})
+    assert payload["ok"] is True
 
 
 def test_a_failure_nobody_foresaw_reaches_the_window_as_a_sentence(monkeypatch):

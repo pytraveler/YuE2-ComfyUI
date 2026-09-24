@@ -35,6 +35,8 @@ export const HIGHEST = 108;
 
 const SHARP_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const FLAT_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+export const MAJOR_ROOTS = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+export const MINOR_ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "Bb", "B"];
 const NATURAL = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const SHIFT = { "": 0, "#": 1, "##": 2, "b": -1, "bb": -2 };
 const PITCH_NAME = "([A-G])(bb|##|b|#)?";
@@ -53,6 +55,17 @@ export function chordPitches(name) {
     const tones = CHORD_TONES[match[3]].map((step) => root + step);
     if (match[4]) tones.unshift(36 + ((NATURAL[match[4]] + SHIFT[match[5] || ""] + 12) % 12));
     return tones;
+}
+
+export function movedChord(name, semitones) {
+    const match = CHORD_RE.exec(String(name ?? "").trim());
+    if (!match || !Number.isInteger(semitones)) return null;
+    if (semitones % 12 === 0) return match[0];
+    const quality = match[3];
+    const minor = (quality.startsWith("m") && !quality.startsWith("maj")) || quality.startsWith("dim");
+    const spell = (letter, shift, names) => names[(((NATURAL[letter] + SHIFT[shift || ""] + semitones) % 12) + 12) % 12];
+    const root = spell(match[1], match[2], minor ? MINOR_ROOTS : MAJOR_ROOTS);
+    return root + quality + (match[4] ? "/" + spell(match[4], match[5], MAJOR_ROOTS) : "");
 }
 
 const GUESSED = { 3: "m", 4: "", 6: "dim", 7: "", 10: "7", 11: "maj7" };
@@ -353,6 +366,49 @@ export function notesIn(model, part, fromTick, toTick, lowPitch, highPitch) {
         .map((n) => n.id);
 }
 
+export function chordsIn(model, fromTick, toTick) {
+    const [t0, t1] = [Math.min(fromTick, toTick), Math.max(fromTick, toTick)];
+    const starts = model.chords.map((c) => c.start).sort((a, b) => a - b);
+    return starts.filter((start, index) => start < t1 && (index + 1 < starts.length ? starts[index + 1] : Infinity) > t0);
+}
+
+export function partOf(model, id) {
+    return PARTS.find((part) => model.notes[part].some((n) => n.id === id)) || null;
+}
+
+export function moveTogether(model, ids, starts, ticks, semitones, total) {
+    if (!ticks && !semitones) return model;
+    const moving = new Set(ids);
+    let changed = model;
+    for (const part of PARTS) {
+        const mine = model.notes[part].filter((n) => moving.has(n.id)).map((n) => n.id);
+        if (!mine.length) continue;
+        changed = moveNotes(changed, part, mine, ticks, semitones, total);
+        if (!changed) return null;
+    }
+    const chosen = new Set(starts);
+    const kept = model.chords.filter((c) => !chosen.has(c.start));
+    if (kept.length === model.chords.length) return changed;
+    const taken = new Set(kept.map((c) => c.start));
+    const moved = [];
+    for (const chord of model.chords) {
+        if (!chosen.has(chord.start)) continue;
+        const start = chord.start + ticks;
+        const name = movedChord(chord.name, semitones);
+        if (!name || !Number.isInteger(start) || start < 0 || start >= total || taken.has(start)) return null;
+        moved.push({ start, name });
+    }
+    return { ...changed, chords: [...kept, ...moved].sort((a, b) => a.start - b.start) };
+}
+
+export function deleteTogether(model, ids, starts) {
+    const gone = new Set(ids);
+    const dropped = new Set(starts);
+    const notes = {};
+    for (const part of PARTS) notes[part] = model.notes[part].filter((n) => !gone.has(n.id));
+    return { ...model, notes, chords: model.chords.filter((c) => !dropped.has(c.start)) };
+}
+
 export function setChord(model, start, name) {
     const clean = String(name ?? "").trim();
     if (!isChord(clean)) return null;
@@ -390,6 +446,14 @@ export function changedBars(sheet, model) {
         }
     });
     return changed;
+}
+
+export const VOICE_WINDOW = [60, 82];
+
+export function voiceMiddle(model) {
+    const pitches = model.notes.Vocal.map((n) => n.pitch).sort((a, b) => a - b);
+    if (!pitches.length) return null;
+    return (pitches[Math.floor((pitches.length - 1) / 2)] + pitches[Math.floor(pitches.length / 2)]) / 2;
 }
 
 export function pitchSpan(model) {

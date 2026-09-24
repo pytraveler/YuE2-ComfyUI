@@ -1378,6 +1378,47 @@ def _written_blocks(bodies: list) -> list:
     return found
 
 
+def whole_groups(text: str):
+    """*text* up to its last whole group, when the rest of it cannot be read; None otherwise.
+
+    A score whose writing ran out of tokens stops inside a line, and upstream's
+    reader refuses all of it: "music line must end with a plain barline". A
+    user's friend met one on 2026-09-24, the model looping an interlude with
+    the voice silent until the budget ended, and the score editor drew nothing.
+    The groups before the cut are whole, so those are what the editor shows.
+    ``read`` itself stays strict: Edit Track checks its results with it.
+    """
+    try:
+        _parsed(text)
+        return None
+    except ValueError:
+        pass
+    lines = (text or "").strip().splitlines()
+    blocks = _written_blocks([line.rstrip() for line in lines])
+    if not blocks:
+        return None
+    used = HEADER_LINES + sum(len(block["names"]) + sum(len(voice["head"]) + 1 for voice in block["voices"].values())
+                              for block in blocks)
+    if used >= len(lines):
+        return None
+    kept = "\n".join(lines[:used])
+    try:
+        _parsed(kept)
+    except ValueError:
+        return None
+    return kept
+
+
+def editable(text: str) -> tuple:
+    """``(text, cut)``: the score the editor works on, and whether it is *text* with an unfinished end left out.
+
+    A score that reads is handed back as it came, and so is one with no whole
+    groups to fall back on, whose refusal the reader then gives.
+    """
+    kept = whole_groups(text)
+    return (text, False) if kept is None else (kept, True)
+
+
 def _cut_at(blocks: list, bars: list) -> list:
     """``(start, block)`` for the groups of *blocks*, cut so that each of *bars* starts one."""
     starts = []

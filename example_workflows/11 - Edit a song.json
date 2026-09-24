@@ -1,0 +1,339 @@
+{
+  "id": "3454bf6c-bf59-4219-8a09-a441d33ee62a",
+  "revision": 0,
+  "last_node_id": 4,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        640
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 11 - Edit a song\n\nA song, and then part of it changed while the rest stays as it was: a\nstretch sung again, cut out, given new words or new notes, moved, carried\non past its end, or given an instrumental break.\n\n## What it needs\n\nThe YuE2-3B weights, 7.26 GB, fetched on the first run. The first time a\nsong opens as a track, the 0.85 GB voice separator is fetched to find its\nbars. The first change of words fetches the 1.84 GB word aligner and the\n3.8 GB Qwen3-ASR speech model.\n\n## How to use it\n\n1. Run once. The song is sung and saved as in template 2; the edit node,\n   with nothing on its list yet, hands it on as it is.\n2. Press **Edit track...** on the edit node. The song opens as a track:\n   its waveform, bars, sections and words.\n3. Drag across the bars to change and press **Retake** to sing them again\n   or **Cut** to take them out. Click a line of the words to give it new\n   words, drag a section along the strip at the top to move it, or use\n   **Notes...**, **Go on...** and **Break...**.\n4. Press **Render**, or the button in the blue box. Only the edit node\n   runs; the song above is not sung again.\n5. Listen to the takes -- they switch while the song plays -- and keep the\n   one you like. **As it was** is the song before the edit. `takes` on the\n   node says how many an edit sings.\n\nEverything outside an edit is the old recording to the sample, and edits\nstack: each is made on the song the one before it left.\n\n## After a restart\n\nThe pack remembers every song it sings. Switch off the square beside the\nedit node's `audio` input and choose the song with **Saved songs...**: the\nnode opens it from memory, and the song node is not run at all.\n\n## Where to go next\n\n- **2 - A song from style and lyrics** -- the song node on its own.\n- **4 - The score first** -- change the notes before anything is sung.\n"
+      ],
+      "widgets_values_named": {
+        "text": "# 11 - Edit a song\n\nA song, and then part of it changed while the rest stays as it was: a\nstretch sung again, cut out, given new words or new notes, moved, carried\non past its end, or given an instrumental break.\n\n## What it needs\n\nThe YuE2-3B weights, 7.26 GB, fetched on the first run. The first time a\nsong opens as a track, the 0.85 GB voice separator is fetched to find its\nbars. The first change of words fetches the 1.84 GB word aligner and the\n3.8 GB Qwen3-ASR speech model.\n\n## How to use it\n\n1. Run once. The song is sung and saved as in template 2; the edit node,\n   with nothing on its list yet, hands it on as it is.\n2. Press **Edit track...** on the edit node. The song opens as a track:\n   its waveform, bars, sections and words.\n3. Drag across the bars to change and press **Retake** to sing them again\n   or **Cut** to take them out. Click a line of the words to give it new\n   words, drag a section along the strip at the top to move it, or use\n   **Notes...**, **Go on...** and **Break...**.\n4. Press **Render**, or the button in the blue box. Only the edit node\n   runs; the song above is not sung again.\n5. Listen to the takes -- they switch while the song plays -- and keep the\n   one you like. **As it was** is the song before the edit. `takes` on the\n   node says how many an edit sings.\n\nEverything outside an edit is the old recording to the sample, and edits\nstack: each is made on the song the one before it left.\n\n## After a restart\n\nThe pack remembers every song it sings. Switch off the square beside the\nedit node's `audio` input and choose the song with **Saved songs...**: the\nnode opens it from memory, and the song node is not run at all.\n\n## Where to go next\n\n- **2 - A song from style and lyrics** -- the song node on its own.\n- **4 - The score first** -- change the notes before anything is sung.\n"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 2,
+      "type": "YuE2GenerateSong",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        430,
+        640
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "lora",
+          "name": "lora",
+          "shape": 7,
+          "type": "YUE2_LORA",
+          "link": null
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "style"
+          }
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "lyrics"
+          }
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "shape": 7,
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "score_abc"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            1
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Write the song",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "abae175cff037a1b43052675e75cddcae172b957",
+        "Node name for S&R": "YuE2GenerateSong"
+      },
+      "widgets_values": [
+        "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        831001,
+        "fixed",
+        ""
+      ],
+      "widgets_values_named": {
+        "style": "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, unhurried phrasing, 88 BPM",
+        "lyrics": "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\n\n[Chorus]\nLet the day come into view\nEvery road begins with you",
+        "seed": 831001,
+        "control_after_generate": "fixed",
+        "score_abc": ""
+      }
+    },
+    {
+      "id": 3,
+      "type": "YuE2EditTrack",
+      "pos": [
+        490,
+        0
+      ],
+      "size": [
+        440,
+        200
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 1
+        },
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": null
+        },
+        {
+          "localized_name": "takes",
+          "name": "takes",
+          "type": "INT",
+          "widget": {
+            "name": "takes"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "edits",
+          "name": "edits",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "edits"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "song_key",
+          "name": "song_key",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "song_key"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "use_audio",
+          "name": "use_audio",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "use_audio"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "title": "Edit the song",
+      "properties": {
+        "aux_id": "pytraveler/YuE2-ComfyUI",
+        "ver": "abae175cff037a1b43052675e75cddcae172b957",
+        "Node name for S&R": "YuE2EditTrack"
+      },
+      "widgets_values": [
+        2,
+        "",
+        "",
+        true
+      ],
+      "widgets_values_named": {
+        "takes": 2,
+        "edits": "",
+        "song_key": "",
+        "use_audio": true
+      }
+    },
+    {
+      "id": 4,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        1000,
+        0
+      ],
+      "size": [
+        400,
+        140
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 2
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "The edited song",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.36.0",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2",
+        "format": "flac"
+      }
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      3,
+      0,
+      "AUDIO"
+    ],
+    [
+      2,
+      3,
+      0,
+      4,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        710.6,
+        129.4
+      ]
+    }
+  },
+  "version": 0.4
+}

@@ -160,7 +160,8 @@ jobs:
                       "7 - Sing a MIDI file" \
                       "8 - Cover a song" \
                       "9 - An a cappella song" \
-                      "10 - A song with LoRA"; do
+                      "10 - A song with LoRA" \
+                      "11 - Edit a song"; do
             for needed in "example_workflows/$stem.json" "example_workflows/$stem.jpg"; do
               echo "$listed" | grep -qxF "$PREFIX/$needed" || {
                 echo "::error::$needed is missing from $ARCHIVE"

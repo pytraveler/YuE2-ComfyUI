@@ -255,6 +255,24 @@ export function formatLyrics(blocks) {
     return layout(blocks).text;
 }
 
+export function excerpt(blocks, picks) {
+    const kept = [];
+    blocks.forEach((block, b) => {
+        const pick = picks[b];
+        if (!pick) return;
+        const lines = [];
+        block.lines.forEach((line, l) => {
+            const span = pick.lines[l];
+            if (span) lines.push(points(line).slice(span[0], span[1]).join(""));
+        });
+        while (lines.length && !lines[lines.length - 1]) lines.pop();
+        while (lines.length && !lines[0]) lines.shift();
+        const tag = pick.header ? block.tag : null;
+        if (tag !== null || lines.length) kept.push({ tag, number: block.number, lines });
+    });
+    return formatLyrics(kept);
+}
+
 function copy(blocks) {
     return blocks.map((b) => ({ ...b, lines: [...b.lines] }));
 }

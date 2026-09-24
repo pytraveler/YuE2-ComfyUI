@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import {
-    ask, buttonRow, confirmed, element, frame, graphChanged, installStyle, panelWidget,
+    ask, buttonRow, confirmed, element, frame, graphChanged, installStyle, onTop, panelWidget,
     setWidgetValue, showWidget, sourceOf, warned, widgetNamed,
 } from "./yue2_controls.js";
 import * as roll from "./yue2_roll.js";
@@ -73,6 +73,9 @@ const SKIN = {
     note: "#A3F5B5",
     noteEdge: "#173D22",
     noteText: "#08200F",
+    insNote: "#9FD0F7",
+    insEdge: "#123650",
+    insText: "#061B2B",
     picked: "#FF9A91",
     pickedEdge: "#5E1B16",
     pickedText: "#2B0805",
@@ -107,7 +110,24 @@ const SKIN = {
     sectionHeld: "rgba(255, 255, 255, 0.35)",
 };
 
-const PART_NAMES = { Vocal: "Voice part", Ins: "Instrument part" };
+const BOTH = "both";
+const PART_CHOICES = [
+    ["Vocal", "Voice", "Draw and edit the voice part. The instrument part is drawn faintly behind it."],
+    ["Ins", "Instrument", "Draw and edit the instrument part. The voice part is drawn faintly behind it."],
+    [BOTH, "Both", "Select and move the notes of both parts at once, with the chords above them. "
+        + "To draw or stretch notes, pick one part."],
+];
+const BOTH_NOTICE =
+    "Both parts: the voice in green, the instrument in blue. Drag a box to select notes and the chords "
+    + "above them, Ctrl+click to add or drop one, then drag or use the arrow keys (Shift for an octave). "
+    + "Pick one part to draw notes.";
+const BOTH_CHORDS = "In Both, a click on a chord selects it. Pick one part to add or change chords.";
+const PITCH_MOVES = [
+    ["\u2212oct", -12, "Move what is selected down an octave (Shift+\u2193)."],
+    ["\u22121", -1, "Move what is selected down a semitone (\u2193)."],
+    ["+1", 1, "Move what is selected up a semitone (\u2191)."],
+    ["+oct", 12, "Move what is selected up an octave (Shift+\u2191)."],
+];
 const SECTION_COLORS = [
     ["pre", "#9B7FD1"], ["intro", "#8C96A3"], ["verse", "#4E98C4"], ["chorus", "#D19A3F"],
     ["hook", "#D9774B"], ["bridge", "#4FA37A"], ["outro", "#7C8FA6"], ["solo", "#C98B5B"],
@@ -252,6 +272,10 @@ const TRACK_FIXED =
 
 const TRACK_SAME = "No note has changed, so there is nothing to sing again.";
 
+const CUT_NOTICE =
+    "This score stops in the middle of a line: the model ran out of room while writing it. The roll shows "
+    + "the whole bars before that, and an edit leaves the unfinished end out.";
+
 const FINER = "finer";
 const FINER_LABEL = "Thirty-second notes (rewrites the score)";
 
@@ -285,7 +309,11 @@ const SCORE_STYLE = `
     color: var(--descrip-text, #bbb); user-select: none; }
 .yue2-score select.yue2-s-sound { font-size: 11px; padding: 2px 4px; margin-left: -1px;
     max-width: 96px; }
-.yue2-score select.yue2-s-part { max-width: 190px; }
+.yue2-score button.yue2-s-on:hover { background: #4A8BE3; border-color: #4A8BE3; }
+.yue2-s-seg { display: inline-flex; }
+.yue2-score .yue2-s-seg button { border-radius: 0; margin-left: -1px; }
+.yue2-score .yue2-s-seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.yue2-score .yue2-s-seg button:last-child { border-radius: 0 6px 6px 0; }
 .yue2-s-tempo { font-size: 12px; display: inline-flex; gap: 6px; align-items: center;
     color: var(--descrip-text, #bbb); user-select: none; }
 .yue2-s-tempo input[type="range"] { width: 120px; margin: 0; accent-color: #3B7DD8; }
@@ -748,9 +776,11 @@ class ScoreEditor {
         this.isClosed = false;
         this.tab = "roll";
         this.part = "Vocal";
+        this.both = false;
         this.snap = 1;
         this.lastLength = 0;
         this.selection = new Set();
+        this.chordPicks = new Set();
         this.drag = null;
         this.working = null;
         this.hoverPitch = null;
@@ -789,6 +819,7 @@ class ScoreEditor {
         panel.classList.add("yue2-score");
         this.panel = panel;
         this.close = close;
+        this.handle = handle;
         handle.onEscape = () => this.escape();
 
         panel.appendChild(element("h3", "", (this.track ? "Notes \u2014 " : "Score \u2014 ")
@@ -842,13 +873,16 @@ class ScoreEditor {
 
         this.rollTools = element("span", "yue2-s-bar");
         this.rollTools.style.margin = "0";
-        this.partSelect = selectControl(Object.entries(PART_NAMES), "Vocal",
-            "Which part the mouse edits. The other part is drawn faintly behind it.", (value) => {
-                this.part = value;
-                this.selection.clear();
-                this.draw();
-            });
-        this.partSelect.className = "yue2-s-part";
+        this.partHolder = element("span", "yue2-s-seg");
+        this.partButtons = {};
+        for (const [id, label, title] of PART_CHOICES) {
+            const button = element("button", "", label);
+            button.title = title;
+            button.addEventListener("click", () => this.pickPart(id));
+            this.partButtons[id] = button;
+            this.partHolder.appendChild(button);
+        }
+        this.showPart();
         this.snapHolder = element("span");
         const zoomOut = element("button", "", "\u2212");
         zoomOut.title = "Zoom out (Ctrl + wheel).";
@@ -871,8 +905,20 @@ class ScoreEditor {
         this.redoButton.title = "Redo (Ctrl+Shift+Z).";
         this.redoButton.addEventListener("click", () => this.redo());
         this.barsHolder = element("span");
-        this.rollTools.append(this.partSelect, this.snapHolder, this.barsHolder, zoomOut, zoomIn, fit,
-            this.undoButton, this.redoButton);
+        const pitch = element("span", "yue2-s-seg");
+        this.pitchButtons = PITCH_MOVES.map(([label, semitones, title]) => {
+            const button = element("button", "", label);
+            button.title = title;
+            button.disabled = true;
+            button.addEventListener("click", () => {
+                this.shiftPicked(0, semitones);
+                this.rollBox.focus();
+            });
+            pitch.appendChild(button);
+            return button;
+        });
+        this.rollTools.append(this.partHolder, this.snapHolder, this.barsHolder, zoomOut, zoomIn, fit,
+            this.undoButton, this.redoButton, element("span", "yue2-s-gap"), pitch);
         tools.appendChild(this.rollTools);
         panel.appendChild(tools);
 
@@ -964,6 +1010,8 @@ class ScoreEditor {
         panel.addEventListener("keyup", (event) => {
             if (event.key === "Alt" || event.key === "AltGraph") event.preventDefault();
         });
+        this.onStrayKey = (event) => this.strayKey(event);
+        document.addEventListener("keydown", this.onStrayKey, true);
         this.observer = new ResizeObserver(() => this.resize());
         this.observer.observe(this.rollBox);
 
@@ -1009,6 +1057,16 @@ class ScoreEditor {
         clearTimeout(this.readTimer);
         this.observer?.disconnect();
         window.removeEventListener(SCORE_EVENT, this.onScore);
+        document.removeEventListener("keydown", this.onStrayKey, true);
+    }
+
+    strayKey(event) {
+        const target = event.target;
+        if (this.isClosed || !onTop(this.handle) || this.panel.contains(target)) return;
+        if (target?.closest?.(".yue2-panel") || target?.isContentEditable
+            || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName)) return;
+        this.key(event);
+        if (event.defaultPrevented) event.stopPropagation();
     }
 
     setStatus(text, bad = false) {
@@ -1032,6 +1090,7 @@ class ScoreEditor {
         this.good = null;
         this.history = new roll.History();
         this.selection = new Set();
+        this.chordPicks = new Set();
         this.notice = null;
         this.textBox.value = clean;
         this.notesDrawn = null;
@@ -1077,6 +1136,7 @@ class ScoreEditor {
         this.paintFacts();
         this.playhead = 0;
         if (fit) this.fitView();
+        if (sheet.cut) this.notice = CUT_NOTICE;
         this.showTab(this.tab);
         this.showDescription();
         this.refresh();
@@ -1100,7 +1160,46 @@ class ScoreEditor {
     }
 
     drumRows() {
-        return this.part === "Ins" && this.soundOf("Ins") === sounds.DRUMS;
+        return !this.both && this.part === "Ins" && this.soundOf("Ins") === sounds.DRUMS;
+    }
+
+    pickPart(id) {
+        const both = id === BOTH;
+        if (!both) this.part = id;
+        this.both = both;
+        const kept = new Set(this.model ? this.editedParts().flatMap((part) => this.model.notes[part].map((n) => n.id)) : []);
+        this.selection = new Set([...this.selection].filter((noteId) => kept.has(noteId)));
+        if (!both) this.chordPicks.clear();
+        this.showPart();
+        if (this.sheet) {
+            this.notice = both ? BOTH_NOTICE : null;
+            this.showDescription();
+        }
+        this.draw();
+        this.rollBox.focus();
+    }
+
+    showPart() {
+        const shown = this.both ? BOTH : this.part;
+        for (const [id, button] of Object.entries(this.partButtons)) button.classList.toggle("yue2-s-on", id === shown);
+    }
+
+    editedParts() {
+        return this.both ? [this.part, this.part === "Vocal" ? "Ins" : "Vocal"] : [this.part];
+    }
+
+    clearPicks() {
+        this.selection.clear();
+        this.chordPicks.clear();
+    }
+
+    pickedChords() {
+        return this.both ? this.model.chords.map((c) => c.start).filter((start) => this.chordPicks.has(start)) : [];
+    }
+
+    noteById(model, id) {
+        const part = roll.partOf(model, id);
+        return part ? { note: model.notes[part].find((n) => n.id === id), part } : null;
     }
 
     tempoControl() {
@@ -1219,7 +1318,8 @@ class ScoreEditor {
     }
 
     showDescription() {
-        const text = this.describe();
+        const text = this.describe() + (this.sheet?.cut && this.edited()
+            ? " The unfinished end the model left is not written back." : "");
         this.setStatus(this.notice ? this.notice + " " + text : text, this.lateBars(this.changed).length > 0);
     }
 
@@ -1470,6 +1570,8 @@ class ScoreEditor {
 
     draw() {
         this.showTempo();
+        const picked = this.selection.size > 0 || (this.both && this.chordPicks.size > 0);
+        for (const button of this.pitchButtons) button.disabled = !picked;
         if (!this.sheet || this.rollBox.hidden || !this.width) return;
         const sheet = this.sheet;
         const model = this.shownModel();
@@ -1534,7 +1636,7 @@ class ScoreEditor {
             c.fillStyle = SKIN.bar;
             c.fillRect(Math.round(barX), top, 2, H - top);
         }
-        this.drawPart(c, model, this.part === "Vocal" ? "Ins" : "Vocal", true, first, lastTick);
+        this.drawPart(c, model, this.part === "Vocal" ? "Ins" : "Vocal", !this.both, first, lastTick);
         this.drawPart(c, model, this.part, false, first, lastTick);
         const cut = this.cutTick();
         const cutX = cut === null ? null : this.x(cut);
@@ -1617,12 +1719,15 @@ class ScoreEditor {
         }
         c.font = "11px system-ui, sans-serif";
         c.lineWidth = 1;
+        const shifted = this.drag?.mode === "move" && this.working ? this.drag.ticks || 0 : 0;
         for (const chord of model.chords) {
             const chordX = this.x(chord.start);
             if (chordX > W || chordX + 60 < KEYS_W) continue;
             const width = c.measureText(chord.name).width + 10;
-            this.box(c, Math.round(chordX) + 0.5, RULER_H + 4.5, width, CHORD_H - 9, SKIN.chip, SKIN.chipEdge);
-            c.fillStyle = SKIN.chipText;
+            const picked = this.both && this.chordPicks.has(chord.start - shifted);
+            this.box(c, Math.round(chordX) + 0.5, RULER_H + 4.5, width, CHORD_H - 9,
+                picked ? SKIN.picked : SKIN.chip, picked ? SKIN.pickedEdge : SKIN.chipEdge);
+            c.fillStyle = picked ? SKIN.pickedText : SKIN.chipText;
             c.fillText(chord.name, chordX + 5, RULER_H + CHORD_H - 8);
         }
         c.font = "10px system-ui, sans-serif";
@@ -1729,6 +1834,10 @@ class ScoreEditor {
     drawPart(c, model, part, ghost, first, lastTick) {
         const px = this.pxPerTick;
         const top = RULER_H + CHORD_H;
+        const blue = this.both && part === "Ins";
+        const fill = blue ? SKIN.insNote : SKIN.note;
+        const edge = blue ? SKIN.insEdge : SKIN.noteEdge;
+        const text = blue ? SKIN.insText : SKIN.noteText;
         c.save();
         c.font = "600 9px system-ui, sans-serif";
         c.lineWidth = 1;
@@ -1743,8 +1852,8 @@ class ScoreEditor {
                 continue;
             }
             const picked = this.selection.has(note.id);
-            this.box(c, noteX, noteY + 1.5, width, ROW_H - 3, picked ? SKIN.picked : SKIN.note,
-                picked ? SKIN.pickedEdge : SKIN.noteEdge);
+            this.box(c, noteX, noteY + 1.5, width, ROW_H - 3, picked ? SKIN.picked : fill,
+                picked ? SKIN.pickedEdge : edge);
             if (width > 5) {
                 c.fillStyle = SKIN.shine;
                 c.fillRect(noteX + 1.5, noteY + 2, width - 4, 1);
@@ -1754,7 +1863,7 @@ class ScoreEditor {
                 ? sounds.drumName(note.pitch)
                 : roll.noteName(note.pitch, roll.flatsIn(this.sheet, bar.key));
             if (c.measureText(label).width + 6 <= width) {
-                c.fillStyle = picked ? SKIN.pickedText : SKIN.noteText;
+                c.fillStyle = picked ? SKIN.pickedText : text;
                 c.fillText(label, noteX + 3, noteY + ROW_H - 4);
             }
         }
@@ -1791,8 +1900,12 @@ class ScoreEditor {
     hitNote(px, py) {
         const pitch = this.pitchAt(py);
         const tick = this.tickAt(px);
-        return this.model.notes[this.part].find((note) => note.pitch === pitch && note.start <= tick
-            && tick < note.start + note.length + EDGE_PX / this.pxPerTick) || null;
+        for (const part of this.editedParts()) {
+            const found = this.model.notes[part].find((note) => note.pitch === pitch && note.start <= tick
+                && tick < note.start + note.length + EDGE_PX / this.pxPerTick);
+            if (found) return found;
+        }
+        return null;
     }
 
     barLocked(tick) {
@@ -1805,9 +1918,9 @@ class ScoreEditor {
         return false;
     }
 
-    blip(pitch) {
+    blip(pitch, part = this.part) {
         try {
-            this.player.blip(pitch, this.part);
+            this.player.blip(pitch, part);
         } catch (error) {
             void error;
         }
@@ -1839,6 +1952,7 @@ class ScoreEditor {
         }
         if (py < top) {
             if (event.button === 2) this.dropChord(px);
+            else if (this.both) this.pickChord(px, keys);
             else this.chordAt(tick, px);
             return;
         }
@@ -1851,12 +1965,15 @@ class ScoreEditor {
         const hit = this.hitNote(px, py);
         if (hit) {
             if (event.button === 2) {
-                const ids = this.selection.has(hit.id) ? [...this.selection] : [hit.id];
-                this.selection.clear();
-                this.commit(roll.deleteNotes(this.model, this.part, ids));
+                const all = this.selection.has(hit.id);
+                const ids = all ? [...this.selection] : [hit.id];
+                const starts = all && this.both ? [...this.chordPicks] : [];
+                this.clearPicks();
+                this.commit(this.both ? roll.deleteTogether(this.model, ids, starts)
+                    : roll.deleteNotes(this.model, this.part, ids));
                 return;
             }
-            const edge = this.x(hit.start + hit.length) - px <= EDGE_PX;
+            const edge = !this.both && this.x(hit.start + hit.length) - px <= EDGE_PX;
             if ((keys.shift || keys.ctrl) && !edge) {
                 if (this.selection.has(hit.id)) this.selection.delete(hit.id);
                 else this.selection.add(hit.id);
@@ -1864,19 +1981,26 @@ class ScoreEditor {
                 return;
             }
             if (this.barLocked(hit.start)) return;
-            if (!this.selection.has(hit.id)) this.selection = new Set([hit.id]);
+            if (!this.selection.has(hit.id)) {
+                this.selection = new Set([hit.id]);
+                this.chordPicks.clear();
+            }
             this.canvas.setPointerCapture(event.pointerId);
-            this.blip(hit.pitch);
+            this.blip(hit.pitch, roll.partOf(this.model, hit.id) || this.part);
             this.drag = edge
                 ? { mode: "resize", id: hit.id, from: this.model, start: hit.start, length: hit.length }
-                : { mode: "move", ids: [...this.selection], from: this.model, base: this.model, tick, pitch, sounded: hit.pitch };
+                : { mode: "move", ids: [...this.selection], chords: this.pickedChords(),
+                    from: this.model, base: this.model, tick, pitch, sounded: hit.pitch, ticks: 0 };
             this.draw();
             return;
         }
         if (event.button !== 0) return;
         this.canvas.setPointerCapture(event.pointerId);
-        if (keys.shift || keys.ctrl) {
-            this.drag = { mode: "box", tick, pitch, toTick: tick, toPitch: pitch, kept: new Set(this.selection) };
+        if (keys.shift || keys.ctrl || this.both) {
+            if (!keys.shift && !keys.ctrl) this.clearPicks();
+            this.drag = { mode: "box", tick, pitch, toTick: tick, toPitch: pitch, kept: new Set(this.selection),
+                          keptChords: new Set(this.chordPicks) };
+            this.draw();
             return;
         }
         if (this.barLocked(tick)) return;
@@ -1910,7 +2034,7 @@ class ScoreEditor {
         if (!before) return;
         this.notice = null;
         this.model = before;
-        this.selection.clear();
+        this.clearPicks();
         this.localChanged = roll.changedBars(this.sheet, this.model);
         this.draw();
         this.scheduleWrite();
@@ -2032,7 +2156,7 @@ class ScoreEditor {
             let cursor = "crosshair";
             if (py < SECTION_H && px > KEYS_W) cursor = this.sectionEdgeAt(px) ? "ew-resize" : "pointer";
             else if (py <= RULER_H + CHORD_H) cursor = "pointer";
-            else if (hit) cursor = this.x(hit.start + hit.length) - px <= EDGE_PX ? "ew-resize" : "move";
+            else if (hit) cursor = !this.both && this.x(hit.start + hit.length) - px <= EDGE_PX ? "ew-resize" : "move";
             this.canvas.style.cursor = cursor;
             return;
         }
@@ -2049,19 +2173,24 @@ class ScoreEditor {
         } else if (this.drag.mode === "box") {
             this.drag.toTick = tick;
             this.drag.toPitch = pitch;
-            const inside = roll.notesIn(this.model, this.part, this.drag.tick, tick, this.drag.pitch, pitch);
+            const inside = this.editedParts().flatMap((part) =>
+                roll.notesIn(this.model, part, this.drag.tick, tick, this.drag.pitch, pitch));
             this.selection = new Set([...this.drag.kept, ...inside]);
+            if (this.both) this.chordPicks = new Set([...this.drag.keptChords, ...roll.chordsIn(this.model, this.drag.tick, tick)]);
         } else if (this.drag.mode === "move") {
             const ticks = roll.modifiersOf(event).alt ? Math.round(tick - this.drag.tick)
                 : roll.snapTo(tick - this.drag.tick, this.snap);
             const semitones = pitch - this.drag.pitch;
-            const moved = roll.moveNotes(this.drag.base, this.part, this.drag.ids, ticks, semitones, total);
+            const moved = this.both
+                ? roll.moveTogether(this.drag.base, this.drag.ids, this.drag.chords, ticks, semitones, total)
+                : roll.moveNotes(this.drag.base, this.part, this.drag.ids, ticks, semitones, total);
             if (moved) {
                 this.working = moved;
-                const lead = moved.notes[this.part].find((n) => n.id === this.drag.ids[0]);
-                if (lead && lead.pitch !== this.drag.sounded) {
-                    this.drag.sounded = lead.pitch;
-                    this.blip(lead.pitch);
+                this.drag.ticks = ticks;
+                const lead = this.noteById(moved, this.drag.ids[0]);
+                if (lead && lead.note.pitch !== this.drag.sounded) {
+                    this.drag.sounded = lead.note.pitch;
+                    this.blip(lead.note.pitch, lead.part);
                 }
             }
         } else if (this.drag.mode === "resize") {
@@ -2099,11 +2228,16 @@ class ScoreEditor {
         }
         if ((drag.mode === "move" || drag.mode === "resize") && result && result !== drag.from) {
             if (drag.mode === "move") {
-                const lead = result.notes[this.part].find((n) => n.id === drag.ids[0]);
-                if (lead && !this.lastLength) this.lastLength = lead.length;
+                const lead = this.noteById(result, drag.ids[0]);
+                if (lead && !this.lastLength) this.lastLength = lead.note.length;
             }
             const kept = this.commit(result, drag.from);
             if (kept && drag.drawn) this.drawn = { at: now(), redo: this.dropped };
+            if (kept && drag.chords?.length) {
+                this.chordPicks = new Set(drag.chords.map((start) => start + drag.ticks));
+                this.draw();
+            }
+            if (kept && drag.mode === "move" && drag.sounded !== drag.pitch) this.warnVoice();
             return;
         }
         this.draw();
@@ -2160,16 +2294,19 @@ class ScoreEditor {
         if (this.tab !== "roll" || !this.sheet) return;
         if (ctrl && letter === "a") {
             event.preventDefault();
-            this.selection = new Set(this.model.notes[this.part].map((n) => n.id));
+            this.selection = new Set(this.editedParts().flatMap((part) => this.model.notes[part].map((n) => n.id)));
+            if (this.both) this.chordPicks = new Set(this.model.chords.map((c) => c.start));
             this.draw();
             return;
         }
-        if (!this.selection.size) return;
+        const chords = this.pickedChords();
+        if (!this.selection.size && !chords.length) return;
         if (event.key === "Delete" || event.key === "Backspace") {
             event.preventDefault();
             const ids = [...this.selection];
-            this.selection.clear();
-            this.commit(roll.deleteNotes(this.model, this.part, ids));
+            this.clearPicks();
+            this.commit(this.both ? roll.deleteTogether(this.model, ids, chords)
+                : roll.deleteNotes(this.model, this.part, ids));
             return;
         }
         const moves = {
@@ -2178,16 +2315,41 @@ class ScoreEditor {
         };
         if (moves[event.key]) {
             event.preventDefault();
-            const [ticks, semitones] = moves[event.key];
-            const moved = roll.moveNotes(this.model, this.part, [...this.selection], ticks, semitones, this.sheet.total);
-            if (!moved) {
-                this.setStatus("That move does not fit: it would overlap another note or leave the song.", true);
-                return;
-            }
-            this.commit(moved);
-            const lead = moved.notes[this.part].find((n) => this.selection.has(n.id));
-            if (lead && semitones) this.blip(lead.pitch);
+            this.shiftPicked(...moves[event.key]);
         }
+    }
+
+    shiftPicked(ticks, semitones) {
+        const chords = this.pickedChords();
+        if (!this.sheet || (!this.selection.size && !chords.length)) return;
+        const moved = this.both
+            ? roll.moveTogether(this.model, [...this.selection], chords, ticks, semitones, this.sheet.total)
+            : roll.moveNotes(this.model, this.part, [...this.selection], ticks, semitones, this.sheet.total);
+        if (!moved) {
+            this.setStatus(this.both
+                ? "That move does not fit: it would overlap another note or chord, or leave the song."
+                : "That move does not fit: it would overlap another note or leave the song.", true);
+            return;
+        }
+        this.commit(moved);
+        if (chords.length) {
+            this.chordPicks = new Set(chords.map((start) => start + ticks));
+            this.draw();
+        }
+        const lead = this.noteById(moved, [...this.selection][0]);
+        if (lead && semitones) this.blip(lead.note.pitch, lead.part);
+        if (semitones) this.warnVoice();
+    }
+
+    warnVoice() {
+        if (!this.both && this.part !== "Vocal") return;
+        const middle = roll.voiceMiddle(this.model);
+        const [low, high] = roll.VOICE_WINDOW;
+        if (middle === null || (middle >= low && middle <= high)) return;
+        this.notice = "The voice line now centres on " + roll.noteName(Math.round(middle)) + ", "
+            + (middle > high ? "above" : "below") + " the " + roll.noteName(low) + "-" + roll.noteName(high)
+            + " where the model's own scores keep it; how YuE2 sings it there was not measured.";
+        this.showDescription();
     }
 
     offerChord(under, start, pitch) {
@@ -2231,13 +2393,30 @@ class ScoreEditor {
         this.openChordInput(start, found ? found.name : "");
     }
 
+    pickChord(px, keys) {
+        const found = this.chordUnder(px);
+        if (!found) {
+            this.setStatus(BOTH_CHORDS);
+            return;
+        }
+        if (keys.shift || keys.ctrl) {
+            if (this.chordPicks.has(found.start)) this.chordPicks.delete(found.start);
+            else this.chordPicks.add(found.start);
+        } else {
+            this.selection.clear();
+            this.chordPicks = new Set([found.start]);
+        }
+        this.draw();
+    }
+
     dropChord(px) {
         const found = this.chordUnder(px);
         if (!found) {
-            this.setStatus("Right-click a chord to remove it; click the lane to add one.");
+            this.setStatus(this.both ? BOTH_CHORDS : "Right-click a chord to remove it; click the lane to add one.");
             return;
         }
         if (this.barLocked(found.start)) return;
+        this.chordPicks.delete(found.start);
         this.closeChordInput();
         if (!this.commit(roll.removeChord(this.model, found.start))) return;
         this.notice = found.name + " is gone from bar " + (roll.barAt(this.sheet, found.start) + 1)
@@ -2322,7 +2501,7 @@ class ScoreEditor {
         this.notice = null;
         this.drawn = null;
         this.model = previous;
-        this.selection.clear();
+        this.clearPicks();
         this.localChanged = roll.changedBars(this.sheet, this.model);
         this.draw();
         this.scheduleWrite();
@@ -2335,7 +2514,7 @@ class ScoreEditor {
         this.notice = null;
         this.drawn = null;
         this.model = next;
-        this.selection.clear();
+        this.clearPicks();
         this.localChanged = roll.changedBars(this.sheet, this.model);
         this.draw();
         this.scheduleWrite();
@@ -2602,8 +2781,8 @@ class ScoreEditor {
             this.cancelDrag();
             return;
         }
-        if (this.selection.size && this.tab === "roll") {
-            this.selection.clear();
+        if ((this.selection.size || this.chordPicks.size) && this.tab === "roll") {
+            this.clearPicks();
             this.draw();
             return;
         }

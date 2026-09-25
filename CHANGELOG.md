@@ -7,6 +7,42 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.9.3 - 2026-09-26
+
+### Fixed
+
+- **`YuE2 Transcribe` names keys and chords from the key they sound in.**
+  SheetSage2's vocabulary has only sharps, so a song in B-flat minor was
+  written as `K:A#m` -- seven sharps for five flats -- with `"A#m"`, `"D#m"`
+  and `"F#"` over it, names YuE2 does not use in its own scores, which have
+  `Bbmaj7` and `Ebmaj7` in B-flat. A key now takes the name with fewer
+  accidentals, and a chord the root that keeps its tones closest to the key
+  around it, as m-a-p's own SheetSage2 has named them since 2026-09-21, with
+  their fix of 2026-09-24: `K:Bbm` with `"Bbm"`, `"Ebm"` and `"Gb"`. Only the
+  names change; every note, bar, chord and key sounds as before, checked
+  against ComfyUI master's scores for the pack's own songs.
+
+  The names matter to the singing. Notes are written against the key's
+  signature, so under `K:A#m` every F is a bare E, meaning E-sharp, and every
+  C a bare B, meaning B-sharp -- and YuE2 sings those letters without the
+  sharp. Measured on one song in B-flat minor, four seeds a score: from the
+  old score not one of its 71 F and C notes was sung on pitch, 94 percent
+  came a semitone low; from the new one 94 percent were on pitch. The tune of
+  that part went from 61 to 94 percent, and the cover's resemblance to the
+  recording from 0.42 to 0.51, while the words (141 and 144 of 160) and the
+  chords stayed where they were. F-sharp major and D-sharp minor keep an
+  E-sharp in their signature under this rule, as in m-a-p's, and were not
+  measured. A score edited on the node before 0.9.3 keeps its old names:
+  `Reset score` and run again to have the recording written anew.
+- **`transpose` moves a song that changes key.** The whole score used to move
+  by the letter names its first key needed, which cannot serve keys on both
+  sides of the circle: a song going from B-flat minor up to B minor, moved up
+  a semitone, would have put its second half in B-sharp minor, which no score
+  can be written in. Every key now moves by its own letter names. On that
+  song, named the new way, the old code refused 12 of the 24 moves and the
+  new one none; with the old sharp names it had refused 4, and turned `A#`
+  into `B#` a tone up.
+
 ## 0.9.2 - 2026-09-25
 
 ### Fixed

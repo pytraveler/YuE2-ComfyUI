@@ -160,6 +160,15 @@ def _interval(key: str, semitones: int) -> _Interval:
     The letter names move by as many steps as fit the size of the move, not just
     its direction: eleven semitones up from D is the D-flat an octave higher,
     seven letter names up, even though D and D-flat share a letter.
+
+    A score that changes key takes this afresh for every key it has, because
+    one move of the letter names cannot serve keys spelled on both sides of the
+    circle. A song that goes from B-flat minor up to B minor -- the names its
+    transcription has had since 0.9.3 -- moved up a semitone by B-flat's letter
+    names (none) would put its second half in B-sharp minor, which the score
+    format cannot write; moved key by key it goes to B minor and then C minor.
+    Measured on that song: 12 of the 24 moves were refused with one move for
+    the whole score, none key by key.
     """
     if semitones % 12 == 0:
         return _Interval(semitones, 7 * (semitones // 12))
@@ -176,11 +185,12 @@ def _interval(key: str, semitones: int) -> _Interval:
     return _Interval(semitones, steps)
 
 
-def _bar(bar: str, state: dict, interval: _Interval) -> str:
+def _bar(bar: str, state: dict, intervals) -> str:
     """One measure of one voice, moved.
 
-    *state* carries what outlives a barline: the key in force and a tie still
-    waiting for its continuation. Accidentals do not outlive it, in the original
+    *intervals* gives the move for a key (see ``_interval``). *state* carries
+    what outlives a barline: the key in force and a tie still waiting for its
+    continuation. Accidentals do not outlive it, in the original
     or in the copy, so both start each measure clean. Within the measure an
     accidental is written only where the new key signature and the marks already
     written would otherwise give the wrong pitch -- which is how the model writes
@@ -193,6 +203,7 @@ def _bar(bar: str, state: dict, interval: _Interval) -> str:
     if FULL_REST.fullmatch(bar):
         return bar
     source_key = state["key"]
+    interval = intervals(source_key)
     target_key = interval.key(source_key)
     source_marks, target_marks = {}, {}
     out = []
@@ -212,6 +223,7 @@ def _bar(bar: str, state: dict, interval: _Interval) -> str:
             continue
         if key is not None:
             source_key = state["key"] = key
+            interval = intervals(key)
             target_key = interval.key(key)
             source_marks, target_marks = {}, {}
             out.append("[K:" + target_key + "]")
@@ -308,7 +320,13 @@ def move(text: str, semitones: int) -> Moved:
         source = abc_tools.parse(source_text)
         lines = source_text.splitlines(keepends=True)
         header = lines[7].rstrip("\r\n")[2:]
-        interval = _interval(header, step)
+        chosen = {}
+
+        def intervals(key: str) -> _Interval:
+            if key not in chosen:
+                chosen[key] = _interval(key, step)
+            return chosen[key]
+
         states = {name: {"key": header, "tie": None} for name in abc_tools.VOICES}
         voice = None
         output = []
@@ -316,7 +334,7 @@ def move(text: str, semitones: int) -> Moved:
             body = raw.rstrip("\r\n")
             ending = raw[len(body):]
             if index == 7:
-                output.append("K:" + interval.key(header) + ending)
+                output.append("K:" + intervals(header).key(header) + ending)
             elif index < 8:
                 output.append(raw)
             elif body.startswith("V: "):
@@ -324,11 +342,11 @@ def move(text: str, semitones: int) -> Moved:
                 output.append(raw)
             elif body.startswith("K:"):
                 states[voice]["key"] = body[2:]
-                output.append("K:" + interval.key(body[2:]) + ending)
+                output.append("K:" + intervals(body[2:]).key(body[2:]) + ending)
             elif index in source.music_lines:
                 state = states[source.music_lines[index]]
                 bars = body[:-1].split("|")
-                output.append("|".join(_bar(bar, state, interval) for bar in bars)
+                output.append("|".join(_bar(bar, state, intervals) for bar in bars)
                               + "|" + ending)
             else:
                 output.append(raw)
@@ -336,4 +354,4 @@ def move(text: str, semitones: int) -> Moved:
         _check(source, abc_tools.parse(moved), step)
     except (ValueError, KeyError, IndexError) as error:
         raise ValueError(UNREADABLE.format(step=describe(step), reason=error)) from error
-    return Moved(moved, header.strip(), interval.key(header))
+    return Moved(moved, header.strip(), intervals(header).key(header))

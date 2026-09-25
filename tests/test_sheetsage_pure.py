@@ -1,18 +1,22 @@
 """SheetSage2's tokens, grammar, windows and notation, without torch or weights.
 
-The strongest check here is the last one: ComfyUI master's tokens for three
+The strongest check here is near the end: ComfyUI master's tokens for three
 songs this pack sang, run through these modules, give master's ABC to the byte
-in both modes. Everything above it pins a smaller rule that check relies on.
+in both modes as long as keys and chords keep the model's own sharp names.
+Named from the key, as this pack writes them since 0.9.3, the same scores
+differ from master's in names only: every note, bar, chord and key sounds the
+same. Everything above pins a smaller rule those checks rely on.
 """
 
 from __future__ import annotations
 
 import json
 import pathlib
+import re
 
 import pytest
 
-from yue2_comfy.sheetsage import abc_rebuild, events, grammar, vocab
+from yue2_comfy.sheetsage import abc_rebuild, events, grammar, spelling, vocab
 from yue2_comfy.vendor.yue2_music import abc_tools
 
 DATA = json.loads((pathlib.Path(__file__).parent / "data" / "sheetsage_pack.json").read_text())
@@ -210,15 +214,58 @@ def test_model_chord_and_key_labels_become_abc_symbols():
     assert abc_rebuild.key_text("C#:minor") == "C#m"
 
 
-@pytest.mark.parametrize("mode", ["melody", "full"])
-@pytest.mark.parametrize("song", DATA["songs"], ids=lambda song: song["name"])
-def test_masters_tokens_give_masters_abc_to_the_byte(song, mode):
+def written(song, mode) -> str:
+    """The ABC this pack writes from master's tokens for one of the reference songs."""
     duration = song["seconds"]
     stitched = []
     for index, (window, tokens) in enumerate(zip(events.window_plan(duration), song["windows"])):
         decoded, _warning = vocab.decode_window(tokens + [vocab.EOS])
         stitched.extend(events.stitch(decoded, events.time_map(decoded), window, duration, index))
     rows = events.score_rows(events.sort_song(stitched), duration)
-    text = abc_rebuild.build(rows, melody_only=(mode == "melody"))
+    return abc_rebuild.build(rows, melody_only=(mode == "melody"))
+
+
+@pytest.mark.parametrize("mode", ["melody", "full"])
+@pytest.mark.parametrize("song", DATA["songs"], ids=lambda song: song["name"])
+def test_masters_tokens_give_masters_abc_to_the_byte_with_the_models_own_names(song, mode, monkeypatch):
+    monkeypatch.setattr(spelling, "key_name", lambda label: label)
+    monkeypatch.setattr(spelling, "respelled", lambda chords, keys: [list(row) for row in chords])
+    text = written(song, mode)
     assert text == song["abc"][mode]
     abc_tools.parse(text)
+
+
+def pitch(name):
+    return None if name is None else (abc_tools.NATURAL[name[0]] + name.count("#") - name.count("b")) % 12
+
+
+def sounding(symbol: str):
+    """A chord symbol as what it sounds: root pitch class, quality, bass pitch class."""
+    root, quality, bass = re.fullmatch(r"([A-G](?:bb|##|b|#)?)(.*?)(?:/([A-G](?:bb|##|b|#)?))?", symbol).groups()
+    return pitch(root), quality, pitch(bass)
+
+
+def tonic(key: str):
+    """An ABC key as what it sounds: the tonic's pitch class and whether it is minor."""
+    return pitch(key.rstrip("m")), key.endswith("m")
+
+
+@pytest.mark.parametrize("mode", ["melody", "full"])
+@pytest.mark.parametrize("song", DATA["songs"], ids=lambda song: song["name"])
+def test_named_from_the_key_masters_score_changes_names_and_nothing_that_sounds(song, mode):
+    ours, masters = abc_tools.parse(written(song, mode)), abc_tools.parse(song["abc"][mode])
+    assert abc_tools.compare(masters, ours)["match"]
+    for name in abc_tools.VOICES:
+        was, now = masters.voices[name], ours.voices[name]
+        assert tonic(now.key) == tonic(was.key)
+        assert [(time, tonic(key)) for time, key in now.keys] == [(time, tonic(key)) for time, key in was.keys]
+        assert [(time, sounding(chord)) for time, chord in now.chords] == [
+            (time, sounding(chord)) for time, chord in was.chords]
+
+
+def test_a_song_in_b_flat_is_written_with_b_flat_chords():
+    song = next(song for song in DATA["songs"] if "K:Bb" in song["abc"]["full"])
+    text = written(song, "full")
+    chords = set(re.findall(r'"([^"]*)"', text)) - {"Vocal Melody", "Ins Melody", "Vocal", "Inst."}
+    assert chords == {"Bb", "Bb6", "Eb", "F", "Gm"}
+    assert "A#" not in text and "D#" not in text

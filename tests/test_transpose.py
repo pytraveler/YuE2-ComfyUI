@@ -107,6 +107,20 @@ def test_eleven_semitones_up_from_d_is_the_d_flat_an_octave_higher():
     assert "\nd8f8a8d'8|\n" in moved.text
 
 
+RISING = HEADER + (
+    'K:Bbm\n% verse\nV: Vocal\n"Bbm"B8d8f8b8|\nV: Ins\nZ|\n'
+    '% chorus\nV: Vocal\nK:Bm\n"Bm"B8d8f8b8|\nV: Ins\nK:Bm\nZ|\n')
+"""A song that rises a semitone from a key with flats to one with sharps, as a
+transcription names B-flat minor and B minor since 0.9.3."""
+
+
+def test_a_song_that_rises_a_semitone_moves_key_by_key_across_the_whole_range():
+    for semitones in STEPS:
+        assert_moved(RISING, transpose.move(RISING, semitones).text, semitones)
+    up = transpose.move(RISING, 1)
+    assert up.after == "Bm" and "\nK:Cm\n" in up.text and '"Cm"' in up.text
+
+
 def test_a_score_the_model_wrote_comes_back_unchanged_from_a_move_of_zero():
     """The marks this module writes are the marks the model writes, character for character."""
     for name, score in MODEL_SCORES.items():

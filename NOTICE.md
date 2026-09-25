@@ -16,7 +16,10 @@ by the same author and carried over. Same licence, same terms.
 implementations of SheetSage2 and Qwen3-ASR, under the same terms. ComfyUI's
 SheetSage2 code is GPL-3.0 and m-a-p's reference code carries no licence, so
 neither is copied here; the transcriptions are checked against ComfyUI master's
-instead, and match it to the byte on the pack's own songs. The speech model's
+instead, and match it to the byte on the pack's own songs apart from the names
+of keys and chords. Those follow the key the way m-a-p's SheetSage2 has named
+them since 2026-09-21, a rule written here from its description and checked
+against the names their tests expect, not copied. The speech model's
 log-mel front end follows the arithmetic of OpenAI's Whisper (MIT) and of
 Hugging Face's feature extractor (Apache-2.0), as Qwen3-ASR's own release does.
 

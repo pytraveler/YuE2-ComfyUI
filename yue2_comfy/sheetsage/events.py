@@ -15,8 +15,9 @@ one before it never reached, and the song keeps its beats across the seam.
 What comes out is a list of timed events. ``score_rows`` turns them into the
 beats, chords, keys, sections and notes that ``abc_rebuild`` writes a score
 from, applying the same clean-up the model's authors apply: the beat grid is
-extended to the end of the song, and a note running into the next one in its
-track is cut at that onset.
+extended to the end of the song, a note running into the next one in its
+track is cut at that onset, and keys and chords are named from the key they
+sound in rather than with the sharps of the model's vocabulary.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import bisect
 import math
 from fractions import Fraction
 
-from . import vocab
+from . import spelling, vocab
 
 EPS = 1e-4
 
@@ -366,7 +367,9 @@ def score_rows(events: list, duration: float) -> dict:
     """Everything ``abc_rebuild.build`` needs, from a song's sorted events.
 
     The beats a window seam dropped are put back first (see ``filled_beats``),
-    because every later step counts bars by the beats it is given.
+    because every later step counts bars by the beats it is given. Keys and
+    chords are named from the key they sound in (see ``spelling``) before they
+    are cut to the grid, each chord by the key at its midpoint.
 
     Raises ValueError with the reason a score cannot be written: fewer than two
     beats, beats that do not move forward, or no key at all.
@@ -391,10 +394,13 @@ def score_rows(events: list, duration: float) -> dict:
     while grid[-1][0] < end - 1e-6:
         previous = grid[-1]
         grid.append([previous[0] + period, previous[1] % previous[2] + 1, previous[2], previous[3]])
+    keys = [[a, b, spelling.key_name(value)] for a, b, value in _intervals(events, "key", duration)]
+    named = {"chord": spelling.respelled(_intervals(events, "chord", duration), keys), "key": keys,
+             "structure": _intervals(events, "structure", duration)}
     clipped = {}
     for field in ("chord", "key", "structure"):
         clipped[field] = [[max(grid[0][0], a), min(grid[-1][0], b), value]
-                          for a, b, value in _intervals(events, field, duration)
+                          for a, b, value in named[field]
                           if b > grid[0][0] and a < grid[-1][0]]
     if not _intervals(events, "key", duration):
         raise ValueError("No key was decoded; cannot construct a keyed ABC score")

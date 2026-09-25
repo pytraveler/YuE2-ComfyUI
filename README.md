@@ -654,7 +654,13 @@ ran carry no recording and are sent on as they are.
 **Measured.** The transcriber is this pack's own implementation of SheetSage2,
 checked against ComfyUI master's: the same tokens and the same ABC to the byte
 on six songs, 1.1 to 10.4 s a song on an RTX 5090, and a peak of 1.9 GiB where
-master's reaches 16.5. On songs this pack sang, the vocal line came back with a
+master's reaches 16.5. Only the names of keys and chords differ, on purpose:
+they follow the key, as m-a-p's own SheetSage2 has named them since
+2026-09-21 -- B-flat minor with E-flat minor and G-flat in it, where the
+model's vocabulary, and master, say A-sharp minor, D-sharp minor and F-sharp.
+It matters to the singing: under `K:A#m` YuE2 sang every F and C of a song a
+semitone low, because it reads the E-sharp and B-sharp of that signature as
+E and B (see the 0.9.3 changelog). On songs this pack sang, the vocal line came back with a
 note F1 of 0.96 to 0.99 counted in beats, and on three real tracks covered with
 `cot` at `melody`, 95 to 97 percent of the melody's pitch order survived. Those
 are clean mixes; on an arbitrary recording, expect the vocal F1 of 82.5 percent

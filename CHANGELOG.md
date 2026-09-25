@@ -7,6 +7,21 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.9.1 - 2026-09-25
+
+### Fixed
+
+- **`fast` on RTX 20 and GTX 16 cards.** torch's efficient kernel has no
+  BF16 build below Ampere, so `fast` would stop at the song's first step with
+  "cutlassF: no kernel found to launch!". The node now stops before singing
+  and says to choose `sdpa`, and the note about `flash` on such a card no
+  longer points to `fast`. Read from torch's source after a 20-series user's
+  log; there is no such card here to run it on.
+- **The GPU requirement says what an older card does.** It said "BF16
+  support", and a 20-series card answers yes to that by emulation. The row
+  now says RTX 30 or newer, and that older cards sing with a much slower last
+  stage.
+
 ## 0.9.0 - 2026-09-24
 
 ### Added

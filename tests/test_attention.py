@@ -59,6 +59,35 @@ def test_fast_on_a_torch_without_lengths_says_what_to_do(monkeypatch):
         attention.engine_for("fast", "cuda")
 
 
+def test_below_ampere_fast_and_flash_point_to_sdpa(monkeypatch):
+    """torch's efficient kernel has no bfloat16 build below sm80, and flash-attn does not run there."""
+    monkeypatch.setattr(attention, "_efficient_takes_lengths", lambda: True)
+    monkeypatch.setattr(attention, "_major", lambda device: 7)
+    with pytest.raises(ValueError) as refused:
+        attention.engine_for("fast", "cuda")
+    assert "RTX 30" in str(refused.value) and "'sdpa'" in str(refused.value)
+    with pytest.raises(ValueError, match="RTX 30"):
+        attention.engine_for("fast", "cuda", "torch.bfloat16")
+    assert attention.engine_for("fast", "cuda", "torch.float16").name == "fast"
+    monkeypatch.setitem(sys.modules, "flash_attn", types.SimpleNamespace(flash_attn_with_kvcache=None))
+    with pytest.raises(ValueError) as refused:
+        attention.engine_for("flash", "cuda")
+    assert "RTX 30" in str(refused.value) and "'sdpa'" in str(refused.value)
+    assert "'fast'" not in str(refused.value)
+
+
+def test_from_ampere_on_fast_runs_and_no_card_is_not_refused(monkeypatch):
+    monkeypatch.setattr(attention, "_efficient_takes_lengths", lambda: True)
+    for major in (8, 12, None):
+        monkeypatch.setattr(attention, "_major", lambda device, major=major: major)
+        assert attention.engine_for("fast", "cuda").name == "fast"
+
+
+def test_the_card_is_asked_only_of_cuda():
+    assert attention._major("cpu") is None
+    assert attention._major("no such device") is None
+
+
 class Shape:
     def __init__(self, *shape):
         self.shape = shape
@@ -129,7 +158,8 @@ def test_the_step_is_answered_by_the_engine_and_everything_is_put_back(monkeypat
             return "answered"
 
     monkeypatch.setattr(cuda_graph, "GraphAR", Upstream)
-    monkeypatch.setattr(attention, "engine_for", lambda name, device: Engine() if name == "fast" else None)
+    monkeypatch.setattr(attention, "engine_for",
+                        lambda name, device, dtype=None: Engine() if name == "fast" else None)
     functional = cuda_graph.F
     with runtime.pinned_attention("cudnn"):
         graph = cuda_graph.GraphAR(object(), [[1]], 4)

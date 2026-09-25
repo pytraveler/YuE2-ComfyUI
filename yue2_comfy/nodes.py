@@ -140,7 +140,8 @@ KEEP_TOOLTIP = (
 ATTENTION_TOOLTIP = (
     "How the model attends while it writes the song, token by token.\n\n"
     "'sdpa' is the default and sings a seed as before. 'fast' is quicker and needs "
-    "nothing extra. 'flash' is the quickest and needs the flash-attn package.\n\n"
+    "nothing extra. 'flash' is the quickest and needs the flash-attn package. Both "
+    "need an RTX 30 card or newer.\n\n"
     "Each one repeats a seed, but each sings it its own way."
 )
 

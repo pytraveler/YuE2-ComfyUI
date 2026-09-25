@@ -23,6 +23,10 @@ Two engines answer it here, each reading only the filled slots:
            every run and across processes. Needs the package, which has no
            official Windows wheels.
 
+Both need an Ampere card (RTX 30 series) or newer: the song runs in bfloat16,
+and below Ampere torch's efficient kernel has no bfloat16 build and flash-attn
+does not run at all. On such a card each is refused with the choice that runs.
+
 cuDNN's attention was the old fast choice and is gone: stepped over a filling
 cache, the same inputs gave different bytes in 2-4 steps of 400, so no seed
 ever came back. A song or workflow that still says 'cudnn' gets 'fast'.
@@ -60,8 +64,12 @@ NO_FLASH = (
     "Choose 'fast', which needs nothing, or install a flash-attn build made for this torch."
 )
 OLD_CARD = (
-    "'flash' in the options needs an Ampere card or newer, and this one is older. "
-    "Choose 'fast', which runs on it."
+    "'flash' in the options needs an Ampere card (RTX 30 series) or newer, and this one is older. "
+    "Choose 'sdpa'."
+)
+OLD_CARD_FAST = (
+    "'fast' in the options needs an Ampere card (RTX 30 series) or newer: on an older one torch's "
+    "efficient kernel has no bfloat16. Choose 'sdpa'."
 )
 NO_FAST = (
     "'fast' in the options needs a newer torch than this one. Choose 'sdpa'."
@@ -89,25 +97,52 @@ def _efficient_takes_lengths() -> bool:
         return False
 
 
-def engine_for(name: str, device):
-    """The engine for ``name`` on ``device``, None for upstream's own call; ValueError when it cannot run here."""
+def _major(device):
+    """The compute capability's major number of the card at ``device``; None where there is no CUDA card to ask."""
+    try:
+        import torch
+
+        if torch.device(device).type != "cuda":
+            return None
+        return int(torch.cuda.get_device_capability(device)[0])
+    except Exception:
+        return None
+
+
+def engine_for(name: str, device, dtype=None):
+    """The engine for ``name`` on ``device``, None for upstream's own call; ValueError when it cannot run here.
+
+    ``dtype`` is the cache's, bfloat16 when not given, which is what the pack
+    sings in. torch's efficient kernel is built for bfloat16 only from Ampere
+    on (its cutlassF table registers those kernels for sm80 and up), so on an
+    RTX 20 or GTX 16 card 'fast' would stop at the first step with "cutlassF:
+    no kernel found to launch!". It is refused before that, with the choice
+    that runs. float16 has kernels there, which is why the dtype is asked.
+    Read from torch's source on 2026-09-25 after a 20-series user's log; there
+    is no such card here to run it on.
+
+    'flash' is asked about the card before the package, so that an old card
+    is told to use 'sdpa' rather than to install something that cannot run.
+    """
     if name == SDPA:
         return None
+    major = _major(device)
+    old = major is not None and major < 8
     if name == FAST:
         if not _efficient_takes_lengths():
             raise ValueError(NO_FAST)
+        if old and str(dtype or "torch.bfloat16") == "torch.bfloat16":
+            raise ValueError(OLD_CARD_FAST)
         return Split()
     if name == FLASH:
+        if old:
+            raise ValueError(OLD_CARD)
         try:
             import flash_attn
         except Exception:
             raise ValueError(NO_FLASH) from None
         if not hasattr(flash_attn, "flash_attn_with_kvcache"):
             raise ValueError(NO_FLASH)
-        import torch
-
-        if torch.cuda.get_device_capability(device)[0] < 8:
-            raise ValueError(OLD_CARD)
         return Flash(flash_attn.flash_attn_with_kvcache)
     raise ValueError("attention_backend must be one of sdpa, fast or flash, not {!r}".format(name))
 

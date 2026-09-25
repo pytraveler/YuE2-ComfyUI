@@ -112,7 +112,7 @@ def pinned_attention(backend: str):
         def __init__(self, *args, **kwargs):
             kwargs["attention_backend"] = attention.SDPA
             super().__init__(*args, **kwargs)
-            self.engine = attention.engine_for(name, self.device)
+            self.engine = attention.engine_for(name, self.device, getattr(self, "dtype", None))
             if self.engine is not None:
                 if answering[0] is None:
                     answering[0] = attention.Functional(functional, self.engine)

@@ -126,7 +126,7 @@ reports are just as welcome, and so are songs that came out wrong: they go in
 
 | Resource | Requirement |
 |---|---|
-| GPU | An NVIDIA GPU with BF16 support. CPU works and is roughly an hour per song |
+| GPU | An NVIDIA RTX 30 series (Ampere) or newer. RTX 20 and GTX 16 cards have no BF16 in hardware: they sing, but the last stage is many times slower -- 15 minutes of a 99-second song on an RTX 2060 SUPER in one user's log -- and `fast` and `flash` do not run on them. CPU works and is roughly an hour per song |
 | VRAM | **~4.4 GiB** for a 40-second song and **~4.5 GiB** for a four-minute one, with only the half of the model each stage needs on the card, or **~3.1 GiB** for either with `low_vram` on. A card with room to spare keeps the whole model on it and uses about 10 GiB for either. See `offload` in [YuE2 Options](#yue2-options). `YuE2 Transcribe` peaks at 1.9 GiB, and at 5.5 GiB while it recognises the words of a four-minute song, 3.5 with `low_vram`. Separating the voice, with `vocals_only` or `YuE2 Vocals Only`, peaks at 2.5 GiB. An edit in `YuE2 Edit Track` peaks no higher than singing the song did |
 | Disk | **7.26 GB**, as one file or as three. The INT8 build is 3.69 GB. `YuE2 Write Song` adds 2.55 GB unless you already have a GGUF, plus 32 MB of llama.cpp binaries if `llama-cpp-python` is not installed. `YuE2 Transcribe` adds 1.29 GB, and 3.80 GB more once it recognises words. `vocals_only`, `YuE2 Vocals Only` and `YuE2 Edit Track` add 0.85 GB, and new words in `YuE2 Edit Track` 1.84 GB for the word aligner and the 3.80 GB speech model. Songs the pack remembers take up to 4 GiB in ComfyUI's user folder, 8 with their sounds kept |
 | Packages | `tiktoken`, which ComfyUI does not ship. It is the only thing this pack adds; `requests`, which the downloader uses, is already in every ComfyUI install. `llama-cpp-python` is optional -- `YuE2 Write Song` uses it when it is there and official llama.cpp binaries when it is not |
@@ -1156,7 +1156,8 @@ are the ones a small card wants: `offload`, and `low_vram` under it.*
   seconds on `fast` against 95 on `sdpa`. Each repeats a seed to the bit and
   each sings a given seed its own way; see
   [Reproducibility](#reproducibility). A workflow saved with the old `cudnn`
-  runs as `fast`.
+  runs as `fast`. `fast` and `flash` need an RTX 30 card or newer; on an older
+  one the node stops at once and says to choose `sdpa`.
 - `download`, `quantization` -- where the weights come from when they are not
   on the machine yet, and which build to fetch. See
   [Where the weights go](#where-the-weights-go).

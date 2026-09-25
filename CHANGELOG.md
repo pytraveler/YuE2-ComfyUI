@@ -7,6 +7,25 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.9.2 - 2026-09-25
+
+### Fixed
+
+- **ComfyUI no longer restarts when another pack asks about the card during
+  a song.** The pack records its token loops as CUDA graphs, and by torch's
+  default some CUDA calls from any other thread spoil a graph while it is
+  being recorded. Under ComfyUI's cudaMallocAsync allocator
+  `torch.cuda.memory_stats` is one of them, and ComfyUI-MemoryVisualization
+  makes it from the server thread whenever its page polls the card. A poll
+  that landed in a recording ended the process with "Fatal Python error:
+  Aborted" -- about one song in five for the user who reported it -- while
+  core's YuE2 nodes, which record no graphs, never did. Every recording -- the
+  score, the performance, each Edit Track edit and Qwen3-ASR's step -- now
+  guards only its own thread. On an RTX 5090, with another thread asking
+  every 2 ms, the old code died at its first recording; the new one sang three
+  songs and heard them, the same bytes and the same words as with nobody
+  asking.
+
 ## 0.9.1 - 2026-09-25
 
 ### Fixed

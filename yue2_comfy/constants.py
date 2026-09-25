@@ -168,6 +168,28 @@ DOWNLOAD_CHOICES = ("auto", "comfy-org", "original", "off")
 QUANTIZATION_CHOICES = ("bf16", "int8")
 OFFLOAD_CHOICES = ("auto", "on", "off")
 
+CAPTURE_MODE = "thread_local"
+"""How a CUDA graph capture guards itself against other threads: torch's ``capture_error_mode``.
+
+torch's default, 'global', forbids every thread in the process a CUDA call that
+could disturb a capture while one is under way, and a forbidden call from
+another thread spoils the capture along with it. Under ComfyUI's
+cudaMallocAsync allocator ``torch.cuda.memory_stats`` is such a call, and packs
+make it from the server thread whenever their page polls the card:
+ComfyUI-MemoryVisualization does. On 2026-09-25 a user's ComfyUI restarted
+about one song in five, "Fatal Python error: Aborted" inside a capture while
+that pack's handler failed with "operation not permitted when stream is
+capturing"; core's YuE2 nodes, which record no graphs, never did.
+'thread_local' keeps the guard on the thread that records and leaves the
+others alone. Measured on an RTX 5090 under cudaMallocAsync with another
+thread asking memory_stats and mem_get_info every 2 ms: 'global' aborted the
+process at its first recording; 'thread_local' sang three songs (fast twice,
+sdpa once) and heard them with Qwen3-ASR, the same bytes and words as with no
+one asking, 19,000 questions and not one refused. In a loop of 300 bare
+captures 'global' lost all 300 to memory_stats and 'thread_local' none. The
+mode never touches what is recorded: 'global' with no one asking gave the same
+bytes too."""
+
 WRITER_AUTO = "auto"
 LANGUAGE_CHOICES = (
     "auto", "English", "Russian", "Chinese", "Japanese", "Korean",

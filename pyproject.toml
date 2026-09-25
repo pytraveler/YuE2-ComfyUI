@@ -1,6 +1,6 @@
 [project]
 name = "yue2-comfyui"
-version = "0.9.1"
+version = "0.9.2"
 description = "ComfyUI nodes for YuE2-3B: a style description and lyrics become a readable score and then a complete 48 kHz stereo song, generated locally."
 readme = "README.md"
 license = { file = "LICENSE" }

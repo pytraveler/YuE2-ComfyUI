@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ..constants import CAPTURE_MODE
 from . import decode, prompt
 
 N_FFT = 400
@@ -569,6 +570,8 @@ class GraphStep:
     token of which the card spent 5. Replayed from a graph the launches go in
     one call. The inputs -- the token, its position and the mask of the cache
     filled so far -- are tensors the graph reads, written before each replay.
+    It is recorded with ``CAPTURE_MODE``, so another pack's memory query from
+    a server thread cannot abort the process mid-recording.
     """
 
     def __init__(self, net: Network, static: dict, start: int):
@@ -588,7 +591,7 @@ class GraphStep:
                 run()
         torch.cuda.current_stream(device).wait_stream(side)
         self.graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(self.graph):
+        with torch.cuda.graph(self.graph, capture_error_mode=CAPTURE_MODE):
             self.out = run()
 
     def reset(self, start: int) -> None:

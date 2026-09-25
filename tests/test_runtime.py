@@ -232,3 +232,78 @@ def test_the_backend_names_still_exist_on_this_torch():
     attention = pytest.importorskip("torch.nn.attention")
     for name in runtime.FUSED_BACKENDS + (runtime.GROUPED_BACKEND,):
         assert hasattr(attention.SDPBackend, name), name
+
+
+def test_the_ar_records_into_a_guarded_graph(monkeypatch):
+    """Upstream's plain graph is swapped for one that records with CAPTURE_MODE; a cleared one stays cleared."""
+    pytest.importorskip("torch")
+    cuda_graph = pytest.importorskip("yue2_comfy.vendor.yue2.cuda_graph")
+
+    class Upstream:
+        def __init__(self, *args, attention_backend="auto", **kwargs):
+            self.attention_backend, self.device = attention_backend, "cpu"
+            self.graph = None
+
+        def _capture(self):
+            self.graph = "a plain CUDAGraph"
+
+        def close(self):
+            self.graph = None
+
+    made = []
+
+    def guarded():
+        made.append(object())
+        return made[-1]
+
+    monkeypatch.setattr(cuda_graph, "GraphAR", Upstream)
+    monkeypatch.setattr(runtime, "guarded_graph", guarded)
+    with runtime.pinned_attention("sdpa"):
+        graph = cuda_graph.GraphAR(object(), [[1]], 4)
+        assert graph.graph is None and made == []
+        graph._capture()
+        assert graph.graph is made[0]
+        graph.close()
+        assert graph.graph is None
+    assert cuda_graph.GraphAR is Upstream
+
+
+def test_another_thread_may_call_cuda_while_a_guarded_graph_records():
+    """The crash of 2026-09-25: another thread's CUDA call in the middle of a capture.
+
+    That user's was a memory query under ComfyUI's cudaMallocAsync allocator;
+    here, where the allocator is torch's own, a fresh cudaMalloc stands in for
+    it. Under torch's default mode the same call fails in that thread and spoils
+    the capture with "operation failed due to a previous error during capture".
+    """
+    import threading
+
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA card")
+    x = torch.ones(8, device="cuda")
+    ready, done = threading.Event(), threading.Event()
+    errors = []
+
+    def other():
+        ready.wait(10)
+        try:
+            torch.empty(64 << 20, dtype=torch.uint8, device="cuda")
+            torch.cuda.memory_stats()
+        except Exception as error:
+            errors.append(error)
+        done.set()
+
+    thread = threading.Thread(target=other)
+    thread.start()
+    graph = runtime.guarded_graph()
+    with torch.cuda.graph(graph):
+        y = x * 2
+        ready.set()
+        done.wait(10)
+        z = y + 1
+    graph.replay()
+    torch.cuda.synchronize()
+    thread.join()
+    assert errors == []
+    assert z.tolist() == [3.0] * 8

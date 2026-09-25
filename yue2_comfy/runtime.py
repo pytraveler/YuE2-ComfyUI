@@ -12,8 +12,11 @@ found, including on failure.
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import warnings
+
+from .constants import CAPTURE_MODE
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +101,12 @@ def pinned_attention(backend: str):
     a graph is built, so a run on the processor, which builds none, is never
     refused for it. An old 'cudnn' is read as 'fast'; see ``attention.LEGACY``.
 
+    The graph each GraphAR records into is swapped as well. Upstream makes a
+    plain ``torch.cuda.CUDAGraph`` just before recording and records with
+    torch's default mode, under which another thread's memory query can abort
+    the process; the one this class hands out records with ``CAPTURE_MODE``.
+    See ``guarded_graph``.
+
     This covers the AR stages only. The acoustic stage has its own kernel; see
     ``fused_attention``.
     """
@@ -109,6 +118,16 @@ def pinned_attention(backend: str):
     answering = [None]
 
     class PinnedGraphAR(original):
+        _guarded = None
+
+        @property
+        def graph(self):
+            return self._guarded
+
+        @graph.setter
+        def graph(self, value):
+            self._guarded = None if value is None else guarded_graph()
+
         def __init__(self, *args, **kwargs):
             kwargs["attention_backend"] = attention.SDPA
             super().__init__(*args, **kwargs)
@@ -139,6 +158,29 @@ def pinned_attention(backend: str):
     finally:
         cuda_graph.GraphAR = original
         cuda_graph.F = functional
+
+
+def guarded_graph():
+    """A CUDA graph that records with ``CAPTURE_MODE``, whatever mode its capture asks for.
+
+    ``torch.cuda.graph`` passes its mode to the graph's own ``capture_begin``,
+    so a graph that answers for the mode changes nothing else in the code that
+    records into it -- upstream's GraphAR among them, which is left as written.
+    Made fresh for every capture, the way upstream makes a plain one.
+    """
+    return _guarded_class()()
+
+
+@functools.lru_cache(maxsize=None)
+def _guarded_class():
+    """The graph class ``guarded_graph`` makes, built once torch is wanted."""
+    import torch
+
+    class GuardedGraph(torch.cuda.CUDAGraph):
+        def capture_begin(self, pool=None, capture_error_mode=CAPTURE_MODE):
+            super().capture_begin(pool=pool, capture_error_mode=CAPTURE_MODE)
+
+    return GuardedGraph
 
 
 GROUPED_BACKEND = "CUDNN_ATTENTION"

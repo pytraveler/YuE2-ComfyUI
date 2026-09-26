@@ -7,6 +7,21 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.9.4 - 2026-09-26
+
+### Fixed
+
+- **Songs sing again on torch 2.13 and newer.** The guard 0.9.2 put on every
+  graph recording answered only the two arguments torch 2.11 and 2.12 pass
+  when a recording starts. torch 2.13 added a third, `check_input_liveness`,
+  and on it `YuE2 Generate Song` and `YuE2 Edit Track` stopped at their first
+  recording with "TypeError: ... capture_begin() got an unexpected keyword
+  argument 'check_input_liveness'" (issue #8). The guard now passes on
+  whatever torch gives it and still sets the recording mode itself. Checked
+  on an RTX 5090 with torch 2.14: the 0.9.3 code failed with the reported
+  error, the new one sang a song with `sdpa` and with `fast` and Qwen3-ASR
+  heard its words; the tests pass on torch 2.11 and 2.14 alike.
+
 ## 0.9.3 - 2026-09-26
 
 ### Fixed

@@ -268,6 +268,27 @@ def test_the_ar_records_into_a_guarded_graph(monkeypatch):
     assert cuda_graph.GraphAR is Upstream
 
 
+def test_a_guarded_graph_takes_what_a_newer_torch_passes(monkeypatch):
+    """Issue #8: torch 2.13 added ``check_input_liveness`` to the call; it goes through, the mode is still ours."""
+    torch = pytest.importorskip("torch")
+    calls = []
+
+    class Newer:
+        def capture_begin(self, pool=None, capture_error_mode="global", check_input_liveness=False):
+            calls.append((pool, capture_error_mode, check_input_liveness))
+
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", Newer)
+    runtime._guarded_class.cache_clear()
+    try:
+        graph = runtime.guarded_graph()
+        graph.capture_begin(capture_error_mode="global", check_input_liveness=True)
+        graph.capture_begin("pool", capture_error_mode="relaxed")
+    finally:
+        runtime._guarded_class.cache_clear()
+    mode = runtime.CAPTURE_MODE
+    assert calls == [(None, mode, True), ("pool", mode, False)]
+
+
 def test_another_thread_may_call_cuda_while_a_guarded_graph_records():
     """The crash of 2026-09-25: another thread's CUDA call in the middle of a capture.
 

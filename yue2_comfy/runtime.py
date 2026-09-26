@@ -167,6 +167,11 @@ def guarded_graph():
     so a graph that answers for the mode changes nothing else in the code that
     records into it -- upstream's GraphAR among them, which is left as written.
     Made fresh for every capture, the way upstream makes a plain one.
+
+    Every other argument goes through as it came. From torch 2.13 on,
+    ``torch.cuda.graph`` also passes ``check_input_liveness``; a ``capture_begin``
+    that named only the pool and the mode refused it, and every song on such a
+    torch failed at its first capture (issue #8).
     """
     return _guarded_class()()
 
@@ -177,8 +182,8 @@ def _guarded_class():
     import torch
 
     class GuardedGraph(torch.cuda.CUDAGraph):
-        def capture_begin(self, pool=None, capture_error_mode=CAPTURE_MODE):
-            super().capture_begin(pool=pool, capture_error_mode=CAPTURE_MODE)
+        def capture_begin(self, pool=None, capture_error_mode=CAPTURE_MODE, **kwargs):
+            super().capture_begin(pool=pool, capture_error_mode=CAPTURE_MODE, **kwargs)
 
     return GuardedGraph
 

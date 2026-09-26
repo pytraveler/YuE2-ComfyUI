@@ -100,6 +100,7 @@ jobs:
                         yue2_comfy/nodes.py yue2_comfy/constants.py \
                         yue2_comfy/generate.py yue2_comfy/loader.py \
                         yue2_comfy/download.py yue2_comfy/llm.py \
+                        yue2_comfy/catalog.py yue2_comfy/writers.json \
                         yue2_comfy/staged.py yue2_comfy/manifest.py \
                         yue2_comfy/routes.py yue2_comfy/tokens.py \
                         yue2_comfy/placement.py yue2_comfy/transpose.py \

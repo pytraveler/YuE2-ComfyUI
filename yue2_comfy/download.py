@@ -738,6 +738,11 @@ def fetch_decoder(variant: str, progress=None) -> None:
 
 def writer_wanted() -> dict:
     """The default writer model, and where a GGUF belongs on this machine."""
+    return {WRITER_PATH: os.path.join(writer_root(), WRITER_NAME)}
+
+
+def writer_root() -> str:
+    """ComfyUI/models/LLM, or where ComfyUI has that folder registered: where a writer is downloaded to."""
     root = os.path.join(paths.models_root(), WRITER_SUBDIR)
     folder_paths = paths._folder_paths()
     if folder_paths is not None:
@@ -750,7 +755,33 @@ def writer_wanted() -> dict:
             root = registered[0]
         else:
             root = os.path.join(folder_paths.models_dir, WRITER_SUBDIR)
-    return {WRITER_PATH: os.path.join(root, WRITER_NAME)}
+    return root
+
+
+def fetch_listed(name: str, repo: str, file: str, settings: dict, progress=None) -> str:
+    """A writer from the model list, fetched into ``writer_root()`` under its own file name.
+
+    The repository is asked first whether it has the file at all, because an
+    entry somebody typed can be misspelt, and "no such file, correct the
+    entry" is a better answer than the pack's own "the repository has been
+    rearranged". With downloading off the refusal gives the link and the
+    folder, as the default writer's does.
+    """
+    destination = os.path.join(writer_root(), file.replace("\\", "/").split("/")[-1])
+    link = endpoint() + "/" + repo + "/resolve/main/" + file
+    if settings.get("download", "auto") == "off":
+        raise FileNotFoundError(
+            "'" + name + "' is in the model list but not on this machine, and 'download' in "
+            "YuE2 Options is 'off'.\n\nFetch it by hand:\n\n" + link + "\n  -> " + destination
+            + "\n\nor pick a model that is already here.")
+    sizes = list_repo_files(repo, token=access_token())
+    if file not in sizes:
+        raise DownloadError(
+            "'" + repo + "' has no file '" + file + "'. Correct the entry '" + name
+            + "' in the model list, or pick another model.")
+    fetch(repo, {file: destination},
+          "Downloading " + name + " ({})".format(human_size(sizes[file])), progress)
+    return destination
 
 
 def fetch_writer(settings: dict, progress=None) -> str:

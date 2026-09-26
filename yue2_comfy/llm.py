@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 from . import chat_template, devices, gguf_meta, paths
 from .constants import (WRITER_AUTO, WRITER_MAX_NEW_TOKENS, WRITER_NAME,
@@ -42,7 +43,9 @@ BINARY = "llama.cpp binary"
 SUFFIX = ".gguf"
 RUNNABLE = "model"
 OLLAMA_PREFIX = "ollama: "
+PROBLEM_PREFIX = "!! "
 HEADER_KEYS = ("general.architecture", "general.type", "tokenizer.chat_template")
+SCAN_SECONDS = 2.0
 
 DEFAULT_GPU_LAYERS = -1
 LOOP_EVERY = 32
@@ -51,7 +54,7 @@ PREVIEW_TAIL = 240
 _STATE: dict = {"key": None, "llama": None}
 _LOCK = threading.RLock()
 _HEADERS: dict = {}
-_CATALOGUE: dict = {"roots": None, "entries": []}
+_CATALOGUE: dict = {"roots": None, "entries": [], "at": 0.0}
 
 
 def install_hint() -> str:
@@ -180,12 +183,20 @@ def catalogue(refresh: bool = False) -> list:
     Ollama's store is read too, and its models are marked. Everything in this
     list is on disk, so "on disk" would mark nothing; what is worth saying is
     which store a file lives in, and only one of them is not a model folder.
+
+    The folders are looked at again whenever the list is more than
+    SCAN_SECONDS old. It used to be kept for the life of the process, so a GGUF
+    copied into models/LLM stayed out of the list until ComfyUI restarted --
+    which is what copying a model in is supposed to avoid. The look costs about
+    4 ms over 26 folders (measured 2026-09-26, headers already cached); the few
+    seconds only spare the second node's INPUT_TYPES in the same answer.
     """
     from . import ollama
 
     roots = paths.gguf_roots()
     key = (tuple(roots), tuple(ollama.roots()))
-    if not refresh and _CATALOGUE["roots"] == key:
+    now = time.monotonic()
+    if not refresh and _CATALOGUE["roots"] == key and now - _CATALOGUE.get("at", 0.0) < SCAN_SECONDS:
         return list(_CATALOGUE["entries"])
 
     files: list = []
@@ -218,12 +229,71 @@ def catalogue(refresh: bool = False) -> list:
 
     _CATALOGUE["roots"] = key
     _CATALOGUE["entries"] = entries
+    _CATALOGUE["at"] = time.monotonic()
     return list(entries)
 
 
+def _listed_names(listed: list) -> tuple:
+    """The file names of listed Hub entries, and the paths of listed local ones, for telling twins apart."""
+    names = {os.path.basename(entry.file.replace("\\", "/")).lower() for entry in listed if not entry.local}
+    local = {os.path.normcase(os.path.abspath(entry.file)) for entry in listed if entry.local}
+    return names, local
+
+
+def offered() -> list:
+    """``(label, entry or path)`` after 'auto', in the order the widget shows them.
+
+    The model list's entries come first, in the list's own order, then the
+    GGUFs found on disk and in Ollama. A file on disk that a listed entry names
+    is not shown a second time under its file name: the entry stands for it,
+    and picking the entry uses the file without downloading anything. A
+    workflow saved with that file's own label still runs (``resolve`` and
+    ``known`` read the whole catalogue). When the live list does not parse,
+    a line starting with PROBLEM_PREFIX says so at the top.
+    """
+    from . import catalog
+
+    rows = []
+    why = catalog.problem()
+    if why:
+        rows.append((PROBLEM_PREFIX + why + " -- the pack's own list is shown instead", None))
+    listed = catalog.entries()
+    rows.extend((entry.label, entry) for entry in listed)
+    names, local = _listed_names(listed)
+    for label, path in catalogue():
+        if label.startswith(OLLAMA_PREFIX):
+            rows.append((label, path))
+            continue
+        if os.path.basename(path).lower() in names or os.path.normcase(os.path.abspath(path)) in local:
+            continue
+        rows.append((label, path))
+    return rows
+
+
 def choices() -> list:
-    """The model widget's list: 'auto' first, then what is already on disk."""
-    return [WRITER_AUTO] + [name for name, _path in catalogue()]
+    """The model widget's list: 'auto', the model list's entries, then what is on disk and in Ollama."""
+    return [WRITER_AUTO] + [label for label, _target in offered()]
+
+
+def listed_file(entry, found=None) -> str:
+    """The file on this machine a listed entry stands for, or "" when it has to be downloaded.
+
+    A local entry is its own path. A Hub entry is its file name in the folder
+    it downloads to, or the same name anywhere the search finds it -- a model
+    somebody already has in another folder is not fetched twice.
+    """
+    from . import download
+
+    if entry.local:
+        return entry.file if os.path.isfile(entry.file) else ""
+    name = os.path.basename(entry.file.replace("\\", "/"))
+    here = os.path.join(download.writer_root(), name)
+    if os.path.isfile(here) and runnable(here):
+        return here
+    for _label, path in (catalogue() if found is None else found):
+        if os.path.basename(path).lower() == name.lower():
+            return path
+    return ""
 
 
 def _preferred(entries: list) -> str:
@@ -246,29 +316,80 @@ def resolve(choice: str, settings: dict, progress=None) -> str:
     The size in a label is cosmetic, so a saved workflow is matched without it
     too. Replacing a quant with a different one of the same name changes the
     label and must not break a graph that was working yesterday.
+
+    An entry of the model list is used from disk when its file is here and
+    downloaded into models/LLM when it is not; it is found by its label and,
+    failing that, by its name, so a size or VRAM note edited since the
+    workflow was saved does not lose it.
     """
-    from . import download
+    from . import catalog, download
 
     entries = catalogue()
     wanted = (choice or WRITER_AUTO).strip()
     if wanted and wanted != WRITER_AUTO:
-        for name, path in entries:
-            if name == wanted:
-                return path
-        stem = wanted.split(" (")[0]
-        for name, path in entries:
-            if name.split(" (")[0] == stem:
-                return path
+        if wanted.startswith(PROBLEM_PREFIX):
+            raise FileNotFoundError(
+                wanted[len(PROBLEM_PREFIX):] + ".\n\nThis line only reports the problem. Mend "
+                + catalog.live_file() + " or delete it, then pick a model.")
+        entry = catalog.find(wanted)
+        if entry is not None:
+            here = listed_file(entry, entries)
+            if here:
+                return here
+            if entry.local:
+                raise FileNotFoundError(
+                    "'" + entry.name + "' in the model list points at " + entry.file
+                    + ", which is not there.\n\nCorrect the entry, or pick another model.")
+            return download.fetch_listed(entry.name, entry.repo, entry.file, settings, progress)
+        found = _on_disk(wanted, entries)
+        if found:
+            return found
         known = ", ".join(name for name, _path in entries) or "nothing"
         raise FileNotFoundError(
-            "'" + wanted + "' is not in the model folders any more. What is there now: "
-            + known + ".\n\nPick another entry, or set the model widget back to '"
-            + WRITER_AUTO + "'.")
+            "'" + wanted + "' is neither in the model list nor in the model folders any more. "
+            "What is on disk now: " + known + ".\n\nPick another entry, or set the model widget "
+            "back to '" + WRITER_AUTO + "'.")
 
     here = _preferred(entries)
     if here:
         return here
     return download.fetch_writer(settings, progress)
+
+
+def _on_disk(wanted: str, entries: list) -> str:
+    """The path of a file on disk whose label is ``wanted``, with or without its size."""
+    for name, path in entries:
+        if name == wanted:
+            return path
+    stem = wanted.split(" (")[0]
+    for name, path in entries:
+        if name.split(" (")[0] == stem:
+            return path
+    return ""
+
+
+def known(choice) -> str:
+    """Why a saved model choice cannot run, or "" when it can -- without downloading anything.
+
+    For the nodes' VALIDATE_INPUTS, which takes the widget out of ComfyUI's
+    own "Value not in list" check: a choice the widget no longer lists may
+    still name a model (a file shown now under the list's entry, an entry
+    whose note or size was edited), and one that names nothing gets a reason
+    a person can act on.
+    """
+    from . import catalog
+
+    if not isinstance(choice, str):
+        return "the model is chosen from the list, not connected from another node"
+    wanted = choice.strip()
+    if not wanted or wanted == WRITER_AUTO:
+        return ""
+    if wanted.startswith(PROBLEM_PREFIX):
+        return wanted[len(PROBLEM_PREFIX):] + " -- pick a model from the list"
+    if catalog.find(wanted) is not None or _on_disk(wanted, catalogue()):
+        return ""
+    return ("'" + wanted + "' is neither in the model list nor in the model folders any more. "
+            "Pick another model, or '" + WRITER_AUTO + "'.")
 
 
 def free_comfy_vram(spec: str) -> None:

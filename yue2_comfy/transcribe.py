@@ -40,7 +40,7 @@ import hashlib
 import logging
 
 from . import edits
-from .constants import CATEGORY, OPTIONS_TYPE
+from .constants import CATEGORY, OPTIONS_TYPE, WRITER_AUTO
 from .progress import Band, NodeProgress, announce, interrupted, refuse, translate_interrupt
 from .staged import resolve
 
@@ -291,6 +291,21 @@ class YuE2Transcribe:
     RETURN_NAMES = ("score_abc", "lyrics")
     FUNCTION = "transcribe"
     CATEGORY = CATEGORY
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, model=WRITER_AUTO, lyrics_auto_recognition=False):
+        """The model is checked only when the words are recognised, which is the only time it runs.
+
+        ComfyUI checks a list widget against its list unless this names the
+        input; see ``YuE2WriteSong.VALIDATE_INPUTS`` for why a choice the list
+        no longer shows can still run. With recognition off the model is never
+        used, so a stale choice there does not stop the transcription.
+        """
+        from . import llm
+
+        if lyrics_auto_recognition is not True:
+            return True
+        return llm.known(model) or True
 
     def transcribe(self, audio, mode, lyrics_auto_recognition, model, seed, options=None,
                    score_abc="", lyrics="", listen=LISTEN_CHOICES[0], unique_id=None):

@@ -53,3 +53,19 @@ def lora_folders_of_the_test_alone(monkeypatch, tmp_path):
     monkeypatch.setattr(catalogue, "roots", lambda: [])
     monkeypatch.setattr(catalogue, "_cache_path",
                         lambda: str(tmp_path / "lora_verdicts" / catalogue.CACHE_NAME))
+
+
+@pytest.fixture(autouse=True)
+def writer_list_of_the_test_alone(monkeypatch, tmp_path):
+    """Every test reads the pack's own model list and writes any edit of it into its own folder.
+
+    Outside ComfyUI the live list would go to the pack's user folder inside the
+    working tree, and a list edited on the machine running the tests would be
+    read instead of the pack's.
+    """
+    from yue2_comfy import catalog
+
+    catalog.forget()
+    monkeypatch.setattr(catalog, "live_file", lambda: str(tmp_path / "writer_list" / catalog.FILE_NAME))
+    yield
+    catalog.forget()

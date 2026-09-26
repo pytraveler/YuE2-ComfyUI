@@ -42,10 +42,17 @@ def write_gguf(path, kind="model", arch="qwen35", chat=True, truncated=False):
 
 
 @pytest.fixture(autouse=True)
-def forget_models(monkeypatch):
-    """No cache between tests, and no Ollama store on the machine running them."""
-    from yue2_comfy import ollama
+def forget_models(monkeypatch, tmp_path):
+    """No cache between tests, no Ollama store on the machine running them, and an empty model list.
 
+    The model list is test_catalog's; here the widget offers what is on disk.
+    """
+    from yue2_comfy import catalog, ollama
+
+    empty = tmp_path / "empty_writers.json"
+    empty.write_bytes(b'{"writers": []}')
+    monkeypatch.setattr(catalog, "SEED_FILE", str(empty))
+    catalog.forget()
     monkeypatch.setattr(ollama, "roots", lambda: [])
     llm._HEADERS.clear()
     llm._CATALOGUE.update({"roots": None, "entries": []})

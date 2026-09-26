@@ -1,0 +1,78 @@
+{
+  "_comment": [
+    "The language models YuE2 Write Song and YuE2 Transcribe offer for download.",
+    "This is the pack's copy. The live one is ComfyUI/user/yue2_comfy/writers.json:",
+    "it is made from this on first use, and edits there survive an update of the pack.",
+    "Each entry: name (what the list shows), repo (a Hugging Face repository),",
+    "file (the .gguf inside it, or a full path to a file on this machine with no repo),",
+    "download_gb (in 1024**3 bytes, as the progress bar counts them), vram (a short",
+    "note on the card it needs) and note.",
+    "A GGUF put into ComfyUI/models/LLM is offered without being listed here."
+  ],
+  "writers": [
+    {
+      "name": "Qwen3.5-4B Q4_K_M",
+      "repo": "unsloth/Qwen3.5-4B-GGUF",
+      "file": "Qwen3.5-4B-Q4_K_M.gguf",
+      "download_gb": 2.55,
+      "vram": "~4 GB VRAM",
+      "note": "The pack's default: small, fast, good enough for most songs."
+    },
+    {
+      "name": "Qwen3.5-9B Q4_K_M",
+      "repo": "unsloth/Qwen3.5-9B-GGUF",
+      "file": "Qwen3.5-9B-Q4_K_M.gguf",
+      "download_gb": 5.29,
+      "vram": "~7 GB VRAM",
+      "note": "A step up from the default on an 8-12 GB card."
+    },
+    {
+      "name": "Gemma 4 12B Q4_K_M",
+      "repo": "unsloth/gemma-4-12b-it-GGUF",
+      "file": "gemma-4-12b-it-Q4_K_M.gguf",
+      "download_gb": 6.63,
+      "vram": "~9 GB VRAM",
+      "note": "Google's mid-size model; another voice for the lyrics."
+    },
+    {
+      "name": "Qwen3.8-27B Q4_K_M",
+      "repo": "unsloth/Qwen3.8-27B-GGUF",
+      "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "download_gb": 15.33,
+      "vram": "~17 GB VRAM",
+      "note": "A large model for a 24 GB card."
+    },
+    {
+      "name": "Gemma 4 26B-A4B Q4_K_M",
+      "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "file": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+      "download_gb": 15.78,
+      "vram": "~19 GB VRAM",
+      "note": "Mixture of experts: large, but answers about as fast as a 4B."
+    },
+    {
+      "name": "Gemma 4 31B Q4_K_M",
+      "repo": "unsloth/gemma-4-31B-it-GGUF",
+      "file": "gemma-4-31B-it-Q4_K_M.gguf",
+      "download_gb": 17.07,
+      "vram": "~20 GB VRAM",
+      "note": "Google's largest dense model; slower than the 26B-A4B."
+    },
+    {
+      "name": "Qwen3.6-27B Q5_K_M",
+      "repo": "unsloth/Qwen3.6-27B-GGUF",
+      "file": "Qwen3.6-27B-Q5_K_M.gguf",
+      "download_gb": 18.17,
+      "vram": "~19 GB VRAM",
+      "note": "A large model for a 24 GB card."
+    },
+    {
+      "name": "Gemma 4 26B-A4B Q6_K",
+      "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "file": "gemma-4-26B-A4B-it-UD-Q6_K.gguf",
+      "download_gb": 21.58,
+      "vram": "~24 GB VRAM",
+      "note": "The 26B-A4B at a finer quantisation, for a 32 GB card."
+    }
+  ]
+}

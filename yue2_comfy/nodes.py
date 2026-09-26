@@ -45,8 +45,9 @@ IDEA_TOOLTIP = (
 WRITER_MODEL_TOOLTIP = (
     "The language model that does the writing. '" + WRITER_AUTO + "' uses a GGUF you "
     "already have and downloads a 2.7 GB one only if you have none.\n\n"
-    "The other entries are the GGUFs found in your ComfyUI model folders. LoRA adapters "
-    "and mmproj files are left out: they cannot answer on their own."
+    "Next comes the pack's model list, each with its size and the card it needs, downloaded "
+    "the first time you pick it; then every GGUF found in your ComfyUI model folders and in "
+    "Ollama. Put any GGUF with a chat template into models/LLM and it appears here."
 )
 
 LANGUAGE_TOOLTIP = (
@@ -499,6 +500,20 @@ class YuE2WriteSong:
     RETURN_NAMES = ("style", "lyrics")
     FUNCTION = "write"
     CATEGORY = CATEGORY
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, model=WRITER_AUTO):
+        """Let a workflow saved with a model the list no longer shows run when the model is still there.
+
+        ComfyUI checks a list widget against its list unless this names the
+        input. A file on disk is shown under the model list's entry once the
+        list names it, and an entry's label changes with its size note; both
+        still run. A choice that names nothing is refused here with a reason
+        rather than "Value not in list".
+        """
+        from . import llm
+
+        return llm.known(model) or True
 
     def write(self, idea, model, language, length, seed, keep_model_loaded,
               instructions="", options=None, unique_id=None):

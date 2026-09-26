@@ -27,10 +27,15 @@ model added after you installed".
 ``problem()`` says why, and every write is refused until the file parses again:
 saving over it would replace the person's own entries with the seed's.
 
-**The label is the value a workflow saves**, so it is made of the name, the size
-and the VRAM note only; the note is not part of it and can change freely. A
-workflow saved with a label that is no longer offered still reaches
-``llm.resolve``, which finds the entry by its name.
+**The widget says where each entry's file is**: ``name (on disk, VRAM note)``
+or ``name (download N GB, VRAM note)``. Without it the list's models and the
+files on the machine looked alike, and nothing said which pick would start a
+20 GB download (the person's own check, 2026-09-26). That label is also the
+value a workflow saves, so it changes when the file arrives. ``find`` knows
+an entry by every label it can have and by its name alone, so a saved label
+still reaches its model through ``llm.resolve``, and the browser moves an
+open graph onto the new label (web/js/yue2_writers.js). The note is not part
+of the label and can change freely.
 
 Standard library only.
 """
@@ -64,6 +69,10 @@ LARGEST_GB = 1000.0
 RESERVED = ("auto",)
 RESERVED_PREFIXES = ("!!", "ollama:")
 REPO_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+ON_DISK = "on disk"
+TO_DOWNLOAD = "download"
+NOT_FOUND = "not found"
+TAIL = re.compile(r" \([^()]*\)$")
 
 _CACHE: dict = {"key": None, "data": None, "problem": ""}
 _SEED: dict = {"key": None, "data": None}
@@ -84,13 +93,32 @@ class Entry:
 
     @property
     def label(self) -> str:
-        """What the model widget shows and a workflow saves: name, then size and card in brackets."""
+        """Name, then size and card in brackets: the label without where the file is.
+
+        It tells entries apart, and the widget showed it before it said where
+        each file was, so a workflow saved then carries it.
+        """
         parts = []
         if self.download_gb:
             parts.append("{:g} GB".format(self.download_gb))
         if self.vram:
             parts.append(self.vram)
         return self.name + (" (" + ", ".join(parts) + ")" if parts else "")
+
+    def shown(self, here: bool) -> str:
+        """What the model widget shows and a workflow saves: the name, where the file is, and the card.
+
+        ``here`` is whether the file is on this machine. A Hub entry that is
+        not says how much its first run downloads; a local one that is not
+        says so, because nothing will fetch it.
+        """
+        if here:
+            where = ON_DISK
+        elif self.local:
+            where = NOT_FOUND
+        else:
+            where = TO_DOWNLOAD + (" {:g} GB".format(self.download_gb) if self.download_gb else "")
+        return self.name + " (" + ", ".join([where] + ([self.vram] if self.vram else [])) + ")"
 
     @property
     def local(self) -> bool:
@@ -260,6 +288,11 @@ def _entry(raw) -> Entry:
                  vram=str(raw.get("vram") or "").strip(), note=str(raw.get("note") or "").strip())
 
 
+def entry(raw):
+    """One entry as written in the file, as the widget would use it, or None when it cannot be."""
+    return _entry(raw)
+
+
 def entries() -> list:
     """The listed models the widget offers, in the file's order; malformed ones are skipped."""
     found = []
@@ -272,19 +305,30 @@ def entries() -> list:
     return found
 
 
+def stem(label: str) -> str:
+    """A label without its last bracketed part, where the size, the place and the card go."""
+    return TAIL.sub("", label).strip()
+
+
 def find(choice: str):
-    """The entry a widget value names: by its label, then by the name before the brackets."""
+    """The entry a widget value names: by any label it can have, then by its name.
+
+    The name is tried whole and then without the last bracketed part, so
+    'Qwen (abliterated)' and 'Qwen (abliterated) (on disk)' find the same
+    entry, and a label whose size, place or card has changed since the
+    workflow was saved still finds its model.
+    """
     wanted = (choice or "").strip()
     if not wanted:
         return None
     listed = entries()
     for entry in listed:
-        if entry.label == wanted:
+        if wanted in (entry.shown(True), entry.shown(False), entry.label):
             return entry
-    stem = wanted.split(" (")[0].strip().casefold()
-    for entry in listed:
-        if entry.name.casefold() == stem:
-            return entry
+    for key in (wanted.casefold(), stem(wanted).casefold()):
+        for entry in listed:
+            if entry.name.casefold() == key:
+                return entry
     return None
 
 
@@ -367,6 +411,8 @@ def clean_entry(raw: dict) -> dict:
     if size:
         out["download_gb"] = round(size, 2)
     vram = _line(raw.get("vram"), VRAM_LIMIT, "The VRAM note")
+    if "(" in vram or ")" in vram:
+        raise CatalogWriteError("The VRAM note cannot hold brackets: the list shows it inside its own.")
     note = _line(raw.get("note"), NOTE_LIMIT, "The note")
     if vram:
         out["vram"] = vram
@@ -455,6 +501,22 @@ def remove(name: str) -> bool:
     del data[SECTION][index]
     _write(path, data, backup=False)
     return True
+
+
+def materialize() -> str:
+    """The live file's path, written from the pack's list first when there is none yet.
+
+    For 'Open writers.json': until something is edited the live file does not
+    exist, and opening the pack's own copy instead would send hand edits where
+    the next update overwrites them. A file that is there is left as it is,
+    parsing or not -- opening it to mend it is the point.
+    """
+    path = live_file()
+    if os.path.isfile(path):
+        return path
+    path, data = _mutable()
+    _write(path, data, backup=False)
+    return path
 
 
 def restorable() -> list:

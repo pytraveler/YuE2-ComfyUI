@@ -100,7 +100,7 @@ jobs:
                         yue2_comfy/nodes.py yue2_comfy/constants.py \
                         yue2_comfy/generate.py yue2_comfy/loader.py \
                         yue2_comfy/download.py yue2_comfy/llm.py \
-                        yue2_comfy/catalog.py yue2_comfy/writers.json \
+                        yue2_comfy/catalog.py yue2_comfy/writers.json yue2_comfy/model_list.py \
                         yue2_comfy/staged.py yue2_comfy/manifest.py \
                         yue2_comfy/routes.py yue2_comfy/tokens.py \
                         yue2_comfy/placement.py yue2_comfy/transpose.py \
@@ -140,7 +140,7 @@ jobs:
                         web/js/yue2_sounds.js web/js/yue2_piano.js \
                         web/js/yue2_midi.js \
                         web/js/yue2_track.js web/js/yue2_editlist.js \
-                        web/js/yue2_songs.js \
+                        web/js/yue2_songs.js web/js/yue2_writers.js \
                         web/js/yue2_styles.js web/js/piano/60.ogg \
                         web/js/vendor/abcjs-basic-min.cjs \
                         web/js/vendor/abcjs-LICENSE.md \

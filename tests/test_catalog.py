@@ -4,13 +4,19 @@ The live file lives in each test's own folder (see conftest). Tests that need
 a different seed write one and point ``catalog.SEED_FILE`` at it.
 """
 
+import ast
 import json
 import os
+import pathlib
+import re
 
 import pytest
 
 from test_llm import write_gguf
 from yue2_comfy import catalog, download, llm, paths
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+WRITERS_JS = ROOT / "web" / "js" / "yue2_writers.js"
 
 
 def seed_file(tmp_path, names, **extra):
@@ -80,6 +86,17 @@ def test_the_label_is_the_name_with_size_and_card():
                           note="a note that is not in the label")
     assert entry.label == "Qwen 9B (5.68 GB, ~7 GB VRAM)"
     assert catalog.Entry(name="Bare", file="b.gguf", repo="a/b").label == "Bare"
+
+
+def test_the_widget_says_where_the_file_is():
+    """On disk, or how much the first run downloads; a local entry that is gone says so, since nothing fetches it."""
+    entry = catalog.Entry(name="Qwen 9B", file="q.gguf", repo="a/b", download_gb=5.68, vram="~7 GB VRAM")
+    assert entry.shown(True) == "Qwen 9B (on disk, ~7 GB VRAM)"
+    assert entry.shown(False) == "Qwen 9B (download 5.68 GB, ~7 GB VRAM)"
+    assert catalog.Entry(name="Bare", file="b.gguf", repo="a/b").shown(False) == "Bare (download)"
+    assert catalog.Entry(name="Mine", file="/models/m.gguf").shown(False) == "Mine (not found)"
+    for label in (entry.shown(True), entry.shown(False), entry.label):
+        assert catalog.stem(label) == entry.name
 
 
 def test_the_first_edit_writes_the_whole_list_and_what_it_was_offered(seeded):
@@ -202,6 +219,7 @@ def test_the_pack_entries_come_back_and_your_own_stay(seeded):
     ({"name": "N", "repo": "o/n", "file": "n.gguf", "download_gb": -1}, "0 or more"),
     ({"name": "N", "repo": "o/n", "file": "n.gguf", "download_gb": "big"}, "number"),
     ({"name": "N", "repo": "o/n", "file": "n.gguf", "note": "two\nlines"}, "one line"),
+    ({"name": "N", "repo": "o/n", "file": "n.gguf", "vram": "~7 GB (8k)"}, "brackets"),
 ])
 def test_what_the_list_refuses(raw, reason):
     with pytest.raises(catalog.CatalogWriteError, match=reason):
@@ -217,9 +235,20 @@ def test_a_file_on_this_machine_needs_no_repository(tmp_path):
 def test_an_entry_is_found_by_label_and_by_name(seeded):
     first = catalog.entries()[0]
     assert catalog.find(first.label) == first
+    assert catalog.find(first.shown(True)) == first
+    assert catalog.find(first.shown(False)) == first
     assert catalog.find("Alpha 1B (9.9 GB, another note)") == first
     assert catalog.find("alpha 1b") == first
     assert catalog.find("Nobody (1 GB)") is None
+
+
+def test_a_name_with_brackets_is_found_with_and_without_its_place(seeded):
+    catalog.add({"name": "Qwen (abliterated)", "repo": "o/q", "file": "q.gguf", "vram": "~5 GB VRAM"})
+    entry = catalog.find("Qwen (abliterated) (on disk, ~5 GB VRAM)")
+    assert entry is not None and entry.name == "Qwen (abliterated)"
+    assert catalog.find("Qwen (abliterated)") == entry
+    assert catalog.find("Qwen (abliterated) (download 9 GB, ~5 GB VRAM)") == entry
+    assert catalog.find("Qwen") is None
 
 
 @pytest.fixture
@@ -250,8 +279,28 @@ def test_the_widget_offers_auto_then_the_list_then_the_disk(machine):
     folder, _fetched = machine
     write_gguf(folder / "own.gguf")
     write_gguf(folder / "Alpha-1B.gguf")
-    offered = [choice.split(" (")[0] for choice in llm.choices()]
-    assert offered == ["auto", "Alpha 1B", "Beta 2B", "own.gguf"]
+    choices = llm.choices()
+    assert choices[:3] == ["auto", "Alpha 1B (on disk, ~3 GB VRAM)", "Beta 2B (download 1.5 GB, ~3 GB VRAM)"]
+    assert [choice.split(" (")[0] for choice in choices[3:]] == ["own.gguf"]
+
+
+def test_a_downloaded_model_turns_from_download_to_on_disk(machine, monkeypatch):
+    """The label changes when the file arrives; the one a workflow saved before still runs, with no second fetch."""
+    folder, fetched = machine
+    before = "Beta 2B (download 1.5 GB, ~3 GB VRAM)"
+    assert before in llm.choices()
+    wanted = write_gguf(folder / "Beta-2B.gguf")
+    monkeypatch.setattr(llm, "SCAN_SECONDS", 0.0)
+    choices = llm.choices()
+    assert "Beta 2B (on disk, ~3 GB VRAM)" in choices and before not in choices
+    assert llm.known(before) == ""
+    assert llm.resolve(before, {}, None) == wanted and fetched == []
+
+
+def test_a_local_entry_whose_file_is_gone_says_so(machine):
+    folder, _fetched = machine
+    catalog.add({"name": "Mine", "file": str(folder / "gone.gguf")})
+    assert "Mine (not found)" in llm.choices()
 
 
 def test_a_listed_model_already_on_disk_is_used_without_a_download(machine):
@@ -344,3 +393,49 @@ def test_a_misspelt_listed_file_is_named_before_anything_is_fetched(tmp_path, mo
     monkeypatch.setattr(download, "fetch", lambda *args, **kwargs: pytest.fail("fetched a file that is not there"))
     with pytest.raises(download.DownloadError, match="has no file 'Beat.gguf'"):
         download.fetch_listed("Beta 2B", "owner/Beta-GGUF", "Beat.gguf", {})
+
+
+def test_a_split_model_downloads_every_part(tmp_path, monkeypatch):
+    """llama.cpp opens a split model through its first part and stops on a missing one."""
+    parts = ["Q4/big-0000{}-of-00003.gguf".format(number) for number in (1, 2, 3)]
+    monkeypatch.setattr(download, "writer_root", lambda: str(tmp_path))
+    monkeypatch.setattr(download, "list_repo_files",
+                        lambda repo, revision="main", token=None: {part: 2 * 1024 ** 3 for part in parts})
+    fetched = {}
+    monkeypatch.setattr(download, "fetch", lambda repo, wanted, title, progress=None: fetched.update(
+        wanted=wanted, title=title))
+    assert download.fetch_listed("Big", "owner/Big-GGUF", parts[0], {}) == os.path.join(
+        str(tmp_path), "big-00001-of-00003.gguf")
+    assert list(fetched["wanted"]) == parts
+    assert fetched["title"] == "Downloading Big (6.00 GB)"
+    monkeypatch.setattr(download, "list_repo_files",
+                        lambda repo, revision="main", token=None: {part: 1 for part in parts[:2]})
+    with pytest.raises(download.DownloadError, match="has no file 'Q4/big-00003-of-00003.gguf'"):
+        download.fetch_listed("Big", "owner/Big-GGUF", parts[0], {})
+
+
+def _offers_the_list(cls) -> bool:
+    return any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "choices"
+               and isinstance(call.func.value, ast.Name) and call.func.value.id == "llm" for call in ast.walk(cls))
+
+
+def test_the_browser_mends_every_node_that_offers_the_list():
+    """The page moves a saved label onto its new one only on the nodes it names.
+
+    Those have to be every node whose model widget is ``llm.choices()``; a node
+    left out keeps showing 'download' for a model that has arrived. The Python
+    is read as source, so the check needs neither torch nor ComfyUI.
+    """
+    offering = set()
+    for path in (ROOT / "yue2_comfy").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offering.update(cls.name for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef) and _offers_the_list(cls))
+    match = re.search(r"export const NODES = \[(.*?)\];", WRITERS_JS.read_text(encoding="utf-8"), re.DOTALL)
+    assert match, "yue2_writers.js no longer exports NODES as a literal list"
+    assert offering and set(re.findall(r'"([^"]*)"', match.group(1))) == offering
+
+
+def test_the_browser_reads_a_label_the_way_the_list_writes_it():
+    """The page finds a label's model by cutting the last bracketed part, exactly as ``catalog.stem`` does."""
+    match = re.search(r"const TAIL = /(.*)/;", WRITERS_JS.read_text(encoding="utf-8"))
+    assert match and match.group(1) == catalog.TAIL.pattern

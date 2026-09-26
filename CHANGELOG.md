@@ -7,6 +7,46 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.10.0 - 2026-09-26
+
+### Added
+
+- **A list of language models to write with, and a window to keep it.**
+  `YuE2 Write Song` and `YuE2 Transcribe` offered only the GGUFs already on the
+  machine -- on most machines the one 4B the pack downloads for itself, which a
+  video review of the pack took for all it could use. The `model` list now
+  also offers eight models from the pack's own list, from Qwen3.5-9B to
+  Gemma 4 26B-A4B and Qwen3.8-27B, each marked `on disk` or with its download
+  size, and with the card it needs; one that is not here downloads on the first
+  run that picks it. **Model list...** on both nodes opens the list: add a model
+  from Hugging Face or a file on this machine, edit, delete, bring back the
+  pack's entries, and **Check it** before saving -- a file on this machine is
+  read, a file on Hugging Face is looked up and its size filled in, and a
+  repository alone lists its models to pick from. The list is kept in
+  `ComfyUI/user/yue2_comfy/writers.json` and outlives updates; an update adds
+  the pack's new entries without bringing back ones you deleted. A workflow
+  saved with any label an entry has had keeps running, and an open graph
+  follows every edit. See [The model list](README.md#the-model-list).
+
+### Changed
+
+- **A GGUF copied into a model folder appears without restarting ComfyUI.**
+  The folders were read once per process; they are read again whenever the
+  list is more than two seconds old, which costs about 4 ms.
+- **What cannot write is no longer offered as a writer:** embedding models and
+  the draft heads some repositories ship to speed a model up, told apart by
+  their headers rather than their names.
+- **A model that is gone is refused when the workflow is queued,** with the
+  reason, instead of ComfyUI's "Value not in list".
+
+### Fixed
+
+- **Models split into parts are offered even when their first part holds no
+  tensors.** Three such models sat in one real model folder and had never
+  appeared: the check for a cut-off download took the header-only first part
+  for one. A split model is listed once, with the size of all its parts, and
+  one picked from the list downloads every part.
+
 ## 0.9.4 - 2026-09-26
 
 ### Fixed

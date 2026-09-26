@@ -766,21 +766,30 @@ def fetch_listed(name: str, repo: str, file: str, settings: dict, progress=None)
     entry" is a better answer than the pack's own "the repository has been
     rearranged". With downloading off the refusal gives the link and the
     folder, as the default writer's does.
+
+    The first file of a split model brings its other parts along: llama.cpp
+    opens the set through the first one and stops on a missing part.
     """
-    destination = os.path.join(writer_root(), file.replace("\\", "/").split("/")[-1])
-    link = endpoint() + "/" + repo + "/resolve/main/" + file
+    from . import gguf_meta
+
+    parts = gguf_meta.split_names(file)
+    targets = {part: os.path.join(writer_root(), part.replace("\\", "/").split("/")[-1]) for part in parts}
+    destination = targets[file]
     if settings.get("download", "auto") == "off":
+        links = "\n".join(endpoint() + "/" + repo + "/resolve/main/" + part + "\n  -> " + targets[part]
+                          for part in parts)
         raise FileNotFoundError(
             "'" + name + "' is in the model list but not on this machine, and 'download' in "
-            "YuE2 Options is 'off'.\n\nFetch it by hand:\n\n" + link + "\n  -> " + destination
+            "YuE2 Options is 'off'.\n\nFetch it by hand:\n\n" + links
             + "\n\nor pick a model that is already here.")
     sizes = list_repo_files(repo, token=access_token())
-    if file not in sizes:
+    missing = [part for part in parts if part not in sizes]
+    if missing:
         raise DownloadError(
-            "'" + repo + "' has no file '" + file + "'. Correct the entry '" + name
+            "'" + repo + "' has no file '" + missing[0] + "'. Correct the entry '" + name
             + "' in the model list, or pick another model.")
-    fetch(repo, {file: destination},
-          "Downloading " + name + " ({})".format(human_size(sizes[file])), progress)
+    fetch(repo, targets,
+          "Downloading " + name + " ({})".format(human_size(sum(sizes[part] for part in parts))), progress)
     return destination
 
 

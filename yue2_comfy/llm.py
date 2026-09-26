@@ -44,7 +44,9 @@ SUFFIX = ".gguf"
 RUNNABLE = "model"
 OLLAMA_PREFIX = "ollama: "
 PROBLEM_PREFIX = "!! "
-HEADER_KEYS = ("general.architecture", "general.type", "tokenizer.chat_template")
+HEADER_KEYS = ("general.architecture", "general.type", "tokenizer.chat_template",
+               "split.count", "split.no", "split.tensors.count", gguf_meta.TENSOR_COUNT)
+ARCH_KEYS = ("block_count", "pooling_type")
 SCAN_SECONDS = 2.0
 
 DEFAULT_GPU_LAYERS = -1
@@ -83,12 +85,67 @@ def backend() -> str:
     return WHEEL if available() else BINARY
 
 
+def _arch_keys(found: dict) -> tuple:
+    """``<arch>.block_count`` and ``<arch>.pooling_type``, asked for once the architecture is known."""
+    arch = found.get("general.architecture")
+    return tuple(str(arch) + "." + key for key in ARCH_KEYS) if arch else ()
+
+
+def _whole(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _why_not(header: dict) -> str:
+    """Why a readable GGUF cannot write a song, in words for the model list, or "" when it can.
+
+    Two kinds pass every older check and still cannot write, and both were in a
+    real model folder on 2026-09-26. An embedding model is a whole model with a
+    chat template, and says what it is only in ``<arch>.pooling_type``. A draft
+    head for speculative decoding (a "FastMTP" file) carries its model's
+    architecture, tokenizer, template and block count, and a handful of tensors:
+    19 for 65 layers, where the whole model has 866. Fewer tensors than layers
+    is the tell, since every layer of a real model holds several. The first
+    file of a split model holds only its share, so the whole set's count is
+    used there; its later files carry no template and are named as parts
+    rather than as models without one.
+    """
+    kind = str(header.get("general.type") or RUNNABLE)
+    arch = str(header.get("general.architecture") or "")
+    if kind == "adapter":
+        return "a LoRA adapter: it changes a model and cannot write on its own"
+    if kind == "mmproj":
+        return "a vision projector (mmproj): it lets a model see and cannot write"
+    if kind != RUNNABLE:
+        return "a GGUF of type '" + kind + "', not a model"
+    parts = _whole(header.get("split.count"))
+    if parts > 1 and _whole(header.get("split.no")) > 0:
+        return ("part {} of {} of a split model; its first part stands for the whole "
+                "set".format(_whole(header.get("split.no")) + 1, parts))
+    if _whole(header.get(arch + ".pooling_type")) > 0:
+        return "an embedding model: it turns text into numbers for search and cannot write"
+    blocks = _whole(header.get(arch + ".block_count"))
+    tensors = header.get(gguf_meta.TENSOR_COUNT)
+    if parts > 1:
+        tensors = header.get("split.tensors.count")
+    if blocks and tensors is not None and _whole(tensors) < blocks:
+        return ("only part of a model ({} tensors for {} layers), such as a draft head that "
+                "helps a model write faster and cannot write alone".format(_whole(tensors), blocks))
+    if not header.get(chat_template.TEMPLATE_KEY):
+        return ("a model with no chat template inside; base (pretrained) conversions have none, "
+                "so take the instruct build of the model")
+    return ""
+
+
 def _kind(path: str) -> dict:
-    """``{"type", "arch", "chat"}`` for one GGUF, cached per file identity.
+    """``{"type", "arch", "chat", "why"}`` for one GGUF, cached per file identity; ``{}`` when it is not there.
 
     ``chat`` is the template itself, not a flag. Both backends need the text --
     the subprocess one has no model object to ask afterwards -- and it was read
     out of the header anyway to decide whether the file can write at all.
+    ``why`` is ``_why_not``'s answer, or why the file could not be read.
     """
     try:
         stat = os.stat(path)
@@ -98,24 +155,35 @@ def _kind(path: str) -> dict:
     cached = _HEADERS.get(key)
     if cached is not None:
         return cached
-    found = {}
     try:
-        header = gguf_meta.keys(path, HEADER_KEYS, verify=True)
+        header = gguf_meta.keys(path, HEADER_KEYS, probe=_arch_keys, verify=True)
         found = {
             "type": str(header.get("general.type") or RUNNABLE),
             "arch": str(header.get("general.architecture") or ""),
-            "chat": str(header.get("tokenizer.chat_template") or ""),
+            "chat": str(header.get(chat_template.TEMPLATE_KEY) or ""),
+            "why": _why_not(header),
         }
     except Exception as error:
         log.debug("[yue2_comfy.llm] %s is not a usable GGUF (%s)", path, error)
+        found = {"type": "", "arch": "", "chat": "", "why": "not a GGUF this can read ({})".format(error)}
     _HEADERS[key] = found
     return found
 
 
+def architecture(path: str) -> str:
+    """``general.architecture`` of one GGUF, or "" when it cannot be read."""
+    return _kind(path).get("arch", "")
+
+
+def unfit(path: str) -> str:
+    """Why this file cannot write a song, or "" when it can."""
+    found = _kind(path)
+    return found.get("why", "") if found else "not there"
+
+
 def runnable(path: str) -> bool:
     """Whether this file is a model that can answer on its own."""
-    found = _kind(path)
-    return bool(found) and found.get("type") == RUNNABLE and bool(found.get("chat"))
+    return not unfit(path)
 
 
 def template(path: str) -> str:
@@ -165,11 +233,24 @@ def _sized(label: str, path: str) -> str:
     """
     from . import download
 
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return label
+    size = size_of(path)
     return (label + " (" + download.human_size(size) + ")") if size else label
+
+
+def size_of(path: str) -> int:
+    """Bytes on disk, counting every part of a split model when this is its first file.
+
+    The first part is what stands for the model, and on some sets it holds the
+    header alone: a 130 GB model would be offered as 8 MB.
+    """
+    size = 0
+    for part in gguf_meta.split_names(path):
+        try:
+            size += os.path.getsize(part)
+        except OSError:
+            if part == path:
+                return 0
+    return size
 
 
 def catalogue(refresh: bool = False) -> list:
@@ -243,7 +324,8 @@ def _listed_names(listed: list) -> tuple:
 def offered() -> list:
     """``(label, entry or path)`` after 'auto', in the order the widget shows them.
 
-    The model list's entries come first, in the list's own order, then the
+    The model list's entries come first, in the list's own order, each saying
+    whether its file is on disk or how much its first run downloads; then the
     GGUFs found on disk and in Ollama. A file on disk that a listed entry names
     is not shown a second time under its file name: the entry stands for it,
     and picking the entry uses the file without downloading anything. A
@@ -258,9 +340,10 @@ def offered() -> list:
     if why:
         rows.append((PROBLEM_PREFIX + why + " -- the pack's own list is shown instead", None))
     listed = catalog.entries()
-    rows.extend((entry.label, entry) for entry in listed)
+    found = catalogue()
+    rows.extend((entry.shown(bool(listed_file(entry, found))), entry) for entry in listed)
     names, local = _listed_names(listed)
-    for label, path in catalogue():
+    for label, path in found:
         if label.startswith(OLLAMA_PREFIX):
             rows.append((label, path))
             continue
@@ -319,8 +402,9 @@ def resolve(choice: str, settings: dict, progress=None) -> str:
 
     An entry of the model list is used from disk when its file is here and
     downloaded into models/LLM when it is not; it is found by its label and,
-    failing that, by its name, so a size or VRAM note edited since the
-    workflow was saved does not lose it.
+    failing that, by its name, so neither a size or VRAM note edited since the
+    workflow was saved nor the file arriving ('download' becoming 'on disk')
+    loses it.
     """
     from . import catalog, download
 

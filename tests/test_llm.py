@@ -17,6 +17,7 @@ import pytest
 from yue2_comfy import gguf_meta, llm, paths
 
 STRING = 8
+UINT32 = 4
 PADDING = 4096
 
 
@@ -27,13 +28,30 @@ def _kv(key: str, value: str) -> bytes:
             + struct.pack("<Q", len(text)) + text)
 
 
-def write_gguf(path, kind="model", arch="qwen35", chat=True, truncated=False):
-    """A GGUF with a valid header, no tensors, and nothing else in it."""
+def _kv_int(key: str, value: int) -> bytes:
+    name = key.encode("utf-8")
+    return struct.pack("<Q", len(name)) + name + struct.pack("<I", UINT32) + struct.pack("<I", value)
+
+
+def _tensor(number: int) -> bytes:
+    """One tensor-table record: a name, one dimension of one element, type 0, offset 0."""
+    name = "blk.{}.weight".format(number).encode("utf-8")
+    return (struct.pack("<Q", len(name)) + name + struct.pack("<I", 1) + struct.pack("<Q", 1)
+            + struct.pack("<I", 0) + struct.pack("<Q", 0))
+
+
+def write_gguf(path, kind="model", arch="qwen35", chat=True, truncated=False, ints=None, tensors=0):
+    """A GGUF with a valid header, ``tensors`` one-element tensors, and nothing else in it.
+
+    ``ints`` are extra keys written as uint32, such as a block count or a pooling type.
+    """
     pairs = [_kv("general.architecture", arch), _kv("general.type", kind)]
+    pairs += [_kv_int(key, value) for key, value in (ints or {}).items()]
     if chat:
         pairs.append(_kv("tokenizer.chat_template", "{{ messages }}"))
     header = (gguf_meta.MAGIC + struct.pack("<I", 3)
-              + struct.pack("<QQ", 0, len(pairs)) + b"".join(pairs))
+              + struct.pack("<QQ", tensors, len(pairs)) + b"".join(pairs)
+              + b"".join(_tensor(number) for number in range(tensors)))
     with open(path, "wb") as handle:
         handle.write(header)
         if not truncated:
@@ -142,6 +160,65 @@ def test_only_the_first_shard_of_a_split_model_is_offered(folder):
     write_gguf(folder / "model-00001-of-00002.gguf")
     write_gguf(folder / "model-00002-of-00002.gguf", chat=False)
     assert labels() == ["model-00001-of-00002.gguf"]
+
+
+def test_an_embedding_model_is_not_offered(tmp_path):
+    """A whole model with a chat template, found on a real disk; only its pooling type says what it is."""
+    path = write_gguf(tmp_path / "qwen3-embed.gguf", arch="qwen3", ints={"qwen3.pooling_type": 3})
+    assert "embedding" in llm.unfit(path)
+    assert llm.runnable(write_gguf(tmp_path / "chat.gguf", arch="qwen3", ints={"qwen3.pooling_type": 0}))
+
+
+def test_a_draft_head_is_not_offered_and_a_whole_model_with_one_inside_is(tmp_path):
+    """Measured 2026-09-26: the FastMTP file holds 19 tensors for 65 layers, its model 866 for the same 65."""
+    head = write_gguf(tmp_path / "FastMTP.gguf", ints={"qwen35.block_count": 65, "qwen35.nextn_predict_layers": 1},
+                      tensors=19)
+    assert "only part of a model (19 tensors for 65 layers)" in llm.unfit(head)
+    whole = write_gguf(tmp_path / "whole.gguf", ints={"qwen35.block_count": 4, "qwen35.nextn_predict_layers": 1},
+                       tensors=12)
+    assert llm.unfit(whole) == ""
+
+
+def test_a_split_model_whose_first_part_holds_no_tensors_is_offered(folder):
+    """Three models in a real folder were never offered: their first part is the header alone.
+
+    It ends where its header ends, which the truncation check read as a cut
+    download. The later parts are named as parts, not as models without a template.
+    """
+    first = write_gguf(folder / "big-00001-of-00003.gguf", truncated=True,
+                       ints={"split.count": 3, "split.tensors.count": 900, "qwen35.block_count": 64})
+    for number in (2, 3):
+        write_gguf(folder / "big-0000{}-of-00003.gguf".format(number), chat=False, tensors=4,
+                   ints={"split.count": 3, "split.no": number - 1})
+    assert llm.unfit(first) == ""
+    assert llm.unfit(str(folder / "big-00002-of-00003.gguf")).startswith("part 2 of 3 of a split model")
+    assert labels() == ["big-00001-of-00003.gguf"]
+
+
+def test_a_split_model_is_offered_with_the_size_of_all_its_parts(folder):
+    parts = [write_gguf(folder / "big-0000{}-of-00003.gguf".format(number)) for number in (1, 2, 3)]
+    assert llm.size_of(parts[0]) == sum(os.path.getsize(part) for part in parts)
+    assert llm.size_of(parts[1]) == os.path.getsize(parts[1])
+    assert llm.size_of(str(folder / "gone-00001-of-00002.gguf")) == 0
+
+
+def test_a_cut_download_is_still_refused_when_it_holds_tensors(tmp_path):
+    path = write_gguf(tmp_path / "cut.gguf", truncated=True, tensors=3, ints={"split.count": 2})
+    assert "not a GGUF this can read" in llm.unfit(path)
+
+
+def test_the_parts_of_a_split_model_are_named_from_its_first(tmp_path):
+    assert gguf_meta.split_names("Q4_K_M/big-00001-of-00003.gguf") == [
+        "Q4_K_M/big-00001-of-00003.gguf", "Q4_K_M/big-00002-of-00003.gguf", "Q4_K_M/big-00003-of-00003.gguf"]
+    assert gguf_meta.split_names("C:\\m\\big-00001-of-00002.GGUF")[1] == "C:\\m\\big-00002-of-00002.GGUF"
+    assert gguf_meta.split_names("big-00002-of-00003.gguf") == ["big-00002-of-00003.gguf"]
+    assert gguf_meta.split_names("plain.gguf") == ["plain.gguf"]
+
+
+def test_the_header_tells_how_many_tensors_the_file_holds(tmp_path):
+    path = write_gguf(tmp_path / "t.gguf", tensors=5)
+    assert gguf_meta.read_keys(path, (gguf_meta.TENSOR_COUNT, "general.type")) == {
+        gguf_meta.TENSOR_COUNT: 5, "general.type": "model"}
 
 
 def test_a_cache_copy_is_named_by_repository_not_by_commit(tmp_path, monkeypatch):

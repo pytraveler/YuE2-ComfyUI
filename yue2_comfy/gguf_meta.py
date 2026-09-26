@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import struct
 
 log = logging.getLogger(__name__)
@@ -52,10 +53,39 @@ MAX_STRING = 1 << 20
 
 DEFAULT_ALIGNMENT = 32
 ALIGNMENT_KEY = "general.alignment"
+TENSOR_COUNT = "gguf.tensor_count"
+"""Not a key in the file: ask for it and the header's own tensor count comes back under this name.
+
+The count is what tells a whole model from a piece of one. A draft head for
+speculative decoding carries its model's architecture, tokenizer, chat template
+and block count -- everything a writer has -- and 19 tensors where the model
+has 866 (measured 2026-09-26 on a Qwen3.8-27B FastMTP file)."""
+SPLIT_COUNT_KEY = "split.count"
+SPLIT_NAME = re.compile(r"^(?P<stem>.+)-(?P<no>\d{5})-of-(?P<count>\d{5})(?P<suffix>\.gguf)$", re.IGNORECASE)
+"""How llama.cpp's gguf-split names the parts of one model: ``name-00001-of-00004.gguf``."""
 
 
 class MalformedGGUF(ValueError):
     pass
+
+
+def split_names(path: str) -> list:
+    """Every part of the split model whose first file ``path`` is, in order; ``[path]`` for any other file.
+
+    Works on a path on this machine and on a path inside a Hugging Face
+    repository alike: the parts are named beside the first one, in its folder.
+    A later part gives ``[path]`` too -- it is the first part that stands for
+    the model.
+    """
+    cut = max(path.rfind("/"), path.rfind("\\")) + 1
+    named = SPLIT_NAME.match(path[cut:])
+    if not named or int(named.group("no")) != 1:
+        return [path]
+    width = len(named.group("no"))
+    count = named.group("count")
+    return [path[:cut] + "{}-{:0{}d}-of-{}{}".format(named.group("stem"), number, width, count,
+                                                     named.group("suffix"))
+            for number in range(1, int(count) + 1)]
 
 
 def _exact(handle, count: int) -> bytes:
@@ -154,10 +184,17 @@ def read_keys(path: str, wanted: tuple, probe=None, verify: bool = False) -> dic
     small to hold what it declares. It costs a few hundred fixed-size reads and
     gives up the early exit, so it is for deciding whether to *offer* a file
     rather than for reading a template out of one already chosen.
+
+    The first file of a split model can hold the metadata and no tensors at all,
+    and then it ends where its header does, which is what a cut download looks
+    like too. Three models in a real folder were never offered for that reason
+    (2026-09-26), so a file that says it is one of several and holds no tensors
+    has nothing to check.
     """
     found: dict = {}
     remaining = set(wanted)
     alignment = DEFAULT_ALIGNMENT
+    parts = 1
 
     with open(path, "rb") as handle:
         if _exact(handle, 4) != MAGIC:
@@ -166,6 +203,9 @@ def read_keys(path: str, wanted: tuple, probe=None, verify: bool = False) -> dic
         if version not in SUPPORTED_VERSIONS:
             raise MalformedGGUF("GGUF version {} is not one this parser knows".format(version))
         tensor_count, kv_count = struct.unpack("<QQ", _exact(handle, 16))
+        if TENSOR_COUNT in remaining:
+            found[TENSOR_COUNT] = tensor_count
+            remaining.discard(TENSOR_COUNT)
 
         for _ in range(kv_count):
             key = _string(handle)
@@ -179,10 +219,13 @@ def read_keys(path: str, wanted: tuple, probe=None, verify: bool = False) -> dic
                     break
             elif verify and key == ALIGNMENT_KEY:
                 alignment = int(_value(handle, kind) or DEFAULT_ALIGNMENT)
+            elif verify and key == SPLIT_COUNT_KEY:
+                parts = int(_value(handle, kind) or 1)
             else:
                 _skip(handle, kind)
 
-        if verify:
+        parts = int(found.get(SPLIT_COUNT_KEY) or parts)
+        if verify and not (tensor_count == 0 and parts > 1):
             _check_complete(handle, tensor_count, alignment, os.path.getsize(path))
 
     return found
@@ -203,6 +246,9 @@ def keys(path: str, wanted: tuple, probe=None, verify: bool = False) -> dict:
     reader = GGUFReader(path, "r")
     found: dict = {}
     remaining = set(wanted)
+    if TENSOR_COUNT in remaining:
+        found[TENSOR_COUNT] = len(reader.tensors)
+        remaining.discard(TENSOR_COUNT)
     while remaining:
         for name in list(remaining):
             field = reader.fields.get(name)

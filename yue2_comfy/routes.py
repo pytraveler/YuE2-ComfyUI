@@ -1,4 +1,4 @@
-"""HTTP routes behind the song editor's and the score editor's windows, the MIDI and LoRA nodes' lists, and the Edit Track sounds.
+"""HTTP routes behind the song editor's and the score editor's windows, the MIDI and LoRA nodes' lists, the Model list, and the Edit Track sounds.
 
 Registered on import. A failure here must never stop the nodes from loading --
 both editors are conveniences on top of widgets that work without them -- so
@@ -202,6 +202,75 @@ def answer_loras() -> tuple:
         log.warning("[yue2_comfy.routes] listing the LoRA files failed: %s", error, exc_info=True)
         return {"ok": False, "loras": [],
                 "error": "Listing the LoRA files hit an error it did not expect: {}".format(error)}, 200
+
+
+def _model_list(work, *args) -> tuple:
+    """``(payload, status)`` for one Model list button: a refusal is read out, a failure logged too.
+
+    A refusal is the ordinary case -- a name already taken, a network path, a
+    list that does not parse -- and the window prints it beside the button, so
+    it is a 200 like the score editor's.
+    """
+    from . import catalog
+
+    try:
+        return work(*args), 200
+    except catalog.CatalogWriteError as error:
+        return {"ok": False, "error": str(error)}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        log.warning("[yue2_comfy.routes] the model list failed: %s", error, exc_info=True)
+        return {"ok": False, "error": "The model list hit an error it did not expect: {}".format(error)}, 200
+
+
+def answer_writers() -> tuple:
+    """``(payload, status)`` for the Model list window opening: the list, its state, the files found."""
+    from . import model_list
+
+    return _model_list(model_list.listing)
+
+
+def answer_writers_save(body) -> tuple:
+    """``(payload, status)`` for Save in the entry form: ``{"was": old name or "", "entry": {...}}``."""
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), dict) \
+            or not isinstance(body.get("was", ""), str):
+        return {"ok": False, "error": "Send a JSON object with the 'entry' and the name it 'was'."}, 400
+    from . import model_list
+
+    return _model_list(model_list.save, body.get("was", ""), body["entry"])
+
+
+def answer_writers_delete(body) -> tuple:
+    """``(payload, status)`` for Delete on a card: ``{"name": ...}``."""
+    if not isinstance(body, dict) or not isinstance(body.get("name"), str):
+        return {"ok": False, "error": "Send a JSON object with the entry's 'name'."}, 400
+    from . import model_list
+
+    return _model_list(model_list.delete, body["name"])
+
+
+def answer_writers_restore() -> tuple:
+    """``(payload, status)`` for 'Restore the packaged entries'."""
+    from . import model_list
+
+    return _model_list(model_list.restore)
+
+
+def answer_writers_check(body) -> tuple:
+    """``(payload, status)`` for Check it in the entry form: ``{"entry": {...}}``; may ask the Hub."""
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), dict):
+        return {"ok": False, "error": "Send a JSON object with the 'entry' to check."}, 400
+    from . import model_list
+
+    return _model_list(model_list.check, body["entry"])
+
+
+def answer_writers_open(body) -> tuple:
+    """``(payload, status)`` for 'Open writers.json' and 'Open the models folder': ``{"what": "list" | "folder"}``."""
+    if not isinstance(body, dict) or body.get("what") not in ("list", "folder"):
+        return {"ok": False, "error": "Send {\"what\": \"list\"} or {\"what\": \"folder\"}."}, 400
+    from . import model_list
+
+    return _model_list(model_list.reveal, body["what"])
 
 
 SHOWN_SONGS = 200
@@ -491,6 +560,42 @@ def register() -> None:
     async def loras(request):
         """The LoRA files for YuE2, for the rows on 'YuE2 LoRA'."""
         payload, status = await asyncio.to_thread(answer_loras)
+        return web.json_response(payload, status=status)
+
+    @routes.get(PREFIX + "/writers")
+    async def writers(request):
+        """The model list and the writer files found, for the Model list window."""
+        payload, status = await asyncio.to_thread(answer_writers)
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/writers/save")
+    async def writers_save(request):
+        """An entry added, or edited in place."""
+        payload, status = await asyncio.to_thread(answer_writers_save, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/writers/delete")
+    async def writers_delete(request):
+        """An entry deleted from the list; its file stays where it is."""
+        payload, status = await asyncio.to_thread(answer_writers_delete, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/writers/restore")
+    async def writers_restore(request):
+        """The pack's deleted entries put back."""
+        payload, status = await asyncio.to_thread(answer_writers_restore)
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/writers/check")
+    async def writers_check(request):
+        """What an entry is, read from its header or asked of the Hub."""
+        payload, status = await asyncio.to_thread(answer_writers_check, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/writers/open")
+    async def writers_open(request):
+        """The list file or the models folder, opened on the machine ComfyUI runs on."""
+        payload, status = await asyncio.to_thread(answer_writers_open, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.get(PREFIX + "/songs")

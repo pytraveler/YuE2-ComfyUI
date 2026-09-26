@@ -80,13 +80,13 @@ RECOGNITION_TOOLTIP = (
     "Also recognise the words that are sung, and lay them out under the section tags, a line to a phrase.\n\n"
     "The first time, this downloads Qwen3-ASR-1.7B, a 3.8 GB speech model (Apache-2.0), into models/YuE2. "
     "The lines are laid out by the language model in 'model'; with none on this machine, the writer's "
-    "own (2.7 GB) is downloaded too, as YuE2 Write Song does. "
+    "own (2.55 GB) is downloaded too, as YuE2 Write Song does. "
     "Recognised words are close but not exact: read them through in 'Edit lyrics...' before singing them."
 )
 MODEL_TOOLTIP = (
     "The language model that breaks recognised words into lines. Used only with "
     "'lyrics_auto_recognition' on; the same list as on YuE2 Write Song, and 'auto' downloads the "
-    "writer's own model (2.7 GB) when the machine has none. A section whose words "
+    "writer's own model (2.55 GB) when the machine has none. A section whose words "
     "it changes is broken into lines at its punctuation instead."
 )
 SEED_TOOLTIP = (

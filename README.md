@@ -157,14 +157,14 @@ bypassed on open, and there is no second branch to mute before pressing Run.
 
 | | Template | What it needs |
 |---|---|---|
-| 1 | **A song from one line** -- one sentence about the song in, a finished song out | a 2.7 GB writer and the 7.26 GB YuE2 weights |
+| 1 | **A song from one line** -- one sentence about the song in, a finished song out | a 2.55 GB writer and the 7.26 GB YuE2 weights |
 | 2 | **A song from style and lyrics** -- describe the sound, write the words, press Run | the YuE2 weights |
 | 3 | **A longer song** -- `YuE2 Options` in front of the same node | the YuE2 weights |
 | 4 | **The score first** -- write the score, read it, edit it, then sing it | the YuE2 weights |
 | 5 | **Four scores, one song** -- four takes on the same words, chosen by ear | the YuE2 weights |
 | 6 | **One take, both decoders** -- one performance decoded twice | the YuE2 weights and the 0.53 GB legacy decoder |
 | 7 | **Sing a MIDI file** -- a tune you have as MIDI, sung in the style you describe | the YuE2 weights |
-| 8 | **Cover a song** -- a recording's tune and words, sung again in another style | the YuE2 weights, SheetSage2 (1.29 GB), and for the words Qwen3-ASR (3.8 GB) and a 2.7 GB writer |
+| 8 | **Cover a song** -- a recording's tune and words, sung again in another style | the YuE2 weights, SheetSage2 (1.29 GB), and for the words Qwen3-ASR (3.8 GB) and a 2.55 GB writer |
 | 9 | **An a cappella song** -- a song with nothing but the voice | the YuE2 weights and the 0.85 GB voice separator |
 | 10 | **A song with LoRA** -- the same song node with adapters in front of it | the YuE2 weights and a LoRA of your own |
 | 11 | **Edit a song** -- a song, then part of it sung again, cut, moved or carried on | the YuE2 weights and the 0.85 GB voice separator; for new words the 1.84 GB aligner and Qwen3-ASR (3.8 GB) |
@@ -438,6 +438,12 @@ One line of intent in, a style description and tagged lyrics out, wired
 straight into `YuE2 Generate Song`. It exists because the format is the part
 that puts people off, not the idea: everybody has an idea.
 
+![YuE2 Write Song after a run. Input options; the outputs style and lyrics wired on. The idea box asks, in Russian, for a song about a ginger cat. Widgets: model Gemma 4 12B Q4_K_M (on disk, ~9 GB VRAM), language Russian, length very long, seed 608697378862607, control after generate fixed, keep_model_loaded false, and an empty instructions box. At the bottom, the Model list... button](docs/node_writer.png)
+
+*The node with a model from the pack's list that is already on disk.
+**Model list...** at the bottom opens [the list](#the-model-list) to add, edit
+or check a model.*
+
 **Outputs**
 
 | Name | Contents |
@@ -449,13 +455,14 @@ that puts people off, not the idea: everybody has an idea.
 
 - `idea` -- what the song is about, in one line, in any language. "a sad song
   about winter, female vocal" is enough.
-- `model` -- `auto` uses a GGUF you already have and downloads a 2.7 GB one
-  only if you have none. The other entries are the GGUFs found in your ComfyUI
-  model folders, in the Hugging Face cache and in
+- `model` -- `auto` uses a GGUF you already have and downloads a 2.55 GB one
+  only if you have none. Next come the entries of [the model list](#the-model-list),
+  each marked `on disk` or with its download size and the card it needs; then
+  the GGUFs found in your ComfyUI model folders, in the Hugging Face cache and in
   [Ollama's own store](#models-you-already-have), each with its size, because
-  that is the fact that decides whether it fits on your card. LoRA adapters and
-  mmproj files are left out, because they cannot answer on their own. Two files
-  of the same name are told apart by where they came from.
+  that is the fact that decides whether it fits on your card. Files that cannot
+  write on their own are left out. Two files of the same name are told apart by
+  where they came from.
 - `language` -- `auto` follows whatever language your idea is written in.
 - `length` -- how long the song should be, in words rather than in seconds:
   `short` asks for 8 sung lines, `normal` for 16, `long` for 24 and `very long`
@@ -468,6 +475,79 @@ that puts people off, not the idea: everybody has an idea.
   "end on a question". It goes after the writing rules, so it wins where the
   two disagree.
 
+#### The model list
+
+The pack names eight models it knows to write well, so that the `model` list
+holds more than whatever one file happens to be on the machine. Each is shown
+with where it is -- `on disk`, or `download` and its size -- and the card it
+needs:
+
+| Model | Download | Card | |
+|---|---|---|---|
+| Qwen3.5-4B Q4_K_M | 2.55 GB | ~4 GB VRAM | the default, the one `auto` fetches |
+| Qwen3.5-9B Q4_K_M | 5.29 GB | ~7 GB VRAM | |
+| Gemma 4 12B Q4_K_M | 6.63 GB | ~9 GB VRAM | |
+| Qwen3.8-27B Q4_K_M | 15.33 GB | ~17 GB VRAM | |
+| Gemma 4 26B-A4B Q4_K_M | 15.78 GB | ~19 GB VRAM | mixture of experts |
+| Gemma 4 31B Q4_K_M | 17.07 GB | ~20 GB VRAM | |
+| Qwen3.6-27B Q5_K_M | 18.17 GB | ~19 GB VRAM | |
+| Gemma 4 26B-A4B Q6_K | 21.58 GB | ~24 GB VRAM | mixture of experts |
+
+All are unsloth's quants under Apache-2.0. The sizes are in the gigabytes the
+progress bar counts, 2^30 bytes. The card was measured on an RTX 5090 at the
+writer's 8192-token context for the 4B, the Qwen3.6-27B and the 26B-A4B Q6, and
+is estimated from the size for the rest. At the same context the 4B wrote 146
+tokens a second, the Qwen3.6-27B 42, and the 26B-A4B Q6 215: a mixture of
+experts works only a few billion of its weights per token, so it answers faster
+than the 4B.
+
+A model that is not on disk downloads on the first run that picks it, into the
+first `LLM` folder ComfyUI knows -- `models/LLM`, or one named in
+`extra_model_paths.yaml` -- with resume and a progress bar; with `download` at
+`off` in `YuE2 Options` the node prints the link and the folder instead. A file
+of the same name anywhere in the model folders is used as it is, and is not
+listed a second time under its own name. Once the file is there the entry reads
+`on disk`, and a workflow saved while it read `download` still finds it by its
+name.
+
+**Model list...** at the bottom of `YuE2 Write Song` and `YuE2 Transcribe` opens
+the list itself:
+
+![The Model list window. A line under the title says the list holds the language models YuE2 Write Song and YuE2 Transcribe can use, that a Hugging Face model downloads into models/LLM the first time a run picks it, and that the list is kept in writers.json in ComfyUI's user folder. Eight cards, each marked from the pack, with Edit and Delete on the right: Qwen3.5-4B Q4_K_M on disk, Qwen3.5-9B Q4_K_M download 5.29 GB, Gemma 4 12B Q4_K_M on disk, Qwen3.8-27B Q4_K_M download 15.33 GB, Gemma 4 26B-A4B Q4_K_M download 15.78 GB, Gemma 4 31B Q4_K_M download 17.07 GB, Qwen3.6-27B Q5_K_M on disk, Gemma 4 26B-A4B Q6_K download 21.58 GB. Under each name its card and note, and the repository and file in small monospace. Below the cards, the start of the section of files found in the model folders, with the Open the models folder button](docs/llm_model_list.png)
+
+- Each entry has **Edit** and **Delete**. Under the entries, greyed, is every
+  model found in the model folders and in Ollama; those are offered too and
+  have nothing to edit. **Open the models folder** opens the folder downloads
+  go to.
+- **Add a model** takes a Hugging Face repository and the `.gguf` in it, or the
+  full path of a file on this machine. **Check it** says what the model is
+  before it is saved. A file on this machine is read: whether it is a model that
+  can write, and whether its chat template renders. A file on Hugging Face is
+  looked up, and its size goes into the form. With a repository and no file
+  yet, or a misspelt one, it lists the repository's models to pick from.
+
+![Edit 'Qwen3.5-4B Q4_K_M': fields Name, Repository on Hugging Face (unsloth/Qwen3.5-4B-GGUF), File (Qwen3.5-4B-Q4_K_M.gguf), Download GB 2.55, VRAM note ~4 GB VRAM and Note. Below them, Shows in the list as: Qwen3.5-4B Q4_K_M (on disk, ~4 GB VRAM). Buttons Check it, Cancel and Save](docs/edit_llm_window.png)
+
+![Add a model with only a repository typed in. Check it has answered in green that the repository holds 20 GGUF models and that picking one puts its file and size into the form, and lists them as buttons, each with its size, from 10.87 GB up](docs/add_llm_window.png)
+
+- Every `model` list in the open graph follows an edit at once. A renamed entry
+  moves the nodes that use it to the new name; workflows saved elsewhere under
+  the old name no longer find it, and the form says so before saving. A deleted
+  entry whose file is on disk moves its nodes to that file under its own name.
+  Otherwise the nodes keep it, and the next run stops and says the model is
+  gone rather than writing with another -- or starting a download nobody asked
+  for.
+- **Restore the packaged entries** brings back the pack's own entries you
+  deleted.
+- The list is `ComfyUI/user/yue2_comfy/writers.json`, written on the first
+  edit, so it outlives an update of the pack. An update adds the pack's new
+  entries to it and does not bring back ones you deleted. **Open writers.json**
+  opens it, for what the window does not cover. A file that does not parse is
+  left alone: the pack's list is shown, the first line of the `model` list says
+  what is wrong, and nothing is saved over it until it parses again.
+- **Open** acts on the machine ComfyUI runs on, and says the path when it
+  cannot.
+
 #### Models you already have
 
 Anything the writer can run is offered, wherever it already lives, so nobody
@@ -478,6 +558,14 @@ downloads the same quant twice:
 | ComfyUI model folders | `LLM`, `llm`, `text_encoders`, `clip`, `transformers`, `diffusion_models`, `unet`, `unet_gguf`, `checkpoints`, two levels deep |
 | Hugging Face cache | Every snapshot folder, labelled by repository rather than by commit hash |
 | Ollama | Every model pulled into its store, listed as `ollama: name:tag` |
+
+A GGUF copied into one of these folders while ComfyUI runs is offered on the
+next refresh of the node list, without a restart. A model split into parts
+(`name-00001-of-00004.gguf`) is offered once, by its first part, with the size
+of all its parts. What cannot write on its own is left out, whatever its name:
+LoRA adapters, mmproj files, embedding models, and the draft heads some
+repositories ship to speed a model up, which carry the model's name and chat
+template but only a handful of its tensors.
 
 Ollama keeps its models as ordinary GGUFs under digest names, so they are read
 in place -- no copy, no export, no second download. A store somewhere this
@@ -554,7 +642,7 @@ something to reset.*
 - `lyrics_auto_recognition` -- off at first. Turned on, the sung words are
   recognised and laid out under the section tags, as described below.
 - `model` -- the language model that breaks recognised words into lines, from
-  the same list as on `YuE2 Write Song`. `auto` downloads the writer's 2.7 GB
+  the same list as on `YuE2 Write Song`. `auto` downloads the writer's 2.55 GB
   model when the machine has none, and the node says so. It is used only with
   recognition on.
 - `seed` -- changes only how the recognised words are broken into lines. It is
@@ -1402,9 +1490,11 @@ the machine has no GGUF at all:
 | --- | --- | --- | --- |
 | `LLM/Qwen3.5-4B-Q4_K_M.gguf` | 2.55 GB | [unsloth/Qwen3.5-4B-GGUF](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF) | Apache-2.0 |
 
-Any instruction-following GGUF in your ComfyUI model folders is offered in the
+Any GGUF with a chat template in your ComfyUI model folders is offered in the
 node's `model` list and is used instead, so this download is for people who
-have none rather than a second requirement.
+have none rather than a second requirement. The larger models of
+[the model list](#the-model-list) download the same way, when a run first picks
+one.
 
 `YuE2 Transcribe` has two models, fetched on first use with `download` at
 anything but `off`, the speech model only once `lyrics_auto_recognition` is on:

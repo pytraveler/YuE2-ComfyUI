@@ -44,10 +44,11 @@ IDEA_TOOLTIP = (
 
 WRITER_MODEL_TOOLTIP = (
     "The language model that does the writing. '" + WRITER_AUTO + "' uses a GGUF you "
-    "already have and downloads a 2.7 GB one only if you have none.\n\n"
-    "Next comes the pack's model list, each with its size and the card it needs, downloaded "
-    "the first time you pick it; then every GGUF found in your ComfyUI model folders and in "
-    "Ollama. Put any GGUF with a chat template into models/LLM and it appears here."
+    "already have and downloads a 2.55 GB one only if you have none.\n\n"
+    "Next comes the pack's model list: each says whether it is on disk or how much its first "
+    "run downloads, and the card it needs. Then every GGUF found in your ComfyUI model folders "
+    "and in Ollama. Put any GGUF with a chat template into models/LLM and it appears here; "
+    "Model list... on the node adds, edits and checks entries."
 )
 
 LANGUAGE_TOOLTIP = (

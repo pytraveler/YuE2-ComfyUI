@@ -408,3 +408,23 @@ def test_the_log_says_where_a_song_spent_its_time():
     assert line == ("stages: score 70.2 s, performance 71.0 s, acoustic 15.0 s, "
                     "decode 1.1 s | loading and the rest 6.4 s")
     assert "score" not in stage_times({"semantic": {"seconds": 1.0}, "total_seconds": 1.0}, 1.0)
+
+
+def test_an_edit_kept_for_new_words_is_sung_with_them_and_the_node_says_so(monkeypatch):
+    """No new score is written, and the ui says which words the song was sung with."""
+    calls, said = stub_run(monkeypatch)
+    cot = constants.DEFAULT_OPTIONS["cot"]
+    out = sing_with(edits.attach(EDITED, edits.mark("a style", "words", cot), keep=True), lyrics="new words")
+    assert calls == [{"edited": EDITED, "cot": cot}]
+    assert said == [[("warn", edits.KEPT)]]
+    assert edits.SCORE_UI not in out["ui"]
+    assert out["ui"][edits.WORDS_UI] == [edits.mark("a style", "new words", cot)]
+    assert out["result"][1] == EDITED
+
+
+def test_an_edit_kept_for_new_words_says_nothing_while_the_words_are_its_own(monkeypatch):
+    calls, said = stub_run(monkeypatch)
+    cot = constants.DEFAULT_OPTIONS["cot"]
+    sing_with(edits.attach(EDITED, edits.mark("a style", "words", cot), keep=True))
+    assert calls == [{"edited": EDITED, "cot": cot}]
+    assert said == []

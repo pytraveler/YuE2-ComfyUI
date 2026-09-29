@@ -232,6 +232,8 @@ export function frame({ onClose, sticky } = {}) {
     const back = element("div", "yue2-back");
     const panel = element("div", "yue2-panel");
     panel.tabIndex = -1;
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
     back.appendChild(panel);
     const me = { close };
     OPEN.push(me);

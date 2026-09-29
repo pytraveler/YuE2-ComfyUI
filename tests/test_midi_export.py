@@ -2,6 +2,10 @@
 
 The round trip runs on every score in tests/data -- the model's own and
 SheetSage2's -- so the dialect as it is really written is what is checked.
+
+With 'full' the chords come back from the Chords track as the notes they were
+saved as, and the model's own scores with the very names they had; SheetSage2's
+older scores named roots with sharps, so theirs come back named from the key.
 """
 
 from __future__ import annotations
@@ -96,6 +100,55 @@ def test_triads_come_back_as_the_same_chords_when_loaded_with_full():
     text = abc("V: Vocal", '"G"B8d8|"Em"B8G8|"C"c8e8|"D"d8A8|', "V: Ins", "Z4|", bpm=100)
     back = score.convert(smf.read(export.midi_of(text)), "full")
     assert abc_tools.parse(back["abc"]).voices["Vocal"].chords == abc_tools.parse(text).voices["Vocal"].chords
+
+
+def sounded(symbol):
+    pitches = export.chord_pitches(symbol)
+    return sorted({pitch % 12 for pitch in pitches}), pitches[0] % 12
+
+
+def changes(text):
+    rows = []
+    for onset, name in abc_tools.parse(text).voices["Vocal"].chords:
+        if not rows or rows[-1][1] != name:
+            rows.append((onset, name))
+    return rows
+
+
+ROOTS = ("C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
+CHORDED = [(path, text) for path, text in SCORES if abc_tools.parse(text).voices["Vocal"].chords]
+
+
+@pytest.mark.parametrize("root", ROOTS)
+def test_every_chord_the_format_knows_comes_back_as_the_notes_it_was_saved_as(root):
+    symbols = []
+    for quality, steps in export.QUALITY_STEPS.items():
+        symbols.append(root + quality)
+        for step in sorted(set(steps[1:]) | {2, 6, 10}):
+            symbols.append(root + quality + "/" + ROOTS[(ROOTS.index(root) + step) % 12])
+    symbols = list(dict.fromkeys(symbols))
+    music = []
+    for at in range(0, len(symbols), 4):
+        group = symbols[at:at + 4]
+        music += ["V: Vocal", "".join('"{}"C8C8|'.format(symbol) for symbol in group), "V: Ins",
+                  "Z{}|".format(len(group))]
+    back = score.convert(smf.read(export.midi_of(abc(*music, key="C"))), "full")
+    written = [name for _onset, name in abc_tools.parse(back["abc"]).voices["Vocal"].chords]
+    assert [sounded(name) for name in written] == [sounded(symbol) for symbol in symbols]
+
+
+def test_there_are_twelve_scores_with_chords_to_round_trip():
+    assert len(CHORDED) == 12
+
+
+@pytest.mark.parametrize("path, text", CHORDED, ids=[path for path, _text in CHORDED])
+def test_a_saved_score_loads_back_with_full_to_the_same_chords_at_the_same_moments(path, text):
+    back = score.convert(smf.read(export.midi_of(text)), "full")
+    want, have = changes(text), changes(back["abc"])
+    assert [onset for onset, _name in have] == [onset for onset, _name in want]
+    assert [sounded(name) for _onset, name in have] == [sounded(name) for _onset, name in want]
+    if path.startswith("model_scores.json"):
+        assert have == want
 
 
 def test_a_score_that_cannot_be_read_is_refused_with_the_reason():

@@ -34,7 +34,12 @@ minor key profiles of Krumhansl and Kessler (1982) as printed in Krumhansl,
 Sections. Markers named after sections become the score's section comments;
 without them the sections of the karaoke words do, with an intro before the
 first words when a bar or more comes first; a file with neither has none.
-With 'full', chord symbols are guessed by ``chords``.
+
+Chords. With 'full', a track named Chords is read chord by chord, at the
+moments its chords change, snapped to the score's grid; a file without one
+has its chords guessed per half bar from every part that is not drums. Either
+way ``chords`` names the roots with sharps, and each chord is named again from
+the key it sounds in, the way SheetSage2's are: B-flat, not A-sharp, in F.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ from fractions import Fraction
 
 from ..sheetsage import abc_rebuild
 from ..sheetsage import sections as score_sections
+from ..sheetsage import spelling
 from . import chords, karaoke, smf, tracks
 
 MODES = ("melody", "full")
@@ -53,6 +59,7 @@ INSTRUMENT_WINDOW = (60, 88)
 ON_GRID = 0.9
 KEY_SLACK = 0.05
 TEMPO_SLACK = 0.01
+SHOWN_BARS = 8
 MOST_BEATS = 20000
 """Beats a score may run to: an hour at 330 BPM. A file longer than that is refused rather than written."""
 
@@ -77,6 +84,11 @@ PLAYED_IN = (
 CHORDS_GUESSED = (
     "The chord symbols were guessed from what the file's parts play together: a harmony to follow, not a "
     "transcription of it."
+)
+CHORDS_READ = "The chord symbols were read from track {number}, '{name}', chord by chord."
+UNNAMED = (
+    "Track {number} sounds notes that make no chord the score can name at {bars}, so the nearest chord was "
+    "written there, or the one before it kept."
 )
 
 
@@ -252,6 +264,21 @@ def _intervals(starts: list, last) -> list:
     return rows
 
 
+def _bar_list(numbers: list) -> str:
+    """``bar 5`` or ``bars 5, 9 and 12``, the first few of them and how many more."""
+    shown = [str(number) for number in numbers[:SHOWN_BARS]]
+    if len(numbers) > SHOWN_BARS:
+        shown.append("{} more".format(len(numbers) - SHOWN_BARS))
+    if len(shown) == 1:
+        return "bar " + shown[0]
+    return "bars " + ", ".join(shown[:-1]) + " and " + shown[-1]
+
+
+def key_label(name: str) -> str:
+    """An ABC key such as ``F#m`` as the key label ``spelling`` reads: ``F#:minor``."""
+    return name[:-1] + ":minor" if name.endswith("m") else name + ":major"
+
+
 def _bars(rows: list) -> list:
     downbeats = [(tick, numerator) for tick, number, numerator, _denominator in rows if number == 1]
     return [(tick, following, numerator) for (tick, numerator), (following, _next) in zip(downbeats, downbeats[1:])]
@@ -329,16 +356,38 @@ def convert(song: smf.Song, mode: str = "melody", vocal="auto", instrument="auto
     key_starts, key_source = _keys(song, weights)
     bars = _bars(rows)
     structure = _intervals([(tick, label) for tick, label in _sections(song, words, bars) if tick < last], last)
+    parts = tracks.describe(found, chosen)
     harmony = []
     if mode == "full":
-        voice = chosen["voice"]
-        heard = [(note.start, note.end, note.pitch, chords.VOICE_WEIGHT if part is voice else 1.0)
-                 for part in found if not part.drums for note in part.notes]
         signature = abc_rebuild.KEY_SIGNATURES[key_starts[0][1]]
         tonic = (7 * signature) % 12
         scale = {(tonic + step) % 12 for step in (0, 2, 4, 5, 7, 9, 11)}
-        harmony = chords.guess(heard, chords.spans(bars), signature < 0, scale)
-        notices.append(CHORDS_GUESSED)
+        written = tracks.chords_part(found)
+        if written is not None:
+            held = []
+            for note in written.notes:
+                start = snap(points, note.start)
+                stop = min(max(snap(points, note.end), start + 1), len(points) - 1)
+                if stop > start:
+                    held.append((start, stop, note.pitch))
+            read, unnamed = chords.read(held, len(points) - 1, scale)
+            harmony = [[points[start], points[stop], chord] for start, stop, chord in read]
+            notices.append(CHORDS_READ.format(number=written.number, name=written.name))
+            if unnamed:
+                downbeats = [tick for tick, _following, _numerator in bars]
+                numbers = sorted({max(1, bisect.bisect_right(downbeats, points[start])) for start in unnamed})
+                notices.append(UNNAMED.format(number=written.number, bars=_bar_list(numbers)))
+            for row in parts:
+                if row["number"] == written.number and not row["role"]:
+                    row["role"] = "chords"
+        else:
+            voice = chosen["voice"]
+            heard = [(note.start, note.end, note.pitch, chords.VOICE_WEIGHT if part is voice else 1.0)
+                     for part in found if not part.drums for note in part.notes]
+            harmony = chords.guess(heard, chords.spans(bars), signature < 0, scale)
+            notices.append(CHORDS_GUESSED)
+        harmony = spelling.respelled(harmony, [[start, stop, key_label(name)]
+                                               for start, stop, name in _intervals(key_starts, last)])
     built = {"beats": [[at(tick), number, numerator, denominator] for tick, number, numerator, denominator in rows],
              "chords": [[at(start), at(stop), chord] for start, stop, chord in harmony],
              "keys": [[at(start), at(stop), name] for start, stop, name in _intervals(key_starts, last)],
@@ -352,5 +401,4 @@ def convert(song: smf.Song, mode: str = "melody", vocal="auto", instrument="auto
              "instrument": chosen["instrument"].number if chosen["instrument"] is not None else None,
              "voice_shift": shifts.get("voice", 0), "instrument_shift": shifts.get("instrument", 0),
              "karaoke": words is not None}
-    return {"abc": abc, "lyrics": lyrics, "parts": tracks.describe(found, chosen), "facts": facts,
-            "notices": notices}
+    return {"abc": abc, "lyrics": lyrics, "parts": parts, "facts": facts, "notices": notices}

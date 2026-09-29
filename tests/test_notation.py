@@ -616,6 +616,48 @@ def test_the_write_route_carries_a_new_tempo_into_the_sheet_it_reads_back():
     assert status == 200 and payload["ok"] is False and "outside" in payload["error"]
 
 
+def test_the_transpose_route_moves_the_whole_score_and_hands_back_what_it_reads_as():
+    """The key list in the roll: the move 'transpose' makes, with the sheet the moved text now reads as."""
+    from yue2_comfy import transpose
+    for bad in (None, {"abc": AWKWARD}, {"abc": 5, "semitones": 3}, {"abc": AWKWARD, "semitones": "3"},
+                {"abc": AWKWARD, "semitones": True}, {"abc": AWKWARD, "semitones": 0},
+                {"abc": AWKWARD, "semitones": 12}, {"abc": AWKWARD, "semitones": -12},
+                {"abc": AWKWARD, "semitones": 2.0}):
+        assert routes.answer_score_transpose(bad)[1] == 400
+    payload, status = routes.answer_score_transpose({"abc": AWKWARD, "semitones": 3})
+    moved = transpose.move(AWKWARD, 3)
+    assert status == 200 and payload["ok"] is True
+    assert (payload["abc"], payload["before"], payload["after"]) == (moved.text, "D", "F")
+    assert payload["sheet"] == dict(notation.read(moved.text), cut=False)
+    before = notation.read(AWKWARD)
+    assert [n["pitch"] + 3 for n in before["notes"]["Vocal"]] == [n["pitch"] for n in payload["sheet"]["notes"]["Vocal"]]
+    assert [n["pitch"] + 3 for n in before["notes"]["Ins"]] == [n["pitch"] for n in payload["sheet"]["notes"]["Ins"]]
+    assert [c["name"] for c in payload["sheet"]["chords"]] == ["F", "Bb/D", "C7", "G", "Dm", "A7"]
+    assert sorted({bar["key"] for bar in payload["sheet"]["bars"]}) == ["Dm", "F"]
+
+
+def test_a_cut_score_is_moved_on_its_whole_groups():
+    from yue2_comfy import transpose
+    payload, status = routes.answer_score_transpose({"abc": CUT, "semitones": -2})
+    assert status == 200 and payload["ok"] is True
+    assert payload["abc"] == transpose.move(AWKWARD.strip(), -2).text
+    assert payload["sheet"]["cut"] is False and "d8f8a8b" not in payload["abc"]
+
+
+def test_a_move_the_score_cannot_spell_keeps_the_key_and_says_why(monkeypatch):
+    """The window shows the reason without the node's advice about the 'transpose' option."""
+    from yue2_comfy import transpose
+
+    def refused(_text, semitones):
+        raise ValueError(transpose.UNREADABLE.format(step=transpose.describe(semitones), reason="boom"))
+
+    monkeypatch.setattr(transpose, "move", refused)
+    payload, status = routes.answer_score_transpose({"abc": AWKWARD, "semitones": 5})
+    assert status == 200 and payload["ok"] is False
+    assert payload["error"] == ("This score cannot be moved up 5 semitones: boom. "
+                                "The score stays in the key it is in.")
+
+
 def test_a_blank_score_is_the_right_length_and_holds_no_notes():
     for bars in (1, 3, 4, 5, 7, 16, 33):
         sheet = notation.read(notation.blank(bars))

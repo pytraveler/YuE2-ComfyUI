@@ -3,8 +3,9 @@
 A song someone already has as MIDI -- from a sequencer, a karaoke collection
 or a notation program -- becomes the two-voice score YuE2 sings from: the
 voice from one track, the instrument line from another, and with 'full' chord
-symbols guessed from what the rest play (see ``midi.score``). Wired into 'YuE2
-Generate Song', the tune is sung in whatever style the style line asks for.
+symbols, read from a track named Chords or guessed from what the rest play
+(see ``midi.chords``). Wired into 'YuE2 Generate Song', the tune is sung in
+whatever style the style line asks for.
 
 The file comes from ComfyUI's input folder, the way a Load Audio recording
 does, and the node's own button and a file dropped on the node upload one
@@ -54,8 +55,9 @@ MIDI_TOOLTIP = (
 )
 MODE_TOOLTIP = (
     "'melody' writes the vocal and instrumental lines without chords, to be sung with 'cot' set to 'melody'.\n\n"
-    "'full' adds chord symbols guessed from what the other tracks play together, for 'cot' set to 'full'. "
-    "They are a guess: read them over in 'Edit score...'."
+    "'full' adds chord symbols, for 'cot' set to 'full': read from a track named 'Chords', the one "
+    "'Save as MIDI...' writes, or else guessed from what the other tracks play together. A guess is a "
+    "guess: read it over in 'Edit score...'."
 )
 VOCAL_TOOLTIP = (
     "The track the voice sings, by its number in the list on the node. 'auto' takes the track the karaoke "
@@ -185,10 +187,11 @@ class YuE2LoadMidi:
 
     DESCRIPTION = (
         "Reads a MIDI file and writes its melody as a score YuE2 can sing -- the vocal line from one track, the "
-        "instrumental line from another, and with 'full' chords guessed from the rest -- so a song can be sung "
-        "from a file. Wire 'score_abc' into YuE2 Generate Song with 'cot' set to 'melody' (or 'full'): the words "
-        "written on that node are laid along the tune's phrases. The 'lyrics' output is the karaoke words of a "
-        ".kar file under their section tags, or the tags alone to write words under.\n\n"
+        "instrumental line from another, and with 'full' the chords, from a 'Chords' track or guessed from the "
+        "rest -- so a song can be sung from a file. Wire 'score_abc' into YuE2 Generate Song with 'cot' set to "
+        "'melody' (or 'full'): the words written on that node are laid along the tune's phrases. The 'lyrics' "
+        "output is the karaoke words of a .kar file under their section tags, or the tags alone to write words "
+        "under.\n\n"
         "Nothing is downloaded: the file is read on the spot."
     )
     OUTPUT_NODE = True

@@ -66,6 +66,28 @@ def test_a_saved_name_is_found_whichever_slashes_it_was_saved_with(folders):
     assert catalogue.find(" YUE2/Rock/AR.safetensors ").name == "yue2/rock/ar.safetensors"
 
 
+def test_a_bare_name_finds_the_one_file_of_that_name_in_any_folder(folders):
+    first, _second = folders
+    entry = catalogue.find("AR.safetensors")
+    assert entry.name == "yue2/rock/ar.safetensors"
+    assert entry.path == str(first / "yue2" / "rock" / "ar.safetensors")
+
+
+def test_a_bare_name_two_folders_share_is_refused_with_both(folders):
+    first, _second = folders
+    (first / "yue2" / "pop").mkdir()
+    lf.write(first / "yue2" / "pop" / "ar.safetensors", lf.map_layer(3))
+    with pytest.raises(FileNotFoundError) as caught:
+        catalogue.find("ar.safetensors")
+    assert "yue2/pop/ar.safetensors" in str(caught.value)
+    assert "yue2/rock/ar.safetensors" in str(caught.value)
+
+
+def test_a_name_with_a_folder_is_never_looked_for_elsewhere(folders):
+    with pytest.raises(FileNotFoundError):
+        catalogue.find("other/ar.safetensors")
+
+
 def test_a_missing_file_is_refused_with_what_is_there_now(folders):
     with pytest.raises(FileNotFoundError) as caught:
         catalogue.find("gone.safetensors")

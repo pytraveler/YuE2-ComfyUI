@@ -15,6 +15,25 @@ new seed with the same words sings the same edit as a new take, which is how a
 bar that did not take gets another chance. A score without a mark -- pasted,
 wired in, or saved before marks existed -- is sung as it is, whatever the words.
 
+A person who changes the words and means to keep the tune says so in the score
+editor, and the mark then ends in ' keep': the edit is sung with whatever words
+the node has, and the node says the words have changed under it. The mark still
+names the words it was made for, so the editor can tell which they were.
+
+How new words fare on an old score was measured on 2026-09-29: three songs of
+the model's own (English ballad, Russian folk rock, English synth-pop), two
+seeds each, the model's score sung at its seed under other lyrics, Qwen3-ASR on
+the separated voice, the share of the lyric's words heard in order.
+
+- Two or three words changed in most lines, the lines as long as before: 0.95
+  on average (0.86 to 1.00), as well as over a new score written for those
+  words (0.95) and nearly as well as the score's own words (0.97).
+- Every line new, at about the same syllables: 0.92 (0.73 to 1.00, the
+  Russian song lowest) against 0.95 over a new score.
+- A fifth line added to each verse: 0.85 (0.81 to 0.90) against 0.96. The song
+  keeps the edit's length; the verse's lines move along its phrases, and in the
+  takes read line by line the next chorus lost its last line.
+
 Nothing here touches torch or the model, so every rule in this file is checked
 on a machine that has never downloaded the weights.
 """
@@ -46,13 +65,21 @@ The score editor draws where the singing stops. It counts the lines itself when
 the lyrics are on the canvas, and needs this when they came in through a wire."""
 
 MARK_PREFIX = "%yue2-words "
-MARK_LINE = re.compile(r"%yue2-words ([0-9a-f]{16})[ \t\r]*")
+MARK_LINE = re.compile(r"%yue2-words ([0-9a-f]{16})( keep)?[ \t\r]*")
+KEEP = " keep"
 
 OTHER_WORDS = (
     "The edited score on this node was made for other words: the style, the lyrics "
     "or 'cot' have changed since it was edited. It was not sung, and {instead}, so "
     "old notes do not end up under new words. Put the words back and the edit is "
-    "sung again, or open 'Edit score...' to edit the new score."
+    "sung again, or open 'Edit score...' to edit the new score, or tick 'Keep for "
+    "new words' there to sing the edit with these."
+)
+
+KEPT = (
+    "The edited score on this node was made for other words and is kept for new "
+    "ones, so these words are sung on its notes. A line added moves the lines "
+    "after it along the tune, and the last line of a section can be lost."
 )
 
 COT_OFF = (
@@ -64,10 +91,11 @@ COT_OFF = (
 
 @dataclasses.dataclass(frozen=True)
 class Edit:
-    """What a score box holds: the score, trimmed and without its mark, and the mark."""
+    """What a score box holds: the score, trimmed and without its mark, the mark, and whether it is kept for new words."""
 
     score: str
     words: str | None
+    keep: bool = False
 
 
 def mark(style, lyrics, cot) -> str:
@@ -89,35 +117,44 @@ def read(text) -> Edit:
     trimmed at the ends, as the nodes have always trimmed an edited score.
     """
     words = None
+    keep = False
     kept = []
     for line in str(text or "").split("\n"):
         found = MARK_LINE.fullmatch(line)
         if found:
-            words = found.group(1)
+            words, keep = found.group(1), bool(found.group(2))
         else:
             kept.append(line)
-    return Edit("\n".join(kept).strip(), words)
+    return Edit("\n".join(kept).strip(), words, keep)
 
 
-def attach(score, words) -> str:
+def attach(score, words, keep=False) -> str:
     """The score with the mark as its last line, or the bare score when there is no mark."""
     clean = str(score or "").rstrip()
-    return clean + "\n" + MARK_PREFIX + words if words else clean
+    return clean + "\n" + MARK_PREFIX + words + (KEEP if keep else "") if words else clean
 
 
 def mismatch(edit, style, lyrics, cot, instead) -> str:
     """Why this edit is not sung with these words, or '' when nothing stops it.
 
     *instead* says what the node does in its place, and is written into the
-    message. No edit at all is never a mismatch.
+    message. No edit at all is never a mismatch, and neither is one kept for new
+    words (see ``carried``).
     """
     if not edit.score:
         return ""
     if cot == "off":
         return COT_OFF
-    if edit.words is not None and edit.words != mark(style, lyrics, cot):
+    if edit.words is not None and not edit.keep and edit.words != mark(style, lyrics, cot):
         return OTHER_WORDS.format(instead=instead)
     return ""
+
+
+def carried(edit, style, lyrics, cot) -> str:
+    """What the node says when it sings an edit kept for new words under words it was not made for, else ''."""
+    if not edit.score or cot == "off" or not edit.keep:
+        return ""
+    return KEPT if edit.words != mark(style, lyrics, cot) else ""
 
 
 LYRICS_UI = "yue2_lyrics"

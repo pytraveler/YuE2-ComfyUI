@@ -490,10 +490,11 @@ const made = { osc: 0, noise: 0, gain: 0, filter: 0, started: 0, stopped: 0 };
 function node(kind) {
     return {
         connect: (next) => next, start: () => { made.started += 1; }, stop: () => { made.stopped += 1; },
-        frequency: { value: 0, setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+        frequency: { value: 0, setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {},
+                     linearRampToValueAtTime: () => {} },
         gain: { value: 0, setValueAtTime: () => {}, linearRampToValueAtTime: () => {},
                 exponentialRampToValueAtTime: () => {} },
-        detune: { value: 0 }, Q: { value: 0 }, type: "", loop: false, buffer: null, kind,
+        detune: { value: 0 }, Q: { value: 0 }, pan: { value: 0 }, type: "", loop: false, buffer: null, kind,
     };
 }
 const context = {
@@ -502,6 +503,7 @@ const context = {
     createBufferSource: () => { made.noise += 1; return node("noise"); },
     createGain: () => { made.gain += 1; return node("gain"); },
     createBiquadFilter: () => { made.filter += 1; return node("filter"); },
+    createStereoPanner: () => node("pan"),
     createBuffer: () => ({ getChannelData: () => new Float32Array(8) }),
 };
 """
@@ -518,12 +520,18 @@ def run_sounds(script: str):
 
 
 def test_each_part_is_offered_the_piano_first_and_only_sounds_that_exist():
-    """The list in the window and the list the player can build are one list."""
+    """The list in the window and the list the player can build are one list.
+
+    The parts start on the piano, the chords on held strings: a chord lasts until
+    the next one, and a struck piano has died away long before that.
+    """
     offered = run_sounds("console.log(JSON.stringify(s.CHOICES));")
     assert sorted(offered) == ["Ins", "Vocal", "chords"]
+    defaults = s_defaults()
     for part, choices in offered.items():
         assert choices[0][0] == "piano", part + " does not start on the piano"
-        assert s_defaults()[part] == "piano"
+        assert defaults[part] in [id for id, _ in choices], part
+    assert defaults == {"Vocal": "piano", "Ins": "piano", "chords": "strings"}
     assert [id for id, _ in offered["Ins"]].count("drums") == 1
     assert "drums" not in [id for id, _ in offered["Vocal"] + offered["chords"]]
 
@@ -532,12 +540,13 @@ def s_defaults():
     return run_sounds("console.log(JSON.stringify(s.DEFAULTS));")
 
 
-def test_a_sound_a_part_does_not_offer_falls_back_to_the_piano():
+def test_a_sound_a_part_does_not_offer_falls_back_to_its_own_first_sound():
     """A remembered choice outlives the list it was picked from."""
     assert run_sounds("console.log(JSON.stringify(["
                       "s.known('Ins', 'drums'), s.known('Vocal', 'drums'),"
-                      "s.known('chords', 'pad'), s.known('Vocal', undefined)]));"
-                      ) == ["drums", "piano", "pad", "piano"]
+                      "s.known('chords', 'pad'), s.known('Vocal', undefined),"
+                      "s.known('chords', 'drums'), s.known('chords', 'piano'), s.known('Vocal', 'strings')]));"
+                      ) == ["drums", "piano", "pad", "piano", "strings", "piano", "piano"]
 
 
 def test_the_kit_names_one_drum_for_every_row_and_repeats_each_octave():
@@ -549,7 +558,7 @@ def test_the_kit_names_one_drum_for_every_row_and_repeats_each_octave():
 
 def test_every_sound_builds_and_stops_what_it_started():
     """A voice that never stops leaves the note sounding after Stop."""
-    for kind in ("synth", "bass", "pluck", "pad", "drums"):
+    for kind in ("synth", "bass", "pluck", "pad", "strings", "drums"):
         counted = run_sounds(
             "const out = [];\n"
             "for (const pitch of [36, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 84]) {\n"
@@ -820,6 +829,60 @@ def test_a_moved_chord_is_named_by_the_plainest_key_of_its_new_root():
     assert got["some"] == ["Gm", "Bb/D", "Gm7b5", "Bbmaj7", "Ebm", "Bbdim", "Daug", "B7sus4",
                            "D#m(maj7)", "Eb", None, None]
     assert got["twice"] is True and got["all"] is True
+
+
+@needs_node
+def test_the_key_list_names_each_key_as_transpose_will_and_keeps_the_voice_where_it_can():
+    """Each key of the song's mode is offered once, by the name 'transpose' gives the moved key.
+
+    The move is the nearest one, -5 to +6, unless it would take the middle of the voice line out of
+    the window the model's scores keep it in while the move the other way round keeps it inside.
+    """
+    from yue2_comfy import transpose
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    keys = list(abc_tools.KEYS)
+    got = run_roll("""console.log(JSON.stringify({{
+        plain: {keys}.map((key) => r.keyChoices(key)),
+        high: r.keyChoices("F#m", 80).map((c) => c.shift),
+        low: r.keyChoices("C", 61).map((c) => c.shift),
+        tritone: [r.keyChoices("C", 74), r.keyChoices("C", 68)].map((list) => list.find((c) => c.name === "F#").shift),
+        none: [r.keyChoices("Dmix"), r.keyChoices(""), r.keyChoices(null)],
+        words: Array.from({{length: 23}}, (_, i) => r.shiftWords(i - 11)),
+        marks: [r.keyMove(0), r.keyMove(3), r.keyMove(-5)],
+    }}));""".format(keys=json.dumps(keys)))
+    for key, choices in zip(keys, got["plain"]):
+        assert [choice["shift"] for choice in choices] == list(range(-5, 7)), key
+        for choice in choices:
+            expected = key if not choice["shift"] else transpose._interval(key, choice["shift"]).key(key)
+            assert choice["name"] == expected, (key, choice)
+    assert got["high"] == [-5, -4, -3, -2, -1, 0, 1, 2, -9, -8, -7, -6]
+    assert got["low"] == [7, 8, 9, 10, -1, 0, 1, 2, 3, 4, 5, 6]
+    assert got["tritone"] == [-6, 6]
+    assert got["none"] == [[], [], []]
+    assert got["words"] == [transpose.describe(step) for step in range(-11, 12)]
+    assert got["marks"] == ["", "+3", "\u22125"]
+
+
+@needs_node
+def test_the_history_shows_what_undo_and_redo_would_hand_back():
+    """A key change is kept as a whole window's state; the window asks which kind comes next."""
+    got = run_roll("""const h = new r.History();
+        const seen = [h.lastDone, h.lastUndone];
+        h.push("a");
+        h.push({keyed: true});
+        seen.push(h.lastDone, h.lastUndone);
+        seen.push(h.undo("c"), h.lastDone, h.lastUndone);
+        console.log(JSON.stringify(seen));""")
+    assert got == [None, None, {"keyed": True}, None, {"keyed": True}, "a", "c"]
+
+
+def test_the_editor_moves_the_key_through_the_transpose_route_and_can_take_it_back():
+    score = SCORE.read_text(encoding="utf-8")
+    routes = (ROOT / "yue2_comfy" / "routes.py").read_text(encoding="utf-8")
+    assert 'const TRANSPOSE_ROUTE = "/yue2/score/transpose";' in score and '"/score/transpose"' in routes
+    assert "roll.keyChoices(" in score and "this.keyControl()" in score
+    assert "this.history.lastDone?.keyed" in score and "this.history.lastUndone?.keyed" in score
+    assert "The tempo, the key, the number of bars" in score, "the notes window of a sung song must say why"
 
 
 @needs_node
@@ -1284,7 +1347,7 @@ def test_the_right_button_moves_the_playhead_and_drops_a_chord():
     down = score[score.index("    pointerDown(event) {"):score.index("    movePlayhead(tick) {")]
     assert "if (event.button === 2) this.dropChord(px);" in down
     assert "movePlayhead(tick) {" in score and "dropChord(px) {" in score
-    assert "roll.removeChord(this.model, found.start)" in score
+    assert "this.removeChordAt(found);" in score and "roll.removeChord(this.model, span.start)" in score
     assert 'this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());' in score
 def test_a_widget_the_editors_write_is_recorded_as_a_change_to_the_workflow():
     """Measured on a live ComfyUI: without this the page reloads to an empty score box.
@@ -2530,3 +2593,438 @@ def test_the_track_offers_a_break_beside_going_on_and_says_why_it_cannot():
         start = source.index(method)
         body = source[start:source.index("\n    }\n", start)]
         assert 'edit.op === "break"' in body, method
+
+
+def run_roll_from(folder: pathlib.Path, script: str):
+    """``run_roll`` for a script too long for a command line: it is written to a file first."""
+    path = folder / "roll_check.mjs"
+    path.write_text("import * as r from {};\n{}".format(json.dumps(ROLL.as_uri()), script), encoding="utf-8")
+    done = subprocess.run([NODE, str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def imported_name(pitches, key):
+    """The chord Load MIDI reads from these notes on a Chords track, named in ``key`` as the score writes it."""
+    from yue2_comfy.midi import chords, score
+    from yue2_comfy.sheetsage import abc_rebuild, spelling
+    label = chords.spelled(pitches)
+    return None if label is None else abc_rebuild.chord_text(spelling.chord_name(label, score.key_label(key)))
+
+
+def test_the_roll_lays_chords_out_from_the_root_load_midi_reads():
+    from yue2_comfy.midi import export
+    assert js_number("CHORD_ROOT") == export.CHORD_ROOT
+
+
+@needs_node
+def test_the_roll_names_chord_notes_exactly_as_load_midi_names_a_chords_track(tmp_path):
+    """A chord changed note by note in the roll is the chord the file saved from it reads back as.
+
+    Every layout the roll draws -- fifteen kinds on twelve roots, bare or over each
+    bass -- in every key, and sets of notes no one would draw: named alike, or both
+    refused.
+    """
+    import random
+    from yue2_comfy.midi import export, score
+    from yue2_comfy.sheetsage import abc_rebuild, spelling
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    keys = list(abc_tools.KEYS)
+    layouts = [export.chord_pitches(abc_rebuild.SHARP_NAMES[root] + quality
+                                    + ("" if bass is None else "/" + abc_rebuild.SHARP_NAMES[bass]))
+               for quality in abc_tools.QUALITIES for root in range(12) for bass in [None] + list(range(12))]
+    rng = random.Random(27)
+    loose = [sorted(rng.sample(range(34, 74), rng.randint(2, 5))) for _ in range(600)]
+    sets = layouts + loose
+    got = run_roll_from(tmp_path, "const sets = {}; const keys = {};\n"
+                        "console.log(JSON.stringify({{sharps: keys.map((k) => r.keySharps(k)), "
+                        "names: keys.map((k) => sets.map((p) => r.namedChord(p, k)))}}));"
+                        .format(json.dumps(sets), json.dumps(keys)))
+    assert got["sharps"] == [spelling.signature(score.key_label(key)) for key in keys]
+    wrong = [(key, pitches, name, imported_name(pitches, key))
+             for key, row in zip(keys, got["names"]) for pitches, name in zip(sets, row)
+             if name != imported_name(pitches, key)]
+    assert not wrong, wrong[:5]
+    named = [name for row in got["names"] for name in row[:len(layouts)]]
+    assert all(abc_tools.CHORD.fullmatch(name) for name in named)
+    assert any(name is None for row in got["names"] for name in row[len(layouts):])
+
+
+@needs_node
+def test_a_chord_drawn_on_a_row_takes_the_kind_its_degree_has_in_the_key():
+    """C, Dm, Em, F, G, Am, Bdim in C; a root outside the scale gets a major chord."""
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    keys = list(abc_tools.KEYS)
+    got = run_roll("console.log(JSON.stringify({}.map((k) => Array.from({{length: 12}}, (_, pc) => "
+                   "r.chordByDegree(60 + pc, k)))));".format(json.dumps(keys)))
+    shapes = {"maj": (0, 4, 7), "min": (0, 3, 7), "dim": (0, 3, 6)}
+    for key, row in zip(keys, got):
+        tonic = (7 * abc_tools.KEYS[key]) % 12
+        scale = [(tonic + step) % 12 for step in (0, 2, 4, 5, 7, 9, 11)]
+        for pitch_class, name in enumerate(row):
+            quality = "maj"
+            if pitch_class in scale:
+                at = scale.index(pitch_class)
+                steps = ((scale[(at + 2) % 7] - pitch_class) % 12, (scale[(at + 4) % 7] - pitch_class) % 12)
+                quality = {(4, 7): "maj", (3, 7): "min", (3, 6): "dim"}[steps]
+            wanted = imported_name([48 + pitch_class + step for step in shapes[quality]], key)
+            assert name == wanted, (key, pitch_class, name, wanted)
+    assert got[keys.index("C")] == ["C", "Db", "Dm", "Eb", "Em", "F", "F#", "G", "Ab", "Am", "Bb", "Bdim"]
+
+
+@needs_node
+def test_a_chord_moved_whole_keeps_its_kind_and_bass_and_is_named_from_the_key():
+    """Up or down by its root, a chord is what its moved notes read as in the key where it lands."""
+    from yue2_comfy.midi import export
+    from yue2_comfy.sheetsage import abc_rebuild
+    from yue2_comfy.vendor.yue2_music import abc_tools
+    names = [abc_rebuild.SHARP_NAMES[root] + quality
+             + ("/" + abc_rebuild.SHARP_NAMES[(root + 4) % 12] if slash else "")
+             for quality in abc_tools.QUALITIES for root in (0, 3, 8) for slash in (False, True)]
+    keys = ["C", "Bb", "F#m", "Ebm", "E"]
+    shifts = [-7, -1, 1, 5, 12]
+    got = run_roll("console.log(JSON.stringify({}.flatMap((k) => {}.flatMap((n) => {}.map((s) => "
+                   "r.transposedChord(n, s, k))))));".format(json.dumps(keys), json.dumps(names), json.dumps(shifts)))
+    at = 0
+    for key in keys:
+        for name in names:
+            for shift in shifts:
+                moved = got[at]
+                at += 1
+                if shift == 12:
+                    assert moved == name
+                    continue
+                layout = export.chord_pitches(moved)
+                wanted = sorted({(pitch + shift) % 12 for pitch in export.chord_pitches(name)})
+                assert sorted({pitch % 12 for pitch in layout}) == wanted, (name, shift)
+                assert moved == imported_name(layout, key), (key, name, shift, moved)
+
+
+@needs_node
+def test_a_chord_moves_between_its_neighbours_and_its_end_is_where_the_next_begins():
+    sheet = roll_sheet()
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        const names = (model) => model && model.chords.map((c) => [c.start, c.name]);
+        console.log(JSON.stringify({{
+            spans: r.chordSpans(m, sheet.total),
+            rooms: [r.chordRoom(m, 0, sheet.total), r.chordRoom(m, 32, sheet.total), r.chordRoom(m, 128, sheet.total),
+                    r.chordRoom(m, 5, sheet.total)],
+            later: names(r.moveChord(m, sheet, 32, 16, 0)),
+            past: r.moveChord(m, sheet, 32, 96, 0),
+            up: names(r.moveChord(m, sheet, 32, 0, 1)),
+            same: r.moveChord(m, sheet, 32, 0, -12) === m,
+            all: names(r.moveChords(m, sheet, [0, 32], 32, 2)),
+            onto: r.moveChords(m, sheet, [0], 32, 0),
+            root: [r.rootPitch("Bb/D"), r.rootPitch("nope")],
+            key: [r.keyAt(sheet, 0), r.keyAt(sheet, 150)],
+        }}));
+    """.format(sheet=json.dumps(sheet)))
+    assert got["spans"] == [{"start": 0, "name": "F", "end": 32}, {"start": 32, "name": "Bb", "end": 128},
+                            {"start": 128, "name": "C", "end": 192}]
+    assert got["rooms"] == [{"low": 0, "high": 31}, {"low": 1, "high": 127}, {"low": 33, "high": 191}, None]
+    assert got["later"] == [[0, "F"], [48, "Bb"], [128, "C"]]
+    assert got["past"] is None, "a chord does not jump over the next one"
+    assert got["up"] == [[0, "F"], [32, "B"], [128, "C"]]
+    assert got["same"] is True
+    assert got["all"] == [[32, "G"], [64, "C"], [128, "C"]]
+    assert got["onto"] is None
+    assert got["root"] == [58, None] and got["key"] == ["F", "F"]
+
+
+REPEAT_SCORE = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=100\n'
+                'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+                'V: Ins clef=treble name="Ins Melody" snm="Inst."\n'
+                'K:C\n'
+                '% verse\nV: Vocal\n"C"c16|"Am"A16|\nV: Ins\nZ2|\n'
+                '% chorus\nV: Vocal\n"F"f16|"G"g16|\nV: Ins\nZ2|\n'
+                '% verse\nV: Vocal\n"C"c16|"Am"A16|\nV: Ins\nZ2|\n'
+                '% chorus\nV: Vocal\nf16|"G"g16|\nV: Ins\nZ2|\n'
+                '% verse\nV: Vocal\n"C"c16|"Em"e16|\nV: Ins\nZ2|\n'
+                '% chorus\nV: Vocal\n"F"f16|"G"g16|"C"c16|\nV: Ins\nZ3|\n')
+"""Three verses, the last with other chords; a chorus that starts on the chord the verse before it left
+ringing, and a last chorus a bar longer than the first."""
+
+
+@needs_node
+def test_a_chord_edit_is_made_again_in_the_repeats_that_still_have_the_old_chords():
+    """What 'repeats too' does: the same change in each section of the same name whose chords matched.
+
+    A repeat with chords of its own is left alone and named, and the chord that
+    rang on past the end of a repeat still rings there, so the section after it
+    is not changed by the edit. A longer or shorter repeat is matched over the
+    bars the two have in common, as a last chorus that runs on usually is.
+    """
+    from yue2_comfy import notation
+    sheet = notation.read(REPEAT_SCORE)
+    got = run_roll("""
+        const sheet = {sheet};
+        const m = r.modelOf(sheet);
+        const names = (model) => model.chords.map((c) => [c.start, c.name]);
+        const edited = r.setChord(m, 16, "Dm");
+        const mirrored = r.mirrorChords(sheet, m, edited);
+        const chorus = r.mirrorChords(sheet, m, r.setChord(m, 32, "Dm"));
+        const moved = r.mirrorChords(sheet, m, r.moveChord(m, sheet, 16, 8, 0));
+        console.log(JSON.stringify({{
+            chords: names(mirrored.model), done: mirrored.done, skipped: mirrored.skipped,
+            sheet: r.sheetOf(mirrored.model),
+            chorus: [names(chorus.model), chorus.done, chorus.skipped],
+            moved: [names(moved.model), moved.done],
+            nothing: r.mirrorChords(sheet, m, m).model === m,
+            kinds: [r.sectionKind(" Verse 2 "), r.sectionKind("pre-chorus"), r.sectionKind("verse")],
+        }}));
+    """.format(sheet=json.dumps(sheet)))
+    assert got["chords"] == [[0, "C"], [16, "Dm"], [32, "F"], [48, "G"], [64, "C"], [80, "Dm"], [96, "Am"],
+                             [112, "G"], [128, "C"], [144, "Em"], [160, "F"], [176, "G"], [192, "C"]]
+    assert got["done"] == [{"bar": 4, "bars": 2, "name": "verse"}]
+    assert got["skipped"] == [{"bar": 8, "bars": 2, "name": "verse"}]
+    written = notation.write(REPEAT_SCORE, got["sheet"])
+    assert written["bars"] == [1, 5, 6]
+    back = notation.read(written["abc"])
+    assert [[c["start"], c["name"]] for c in back["chords"]] == got["chords"]
+    chords, done, skipped = got["chorus"]
+    assert done == [{"bar": 10, "bars": 3, "name": "chorus"}]
+    assert skipped == [{"bar": 6, "bars": 2, "name": "chorus"}], "the chorus that starts on Am is another chorus"
+    assert [160, "Dm"] in chords and [192, "C"] in chords and [96, "Am"] not in chords
+    assert got["moved"][0][:6] == [[0, "C"], [24, "Am"], [32, "F"], [48, "G"], [64, "C"], [88, "Am"]]
+    assert got["moved"][1] == [{"bar": 4, "bars": 2, "name": "verse"}]
+    assert got["nothing"] is True
+    assert got["kinds"] == ["verse", "pre-chorus", "verse"]
+
+
+def test_the_window_edits_chords_as_notes_in_a_part_of_their_own():
+    """The Chords part of the switch: drawn from the chord symbols, edited whole or note by note."""
+    source = SCORE.read_text(encoding="utf-8")
+    assert '[CHORDS, "Chords",' in source and 'const CHORDS = "chords";' in source
+    down = source.split("    chordDown(event, px, py, tick, keys, again) {")[1].split("\n    }\n")[0]
+    for call in ("this.removeChordAt(hit.span)", "this.openChordInput(hit.span.start, hit.span.name)",
+                 "this.toggleTone(tick, pitch)", "roll.chordByDegree(pitch, roll.keyAt(this.sheet, start))",
+                 'mode: "edge"', 'mode: "chord"', 'mode: "tone"'):
+        assert call in down, call
+    dragged = source.split("    chordDragged(event, tick, pitch) {")[1].split("\n    }\n")[0]
+    for call in ("roll.moveChords(", "roll.moveChord(", "roll.chordRoom(", "roll.namedChord("):
+        assert call in dragged, call
+    assert "this.chordDown(event, px, py, tick, keys, again);" in source
+    assert "this.chordDragged(event, tick, pitch);" in source and "this.chordReleased(drag, result);" in source
+
+
+def test_every_chord_edit_in_the_chords_part_can_reach_the_repeats():
+    source = SCORE.read_text(encoding="utf-8")
+    assert 'checkControl("repeats too", false, REPEATS_TOOLTIP)' in source
+    commit = source.split('    commitChords(next, previous = this.model, said = "") {')[1].split("\n    }\n")[0]
+    assert "this.chordPart && this.repeats.box.checked" in commit and "roll.mirrorChords(" in commit
+    for path in ("this.commitChords(roll.removeChord(this.model, start))",
+                 "this.commitChords(roll.setChord(this.model, start, text))",
+                 "if (this.chordPart) this.commitChords(next);",
+                 "const kept = this.commitChords(result, drag.from);"):
+        assert path in source, path
+
+
+def test_a_chord_name_on_the_lane_stops_where_the_next_chord_starts():
+    """Two chords a beat apart drew their names over each other, and a click took the first."""
+    source = SCORE.read_text(encoding="utf-8")
+    chips = source.split("    chordChips(c, model) {")[1].split("\n    }\n")[0]
+    assert "this.x(span.end) - left - 2" in chips and "Math.min(" in chips
+    assert source.count("this.chordChips(c, ") == 2, "the lane and the click must measure the same chips"
+    lane = source.split("for (const chip of this.chordChips(c, model)) {")[1].split("\n        }\n")[0]
+    assert "c.clip();" in lane
+
+
+
+@needs_node
+def test_a_mark_kept_for_new_words_comes_off_and_goes_on_as_the_server_does_it():
+    """The editor writes ' keep' after the mark and the node reads it; a disagreement would sing a comment."""
+    from yue2_comfy import edits
+    words = edits.mark("style", "lyrics", "full")
+    kept = edits.attach(ROLL_SCORE, words, keep=True)
+    texts = [kept, kept.replace("\n", "\r\n") + "\r\n", edits.attach(ROLL_SCORE, words),
+             ROLL_SCORE + "%yue2-words " + words + " keeps\n", ROLL_SCORE]
+    got = run_roll("""
+        const texts = {texts};
+        const score = {score};
+        const changed = score + "G|";
+        console.log(JSON.stringify({{
+            split: texts.map((t) => r.splitMark(t)),
+            attached: [r.attachMark(score, {words}, true), r.attachMark(score, {words}), r.attachMark(score, null, true)],
+            values: [r.editValue(score, score, {words}, true), r.editValue(score, score, {words}, false),
+                     r.editValue(score, score, null, true), r.editValue(changed, score, {words}, true),
+                     r.editValue(changed, score, {words}, false), r.editValue("", score, {words}, true)],
+        }}));
+    """.format(texts=json.dumps(texts), score=json.dumps(ROLL_SCORE), words=json.dumps(words)))
+    assert got["attached"] == [kept, edits.attach(ROLL_SCORE, words), edits.attach(ROLL_SCORE, None, keep=True)]
+    assert [[x["score"], x["words"], x["keep"]] for x in got["split"]] == [
+        [found.score, found.words, found.keep] for found in map(edits.read, texts)]
+    changed = (ROLL_SCORE + "G|").strip()
+    assert got["values"] == [kept.strip(), "", "", edits.attach(changed, words, keep=True),
+                             edits.attach(changed, words), ""]
+
+
+def test_the_window_keeps_an_edit_for_new_words_only_when_asked():
+    """A box beside Apply, remembered in the browser, read back from the box, and named where the node refuses."""
+    from yue2_comfy import edits, nodes, staged
+    source = SCORE.read_text(encoding="utf-8")
+    assert 'const KEEP_LABEL = "Keep for new words";' in source
+    label = "'Keep for new words'"
+    assert label in edits.OTHER_WORDS and label in nodes.EDITED_SCORE_TOOLTIP and label in staged.SCORE_TOOLTIP
+    russian = json.loads((ROOT / "locales" / "ru" / "nodeDefs.json").read_text(encoding="utf-8"))
+    for node in ("YuE2GenerateSong", "YuE2RenderPlan"):
+        assert "Keep for new words" in russian[node]["inputs"]["score_abc"]["tooltip"], node
+    assert "this.keepWords.holder.hidden = Boolean(this.track || this.source);" in source
+    assert "this.keepWords.box.checked = box.score && box.words ? box.keep : rememberedKeep();" in source
+    assert "roll.editValue(text, model, this.baseWords, this.keepWords.box.checked)" in source
+    keep = source.split("    keepChanged() {")[1].split("\n    }\n")[0]
+    assert "rememberKeep(keep);" in keep
+    remembered = source.split("function rememberedKeep() {")[1].split("\n}\n")[0]
+    assert "try {" in remembered and "catch" in remembered
+
+
+def test_typing_in_the_abc_tab_keeps_the_words_an_edit_belongs_to():
+    """Only a score that is the plan's own, or carries its own mark, changes the words; a typed edit keeps them."""
+    source = SCORE.read_text(encoding="utf-8")
+    typed = source.split("    async readTyped() {")[1].split("\n    }\n")[0]
+    assert "this.baseWords || this.planWords" in typed
+    assert "if (typed.words) this.keepWords.box.checked = typed.keep;" in typed
+
+
+COPY_SCORE = ('X:1\nT:\nM:4/4\nL:1/16\nQ:1/4=100\n'
+              'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"\n'
+              'V: Ins clef=treble name="Ins Melody" snm="Inst."\n'
+              'K:C\n'
+              '% verse\nV: Vocal\n"C"z4c4d4e4|"G"g8f8|"Am"e16|"F"c8z8|\nV: Ins\nC16|G,16|A,16|F,16|\n'
+              '% outro\nV: Vocal\nZ2|\nV: Ins\nZ2|\n')
+"""Six bars of sixteen ticks: a phrase over bars 1-2, a held note from bar 3 into nothing, chords until bar 4."""
+
+
+def copy_run(tmp_path, script):
+    from yue2_comfy import notation
+    sheet = notation.read(COPY_SCORE)
+    return sheet, run_roll_from(tmp_path, """
+        const sheet = {sheet};
+        const model = r.modelOf(sheet);
+        const ids = (part, from, to) => model.notes[part].filter((n) => n.start >= from && n.start < to).map((n) => n.id);
+        const plain = (m, part) => m.notes[part].map((n) => [n.start, n.length, n.pitch]);
+        {script}
+    """.replace("{sheet}", json.dumps(sheet)).replace("{script}", script))
+
+
+@needs_node
+def test_a_copy_is_measured_from_the_bar_line_before_it_and_runs_to_the_bar_line_after_it(tmp_path):
+    """Pasted into another bar, the notes keep their places in the bar; duplicated, the copy starts a bar line on."""
+    _sheet, got = copy_run(tmp_path, """
+        const voice = r.clipOf(model, sheet, ids("Vocal", 0, 32), []);
+        const both = r.clipOf(model, sheet, ids("Vocal", 0, 32), [0, 16, 32]);
+        const chords = r.clipOf(model, sheet, [], [16, 32]);
+        const none = r.clipOf(model, sheet, [], []);
+        console.log(JSON.stringify({voice, both: both.chords, chords, none}));
+    """)
+    voice = got["voice"]
+    assert (voice["origin"], voice["span"]) == (0, 32)
+    assert [[n["at"], n["length"], n["pitch"]] for n in voice["notes"]["Vocal"]] == [
+        [4, 4, 72], [8, 4, 74], [12, 4, 76], [16, 8, 79], [24, 8, 77]]
+    assert voice["notes"]["Ins"] == [] and voice["chords"] == []
+    assert got["both"] == [{"at": 0, "name": "C", "end": 16}, {"at": 16, "name": "G", "end": 32}], \
+        "with notes, the chords are the ones above their bars"
+    assert got["chords"] == {"origin": 16, "span": 32, "notes": {"Vocal": [], "Ins": []},
+                             "chords": [{"at": 0, "name": "G", "end": 16}, {"at": 16, "name": "Am", "end": 32}]}, \
+        "chords alone are copied as the blocks they are, each until the next chord"
+    assert got["none"] is None
+
+
+@needs_node
+def test_a_paste_replaces_the_notes_under_it_and_shortens_the_one_that_ran_into_it(tmp_path):
+    from yue2_comfy import notation
+    _sheet, got = copy_run(tmp_path, """
+        const clip = r.clipOf(model, sheet, ids("Vocal", 0, 32), []);
+        const pasted = r.pasteClip(model, sheet, clip, 32, [["Vocal", "Vocal"]], false);
+        const again = r.pasteClip(pasted.model, sheet, r.clipOf(pasted.model, sheet, pasted.ids, []), 64,
+                                  [["Vocal", "Vocal"]], false);
+        const other = r.pasteClip(model, sheet, clip, 32, [["Vocal", "Ins"]], false);
+        const late = r.pasteClip(model, sheet, clip, 80, [["Vocal", "Vocal"]], false);
+        console.log(JSON.stringify({vocal: plain(pasted.model, "Vocal"), ins: plain(pasted.model, "Ins"),
+            ids: pasted.ids.length, fresh: pasted.ids.every((id) => !model.notes.Vocal.some((n) => n.id === id)),
+            again: plain(again.model, "Vocal"), otherIns: plain(other.model, "Ins"),
+            otherVocal: plain(other.model, "Vocal"), late, sheet: r.sheetOf(pasted.model)}));
+    """)
+    phrase = [[4, 4, 72], [8, 4, 74], [12, 4, 76], [16, 8, 79], [24, 8, 77]]
+    moved = lambda shift: [[start + shift, length, pitch] for start, length, pitch in phrase]
+    assert got["vocal"] == phrase + [[32, 4, 76]] + moved(32), "the e held from bar 3 is cut where the copy begins"
+    assert got["ins"] == [[0, 16, 60], [16, 16, 55], [32, 16, 57], [48, 16, 53]]
+    assert got["ids"] == 5 and got["fresh"]
+    assert got["again"] == phrase + [[32, 4, 76]] + moved(32) + moved(64), "a copy of the copy goes on"
+    assert got["otherIns"] == [[0, 16, 60], [16, 16, 55], [32, 4, 57]] + moved(32), "into the part being edited"
+    assert got["otherVocal"] == phrase + [[32, 16, 76], [48, 8, 72]]
+    assert got["late"] is None, "past the end the window adds bars first"
+    written = notation.write(COPY_SCORE, got["sheet"])
+    back = notation.read(written["abc"])
+    assert [[n["start"], n["length"], n["pitch"]] for n in back["notes"]["Vocal"]] == got["vocal"]
+    assert written["bars"] == [2, 3]
+
+
+@needs_node
+def test_pasted_chords_are_written_as_blocks_and_the_chord_after_them_rings_on(tmp_path):
+    from yue2_comfy import notation
+    _sheet, got = copy_run(tmp_path, """
+        const chords = r.pasteClip(model, sheet, r.clipOf(model, sheet, [], [16, 32]), 48, [], true);
+        const both = r.pasteClip(model, sheet, r.clipOf(model, sheet, ids("Vocal", 0, 32), [0, 16]), 32,
+                                 [["Vocal", "Vocal"], ["Ins", "Ins"]], true);
+        const none = r.pasteClip(model, sheet, r.clipOf(model, sheet, [], [16]), 0, [["Vocal", "Vocal"]], false);
+        console.log(JSON.stringify({chords: chords.model.chords, starts: chords.starts, both: both.model.chords,
+                                    bothStarts: both.starts, bothIns: plain(both.model, "Ins"), none,
+                                    sheet: r.sheetOf(both.model)}));
+    """)
+    assert got["chords"] == [{"start": 0, "name": "C"}, {"start": 16, "name": "G"}, {"start": 32, "name": "Am"},
+                             {"start": 48, "name": "G"}, {"start": 64, "name": "Am"}, {"start": 80, "name": "F"}]
+    assert got["starts"] == [48, 64]
+    assert got["both"] == [{"start": 0, "name": "C"}, {"start": 16, "name": "G"}, {"start": 32, "name": "C"},
+                           {"start": 48, "name": "G"}, {"start": 64, "name": "F"}]
+    assert got["bothStarts"] == [32, 48]
+    assert got["bothIns"] == [[0, 16, 60], [16, 16, 55], [32, 16, 57], [48, 16, 53]], "the copy had no Ins notes"
+    assert got["none"] is None, "nothing the part being edited can take"
+    back = notation.read(notation.write(COPY_SCORE, got["sheet"])["abc"])
+    assert [(c["start"], c["name"]) for c in back["chords"]] == [(c["start"], c["name"]) for c in got["both"]]
+
+
+@needs_node
+def test_a_shortcut_is_the_key_under_the_finger_in_any_layout():
+    """With a Russian layout Ctrl+Z reports the key as a Cyrillic letter; the physical key is still Z."""
+    got = run_roll("""
+        console.log(JSON.stringify([
+            {key: "z", code: "KeyZ"}, {key: "Z", code: "KeyZ"}, {key: "\u044f", code: "KeyZ"},
+            {key: "\u0441", code: "KeyC"}, {key: "a", code: "KeyQ"}, {key: "Delete", code: "Delete"},
+            {key: "\u043c", code: ""}].map((event) => r.shortcutLetter(event))));
+    """)
+    assert got == ["z", "z", "z", "c", "a", "delete", "\u043c"]
+
+
+def test_the_window_copies_and_pastes_without_touching_the_graph_underneath():
+    """Buttons at the top and the keys; the clipboard events never reach ComfyUI while the window is on top."""
+    source = SCORE.read_text(encoding="utf-8")
+    assert 'const CLIP_KEYS = { c: "copy", x: "cut", v: "paste", d: "duplicate", b: "duplicate" };' in source
+    assert 'const CLIPBOARD_EVENTS = ["copy", "cut", "paste"];' in source
+    for label in ('"Copy"', '"Cut"', '"Paste"', '"Duplicate"'):
+        assert "[" + label.lower() + ", " + label + "," in source, label
+    key = source.split("    key(event) {")[1].split("\n    }\n")[0]
+    assert "const letter = roll.shortcutLetter(event);" in key
+    branch = key.split("CLIP_KEYS[letter]) {")[1].split("}")[0]
+    for call in ("event.preventDefault();", "event.stopPropagation();", "this.clipAction(CLIP_KEYS[letter]);"):
+        assert call in branch, call
+    assert "for (const type of CLIPBOARD_EVENTS) document.addEventListener(type, this.onClipboard, true);" in source
+    assert "for (const type of CLIPBOARD_EVENTS) document.removeEventListener(type, this.onClipboard, true);" in source
+    guard = source.split("    clipboardEvent(event) {")[1].split("\n    }\n")[0]
+    assert "event.stopPropagation();" in guard and "if (!typing) event.preventDefault();" in guard
+    place = source.split("    async placeClip(clip, at, verb) {")[1].split("\n    }\n")[0]
+    assert "await this.addBars(count);" in place and "if (this.track) {" in place
+    assert "roll.pasteClip(this.model, this.sheet, clip, at, routes, withChords)" in place
+    draw = source.split("    draw() {")[1].split("\n    }\n")[0]
+    assert "this.clipButtons.paste.disabled = !CLIP || !this.sheet;" in draw
+
+
+def test_a_pack_window_is_a_modal_dialog_so_comfyui_keeps_its_keys_to_itself():
+    """ComfyUI's change tracker undoes the graph on Ctrl+Z from a window-level capture listener, before any
+    listener of ours runs; it stands aside only while a modal dialog is open, which it finds by these attributes."""
+    source = (WEB / "yue2_controls.js").read_text(encoding="utf-8")
+    made = source.split("export function frame(")[1].split("\n}\n")[0]
+    assert 'panel.setAttribute("role", "dialog");' in made
+    assert 'panel.setAttribute("aria-modal", "true");' in made
+    assert "back.remove();" in made, "closing takes the dialog out of the page, and ComfyUI's keys come back"

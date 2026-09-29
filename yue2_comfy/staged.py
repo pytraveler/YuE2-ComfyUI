@@ -54,7 +54,8 @@ SCORE_TOOLTIP = (
     "box again. An empty box, or text that "
     "still matches the plan, sings the model's own score token for token: the same "
     "song 'YuE2 Generate Song' would have produced from the same seed. An edit made "
-    "for other words than the plan's is not sung, and the node says so. A score can "
+    "for other words than the plan's is not sung unless 'Keep for new words' is "
+    "ticked in the editor, and the node says so either way. A score can "
     "also come in through a wire, and is then sung as it arrives.\n\n"
     "A score that names no section -- a bare tune, as 'YuE2 Load MIDI' hands one on "
     "-- has the plan's lyrics laid along it first, as 'YuE2 Generate Song' does, and "
@@ -507,6 +508,9 @@ class YuE2RenderPlan:
                                  plan.get("lyrics"), settings["cot"], RENDER_INSTEAD)
         if problem:
             announce(unique_id, [("warn", problem)])
+        carried = edits.carried(edits.read(score_abc), plan.get("style"), plan.get("lyrics"), settings["cot"])
+        if carried:
+            announce(unique_id, [("warn", carried)])
         given = edits.read(score_abc).score
         if given and not problem and settings["cot"] == "full" and edits.chordless(given):
             announce(unique_id, [("warn", edits.CHORDLESS)])

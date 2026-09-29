@@ -114,3 +114,45 @@ def test_a_score_with_no_music_lines_is_not_called_chordless():
     assert edits.chordless("") is False
     assert edits.chordless("X:1\nK:G\n") is False
     assert edits.chordless('X:1\n% "not a chord"\nK:C\n') is False
+
+
+def test_a_mark_kept_for_new_words_comes_off_exactly_as_it_went_on():
+    words = edits.mark("s", "l", "full")
+    marked = edits.attach(SCORE, words, keep=True)
+    assert marked == SCORE.rstrip() + "\n%yue2-words " + words + " keep"
+    assert edits.read(marked) == edits.Edit(SCORE.strip(), words, True)
+    crlf = edits.read(marked.replace("\n", "\r\n") + "\r\n")
+    assert (crlf.words, crlf.keep) == (words, True)
+    assert edits.attach(SCORE, None, keep=True) == SCORE.rstrip()
+    assert edits.read(edits.attach(SCORE, words)).keep is False
+
+
+def test_a_word_after_the_mark_that_is_not_keep_leaves_the_line_in_the_score():
+    text = SCORE + "%yue2-words 0123456789abcdef keeps\n%yue2-words 0123456789abcdef  keep"
+    found = edits.read(text)
+    assert found.words is None and not found.keep
+    assert found.score == text.strip()
+
+
+def test_an_edit_kept_for_new_words_is_sung_with_other_words_and_the_node_says_so():
+    """The person asked for it in the editor; the node still says the words changed under the notes."""
+    edit = edits.read(edits.attach(SCORE, edits.mark("s", "l", "full"), keep=True))
+    assert edits.mismatch(edit, "s", "l", "full", INSTEAD) == ""
+    assert edits.carried(edit, "s", "l", "full") == ""
+    for style, lyrics, cot in (("s", "other", "full"), ("other", "l", "full"), ("s", "l", "melody")):
+        assert edits.mismatch(edit, style, lyrics, cot, INSTEAD) == ""
+        assert edits.carried(edit, style, lyrics, cot) == edits.KEPT
+
+
+def test_keeping_changes_nothing_with_cot_off_or_for_an_edit_not_kept():
+    kept = edits.read(edits.attach(SCORE, edits.mark("s", "l", "off"), keep=True))
+    assert edits.mismatch(kept, "s", "other", "off", INSTEAD) == edits.COT_OFF
+    assert edits.carried(kept, "s", "other", "off") == ""
+    plain = edits.read(edits.attach(SCORE, edits.mark("s", "l", "full")))
+    assert edits.carried(plain, "s", "other", "full") == ""
+    assert edits.carried(edits.read(SCORE), "s", "other", "full") == ""
+    assert edits.carried(edits.read(""), "s", "other", "full") == ""
+
+
+def test_the_node_that_refuses_an_edit_names_the_box_that_keeps_it():
+    assert "'Keep for new words'" in edits.OTHER_WORDS

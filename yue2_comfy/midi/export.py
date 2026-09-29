@@ -12,8 +12,9 @@ octave below. Every track runs to the end of the score, so bars of rest at the
 end are kept.
 
 The track names are the ones 'YuE2 Load MIDI' looks for, so a file saved here
-and loaded again gives the same two lines in the same bars at the same tempo.
-Chord symbols come back only as far as the loader's guess reads them.
+and loaded again gives the same two lines in the same bars at the same tempo,
+and with 'full' the chords held on the Chords track -- as saved, or as put
+right there by ear in a sequencer since -- come back chord by chord.
 """
 
 from __future__ import annotations

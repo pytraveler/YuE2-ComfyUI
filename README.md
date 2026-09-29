@@ -7,6 +7,7 @@ song come out, generated entirely on your own machine.
 [Russian version](README_RU.md) | [Changelog](CHANGELOG.md)
 
 <p align="center">
+  <a href="https://github.com/pytraveler/YuE2-ComfyUI/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/pytraveler/YuE2-ComfyUI?display_name=tag"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-blue"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
   <a href="https://huggingface.co/m-a-p/YuE2-3B"><img alt="YuE2-3B" src="https://img.shields.io/badge/%F0%9F%A4%97-YuE2--3B-yellow"></a>
@@ -150,7 +151,7 @@ live until the server restarts.
 
 ## Example workflows
 
-Eleven workflows ship with the pack and appear in ComfyUI's template browser
+Twelve workflows ship with the pack and appear in ComfyUI's template browser
 (*Workflow -> Browse Templates*) under this node pack's name once it is
 installed. Each is a card of its own and each runs on its own: nothing is
 bypassed on open, and there is no second branch to mute before pressing Run.
@@ -168,8 +169,9 @@ bypassed on open, and there is no second branch to mute before pressing Run.
 | 9 | **An a cappella song** -- a song with nothing but the voice | the YuE2 weights and the 0.85 GB voice separator |
 | 10 | **A song with LoRA** -- the same song node with adapters in front of it | the YuE2 weights and a LoRA of your own |
 | 11 | **Edit a song** -- a song, then part of it sung again, cut, moved or carried on | the YuE2 weights and the 0.85 GB voice separator; for new words the 1.84 GB aligner and Qwen3-ASR (3.8 GB) |
+| 12 | **An instrumental** -- music with no voice, written and played by an instrumental adapter | the YuE2 weights and Mothersuperior's 279 MB instrumental LoRA in `models/loras` |
 
-Templates 1 to 3 and 7 to 11 use the `YuE2` menu. Templates 4 to 6 open a run
+Templates 1 to 3 and 7 to 12 use the `YuE2` menu. Templates 4 to 6 open a run
 up into its stages, which is what `YuE2/Advanced` is for.
 
 Every one carries a **Read me first** note: what it does, what it downloads,
@@ -284,16 +286,15 @@ a summary of the score they will sing. The button opens a window over the
 canvas with three views of one score, and nothing is written to the node until
 Apply.
 
-<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key Fm, 4/4, 98 BPM, 93 bars, 3:47. Under them Play and From start, then the voice box ticked with synth beside it, instrument ticked with piano, chords unticked with pluck, and a Tempo slider with 98 in the box next to it. On the row below, the Voice, Instrument and Both switch with Voice lit, an Eighth notes grid, Add bars..., the zoom buttons and Whole song, then greyed-out Undo and Redo and the greyed-out -oct, -1, +1 and +oct buttons. The roll shows bars 8 to 15 of the intro, with the chords Fm, Fm, Cm, Fm7, Bb, Fm7, Bb and Fm7 in the lane under the bar numbers. The voice has nothing to sing in the intro, so only the instrument part stands on the roll, drawn faintly. The keyboard names the Cs, C2 to C6. Under the roll a scroll slider, the line No changes. This is the score as it came in, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Cancel and Apply on the right">
+<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key Fm, 4/4, 98 BPM, 93 bars, 3:47, sung up to 0:30. Under them Play and From start, the voice box ticked with synth beside it, instrument ticked with piano, chords ticked with strings, a Tempo slider with 98 in the box next to it, and a Key list on Fm. On the row below, the Voice, Instrument, Chords and Both switch with Chords lit, an unticked repeats too box, an Eighth notes grid, Add bars..., the zoom buttons and Whole song, greyed-out Undo and Redo, then Copy, Cut, Paste and Duplicate with only Paste lit, and the greyed-out -oct, -1, +1 and +oct buttons. The roll shows bars 1 to 20, two intro sections and the start of a verse, with a dashed yellow line at bar 13 marked max_seconds 0:30. Every chord of the lane under the bar numbers stands on the roll as violet notes held until the next chord -- Fm, Ab, Cm, Fm7 and Bb -- with the root darker and named after the chord and the other notes named by pitch, C4, Ab3, Eb4, F4, D4 and Bb3 among them; the voice and the instrument are drawn faintly behind. Under the roll a scroll slider, the notice on the Chords part, the note on what YuE2 does with an edited melody, Back to the model's score and Save as MIDI... on the left, and Keep for new words ticked, Cancel and Apply on the right">
 
-*The window on `YuE2 Generate Song`, on the score the node wrote on its last
-run: a sound list beside each of the three boxes, the tempo slider next to the
-play controls, the `Voice | Instrument | Both` switch and the buttons that move
-what is selected by a semitone or an octave, the section lane and the chords
-over the roll, and a keyboard that names its Cs. This is the intro, where the
-voice has nothing to sing yet and only the instrument part stands on the roll.
-Nothing has been edited or selected, so Undo, Redo and the move buttons are
-grey and the line under the roll says the score is as it came in.*
+*The window on `YuE2 Generate Song` with the `Chords` part picked: each chord of
+the lane stands on the roll as its notes, the root darker and named after the
+chord, held until the next one, with both sung parts faint behind. Beside the
+tempo is the key list; after Undo and Redo, the copy buttons, of which only
+Paste is lit, since something was copied and nothing is selected; beside Apply,
+`Keep for new words`. The dashed line at bar 13 is where `max_seconds` stops the
+singing.*
 
 On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
 run, so run it once first. The next run sings the edit instead of writing a
@@ -306,11 +307,11 @@ its own only when it is one.
 - **Piano roll**, in the look most music software shares: green notes
   with their names on them, a blue-grey grid and a keyboard down the
   side: C is named in every octave, and the row the pointer is on says
-  what it is, black keys included. `Voice | Instrument | Both` picks what
-  is edited: one part, with the other drawn faintly behind, or both parts
-  and the chords at once, to move a whole stretch of the song -- in `Both`
-  a box, a click, the arrows and Delete take them all, and no note is
-  drawn. The sections run along the top, and a chord lane sits under the bar
+  what it is, black keys included. `Voice | Instrument | Chords | Both`
+  picks what is edited: one part, with the other drawn faintly behind; the
+  chords as notes (see below); or both parts and the chords at once, to move
+  a whole stretch of the song -- in `Both` a box, a click, the arrows and
+  Delete take them all, and no note is drawn. The sections run along the top, and a chord lane sits under the bar
   numbers. A click draws a note, a drag moves it, and a right-click or
   Delete removes it. The right edge stretches a note, into the next one too,
   which then starts later and keeps its end. Shift or Ctrl with a click or a
@@ -339,13 +340,54 @@ its own only when it is one.
   on the roll it takes back the note the first click of the pair drew.
   The list beside each of `voice`, `instrument` and `chords` picks what that
   part sounds like: piano, or one of a few voices the browser makes itself --
-  synth, bass, pluck, pad, and `drums` for the instrument part. With `drums`
+  synth, bass, pluck, pad, strings, and `drums` for the instrument part. The
+  chords start on strings, held the way a string section holds a chord:
+  three slightly detuned voices spread across the stereo, a slow attack and
+  vibrato that comes in after half a second. With `drums`
   chosen and the instrument part in hand, the keyboard names a kit instead of
   the notes -- Kick, Snare, Hat and the rest, one kit to an octave -- because a
   drum line played on a piano tells you nothing. The choice stays in your
   browser and never reaches the node. **The sound is for your ear here only:**
   YuE2 is given the score and the style line and is never told an instrument,
   so the style line is what decides who plays.
+- **Chords** puts the chord lane on the roll as notes: each chord is the notes
+  it is made of, held until the next chord, laid out as `Save as MIDI...`
+  writes them -- the root between C3 and B3 and darker, named after the chord,
+  the other notes above it, and the bass of a slash chord an octave down. A
+  click on an empty place starts a new chord on that row, of the kind the
+  key gives that degree: in E, a click on A gives `A` and one on C# gives
+  `C#m`. Dragging the root moves the chord whole -- up or down for another
+  root of the same kind, sideways to another moment between its neighbours --
+  and dragging a chord's right end moves where the next one starts. Dragging
+  any other note, or Ctrl+click on a row, changes the chord note by note, and
+  the chord takes the name of its notes: E with its third a semitone down is
+  `Em`, with a D added `E7`. A set of notes the score has no name for turns
+  grey and is refused, and the status line says why. The right button removes
+  a chord, a double click types its name, and the arrows, Delete and Ctrl+A
+  work on the chords selected. The names are those `YuE2 Load MIDI` reads from
+  the same notes on a Chords track -- checked on 5,340 sets of notes in 30
+  keys -- so a chord fixed here and one fixed in a DAW come out the same.
+  **repeats too**, beside the switch, makes each chord edit in the other
+  sections of the same name as well, where their chords are still the ones
+  this section had; sections of other lengths are compared over the bars they
+  share, and the ones with other chords are left alone and named. One Ctrl+Z
+  takes the edit back everywhere.
+- **Copy, Cut, Paste and Duplicate**, after Undo and Redo, and Ctrl+C, Ctrl+X,
+  Ctrl+V, and Ctrl+D or Ctrl+B. A copy is measured from the bar line before its
+  first note. Paste puts it into the bar the playhead is in, at the same places
+  in the bar, and replaces the notes under it; a note running into it is cut
+  short. Duplicate puts a copy right after the selection, from the next bar
+  line, and pressing it again goes on, which is the quick way to make a tune
+  longer. The pasted notes stay selected, to be dragged or moved with the
+  arrows. What is copied follows the part: in `Voice` or `Instrument` the part's
+  notes, pasted into the part being edited, so a voice line can become the
+  instrument's; in `Both` both parts and the chords over their bars; in
+  `Chords` the chords, as blocks. A paste that runs past the end of the song
+  adds the bars it needs, and the undo history then starts there, as it does
+  after "Add bars". The copy is kept for every score window on the page, so a
+  phrase can go from one song to another. The pack's windows are modal to
+  ComfyUI: while one is open, Ctrl+Z, Ctrl+C and Ctrl+V never reach the graph
+  behind it.
 - **Notes** draws the score as sheet music, with the bars the edit rewrites in
   red.
 - **ABC** is the text the model reads. A score pasted here loads into the other
@@ -357,8 +399,9 @@ without a change leaves the box empty, so the node sings what it sang before. A
 rewritten bar is spelled the way the model spells
 one -- an accidental only where the key needs it, a whole bar of rest as `Z` --
 and the result is read back with upstream's own ABC parser and compared note
-for note before it reaches the node. The bars, meter and key are fixed in this
-version; a bar with a key change inside it can be edited only as text.
+for note before it reaches the node. The bars and meter are fixed, the key
+moves only as a whole (below), and a bar with a key change inside it can be
+edited only as text.
 
 **The tempo.** A slider and a box beside the play controls set the tempo the
 score is written at -- `Q:1/4` in the ABC -- from 40 to 200 BPM, or from the
@@ -370,6 +413,17 @@ its own undo, and it reaches the node on Apply. It earns its keep most on
 `YuE2 Transcribe`, where the tempo was heard from a recording rather than
 chosen.
 
+**The key.** The list beside the tempo offers the twelve keys of the song's
+mode, each with the semitones it lies away, and picking one moves the whole
+score there -- both parts, every chord and the key itself -- the way
+`transpose` moves it, which YuE2 sings at the new pitch. Each key is offered
+in the direction that keeps the middle of the voice line within C4 to A#5
+where it can, and the status line warns when it cannot. Typing another `K:`
+into the ABC text is not the same thing: the letters are read again in the new
+key, so an F-sharp in F-sharp minor turns into an F in A minor. Ctrl+Z moves the
+song back, and Apply marks every bar as rewritten. The list is off in the track
+window of `YuE2 Edit Track`, where the song is already sung in its key.
+
 **An edit belongs to its words.** On Apply the editor marks the edit with the
 style, lyrics and `cot` it was made for, in a comment line the node takes off
 before anything is sung. A new seed with the same words sings the same edit as a
@@ -380,6 +434,26 @@ edit unsung: `YuE2 Generate Song` writes a new score for them, `YuE2 Render Plan
 sings the plan's own, and both say so. Put the words back and the edit is sung
 again. A score pasted or wired into `score_abc` carries no mark and is sung
 whatever the words.
+
+**Keep for new words**, beside Apply, keeps the edit when the words change: the
+node sings it with whatever lyrics and style it has, and says in yellow that the
+words changed under it. Ticked with nothing edited, Apply keeps the model's own
+score, which is how a tune is held while only the words are rewritten. The box
+is stored with the edit, in its mark, and the window remembers the last choice
+for the next edit. How new words fare on an old score was measured on three of
+the model's songs, English and Russian, two seeds each, by the share of the
+lyrics Qwen3-ASR heard in order:
+
+| The lyrics | The edit kept | A new score for the words |
+|---|---|---|
+| Two or three words changed in most lines | 0.95 (0.86 to 1.00) | 0.95 |
+| Every line new, about as many syllables | 0.92 (0.73 to 1.00) | 0.95 |
+| A fifth line added to each verse | 0.85 (0.81 to 0.90) | 0.96 |
+
+The score's own words gave 0.97. Words changed within their lines cost nothing;
+a line added does, because the song keeps the edit's length -- the verse's lines
+move along its phrases, and the chorus after it lost its last line in every
+take read line by line. The Russian song was the lowest with every line new.
 
 **Where the song ends.** The model writes a score for the whole song, and the
 singing stops at `max_seconds` wherever the score has got to by then; at `0` the
@@ -427,7 +501,19 @@ landed within a semitone of the new A, the third a tone short of it.
 included: the voice, the instrument line and the chord symbols held as chords,
 each on a track of its own, with the tempo, meters, keys and sections. Loaded
 into `YuE2 Load MIDI`, the file gives the same notes in the same bars at the
-same tempo -- checked on sixteen of the model's and SheetSage2's scores.
+same tempo -- checked on sixteen of the model's and SheetSage2's scores -- and,
+with `mode` at `full`, the same chords at the same moments, read from the
+track named Chords. So a score can go out to a DAW, have its chords set right by
+ear there, and come back.
+
+**Edited chords are played.** Measured before the `Chords` part was built, on
+three songs at two seeds: eight bars of each score had every chord moved -- a
+step up the scale, or to its relative -- with the notes left alone. SheetSage2
+heard the new chord on 171 and 161 of the 192 changed beats and the old one on
+8 and 16, where the same takes without the edit gave the new chord on 4 and 3.
+The voice kept its written melody, and the rest of each song stayed on its
+chords, except one take in twelve, whose second verse repeated the edit of the
+first -- which is what **repeats too** writes down.
 
 Every edit is a new take of the whole song, not a patch on the old recording.
 The window is in English only.
@@ -782,9 +868,10 @@ words, so the lyrics are one section tag to write them under.*
   folder. `Choose MIDI file...` on the node uploads one there, and so does
   dropping the file on the node.
 - `mode` -- `melody` writes the two lines without chords, for `cot` at
-  `melody`. `full` adds chord symbols guessed from what the file's tracks play
-  together, for `cot` at `full`; they are a guess, so read them over in
-  `Edit score...`.
+  `melody`. `full` adds chord symbols, for `cot` at `full`: read chord by chord
+  from a track named Chords, the one `Save as MIDI...` writes, and otherwise
+  guessed from what the file's tracks play together. A guess is a guess, so
+  read it over in `Edit score...`.
 - `vocal_track` -- the track the voice sings, by its number in the list on the
   node. `auto` takes the track a karaoke file's words fall on, then a track
   named as the voice or the melody, then the highest line that is not a bass.
@@ -818,6 +905,20 @@ octave it is given and its own scores keep the voice there. The key comes from
 the file's key signature when it fits the notes, and is estimated from the
 notes otherwise. Markers named after sections -- `Verse`, `Chorus 2` -- become
 the score's sections.
+
+**A Chords track.** A track named Chords is neither sung nor played as the
+instrument line; the list marks it `chords`. With `mode` at `full` each chord
+is read where its notes begin, named exactly from the notes that sound --
+fifteen kinds and a slash bass, in the key around them -- and a note held
+over counts when it sounds through at least half of the new chord. Where the
+notes make no chord the score can name, the nearest chord is written or the one
+before is kept, and the node names those bars. From a file with no Chords track
+the chords are guessed half a bar at a time from every track but the drums, as
+before. Every chord a score can hold -- 1,092 of them, fifteen kinds on twelve
+roots, with and without a slash bass -- came back from a saved file as it went
+in. On twelve scores saved and read back, the Chords track agreed with the score
+on 6,314 beats of 6,314, where the guess agreed on 92.8 percent: 73 on a jazz
+score and 45 on one of SheetSage2's.
 
 **Karaoke files.** The words of a `.kar` file, or of any MIDI file with lyric
 events, become the `lyrics` output, a line for each line of the file and a tag
@@ -1163,7 +1264,9 @@ and typed. Switching a row off leaves it in the workflow without singing it.
 pack never downloads adapters: these are the folders ComfyUI's own LoRA loader
 lists, so a file that shows there shows here. The list reads each file's header
 once and keeps what it found, so a folder of image LoRAs costs a tenth of a
-second the first time and nothing after that.
+second the first time and nothing after that. A row names its file by the path
+under the folder; a bare file name, as a template writes it, is also found in
+any folder there, as long as only one file has that name.
 
 ![The list of adapters, opened from the node. At the top a search box reading Search by name or trigger word. Below it the files grouped under their folders: Mothersuperior with ar_lora_inst_v3abc and ar_lora_inst_v3abc_comfyui at AR rank 64 and nar_lora_joint_v4 at NAR rank 32; an examples folder whose example_not_yue2 is greyed out with a red line, 1 of its parts do not land on YuE2: hum_proj.0 (not a part of YuE2); YuE2_Deathmetalv1_lora with deathmetalv1_step-000600; and four adapter folders of the industrial rock set, each holding one file named lora, at AR rank 8 or NAR rank 32](docs/lora_list.png)
 
@@ -1218,6 +1321,19 @@ the song.
 
 Template 10, *A song with LoRA*, is the node in place with an empty list, ready
 for a file of your own.
+
+**Music with no voice.** YuE2 sings whatever the style says; "instrumental" or
+"no vocals" in it does not stop the voice. Mothersuperior's instrumental
+adapter does ([YuE2-instrumental-cot-full-loras](https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras),
+CC BY-NC 4.0): it writes a score with no notes for the voice and plays it.
+Used as its card says -- AR at 1, `cot` at `full`, the lyrics `[instrumental]`
+or bare section tags such as `[intro]` and `[chorus]` -- it gave 17 songs of 17
+with no voice in them, 100 to 180 seconds long, where the model without it
+sang in 6 of 6. Three things bring the voice back: `cot` at `melody` (5 songs
+of 6 sang), words in the lyrics (4 of 6), and an AR strength of 0.5 (3 of 3).
+Template 12, *An instrumental*, is that setup. Taking the voice out of a sung
+song with a separator and passing the rest through the model again is no
+substitute: the model draws what the separator left behind back in.
 
 ### YuE2 Options
 

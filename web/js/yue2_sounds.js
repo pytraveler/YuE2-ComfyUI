@@ -8,10 +8,13 @@ export const KIT = [
 export const CHOICES = {
     Vocal: [["piano", "piano"], ["synth", "synth"], ["pluck", "pluck"]],
     Ins: [["piano", "piano"], ["bass", "bass"], ["pluck", "pluck"], [DRUMS, "drums"]],
-    chords: [["piano", "piano"], ["pad", "pad"], ["pluck", "pluck"]],
+    chords: [["piano", "piano"], ["strings", "strings"], ["pad", "pad"], ["pluck", "pluck"]],
 };
 
-export const DEFAULTS = { Vocal: "piano", Ins: "piano", chords: "piano" };
+export const DEFAULTS = { Vocal: "piano", Ins: "piano", chords: "strings" };
+
+const ENSEMBLE = [[-11, -0.35], [0, 0], [9, 0.35]];
+const STRINGS_LEVEL = 0.7;
 
 const FLOOR = 0.0005;
 const NOISE = new WeakMap();
@@ -106,6 +109,51 @@ function plucked(context, master, start, length, level, frequency) {
     return osc;
 }
 
+function bowed(context, master, start, length, level, frequency) {
+    const stop = start + Math.max(0.12, length);
+    const attack = Math.min(0.26, Math.max(0.06, length * 0.4));
+    const release = 0.35;
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.value = 0.7;
+    filter.frequency.setValueAtTime(Math.min(9000, frequency * 2.5), start);
+    filter.frequency.linearRampToValueAtTime(Math.min(9000, frequency * 5 + 600), start + attack);
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(Math.max(level, FLOOR), start + attack);
+    gain.gain.setValueAtTime(Math.max(level, FLOOR), Math.max(start + attack, stop));
+    gain.gain.linearRampToValueAtTime(0, stop + release);
+    filter.connect(gain).connect(master);
+    const vibrato = context.createOscillator();
+    vibrato.type = "sine";
+    vibrato.frequency.value = 5.3;
+    const depth = context.createGain();
+    depth.gain.setValueAtTime(0, start);
+    depth.gain.linearRampToValueAtTime(7, start + 0.5);
+    vibrato.connect(depth);
+    const made = [vibrato];
+    for (const [cents, side] of ENSEMBLE) {
+        const osc = context.createOscillator();
+        osc.type = "sawtooth";
+        osc.frequency.value = frequency;
+        osc.detune.value = cents;
+        depth.connect(osc.detune);
+        const place = context.createStereoPanner ? context.createStereoPanner() : null;
+        if (place) {
+            place.pan.value = side;
+            osc.connect(place).connect(filter);
+        } else {
+            osc.connect(filter);
+        }
+        made.push(osc);
+    }
+    for (const voice of made) {
+        voice.start(start);
+        voice.stop(stop + release + 0.02);
+    }
+    return made;
+}
+
 const PIECES = [
     (context, master, start) => [boom(context, master, start, 0.3, 0.30, 125, 45)],
     (context, master, start) => [hiss(context, master, start, 0.05, 0.10, "bandpass", 1900, 6)],
@@ -134,6 +182,9 @@ export function play(context, master, start, length, pitch, kind, level) {
     }
     if (kind === "pluck") {
         return [plucked(context, master, start, length, level, frequency)];
+    }
+    if (kind === "strings") {
+        return bowed(context, master, start, length, level * STRINGS_LEVEL, frequency);
     }
     if (kind === "pad") {
         return [sustained(context, master, start, length, level * 0.9, "triangle", frequency, 0.16, 0.2),

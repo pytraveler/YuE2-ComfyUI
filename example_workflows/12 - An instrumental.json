@@ -1,0 +1,593 @@
+{
+  "id": "5cb38687-b9b9-4fd5-961c-8f647a3ea386",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        -640,
+        0
+      ],
+      "size": [
+        580,
+        800
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Read me first",
+      "properties": {},
+      "widgets_values": [
+        "# 12 - An instrumental\n\nMusic with no voice in it. YuE2 on its own sings whatever the style says --\n\"instrumental\" or \"no vocals\" in the style does not stop it -- so this\ntemplate puts Mothersuperior's instrumental adapter in front of the song\nnode. It was trained on instrumental tracks and writes a score with no notes\nfor the voice, and then plays that score.\n\n## What it needs\n\n- The YuE2-3B weights, 7.26 GB, fetched on the first run.\n- The adapter, which this pack never downloads:\n  `ar_lora_inst_v3abc.safetensors`, 279 MB, from\n  https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras\n  Put it anywhere under ComfyUI's `models/loras`: the row finds a file by\n  its name in any folder there. It is CC BY-NC 4.0, like YuE2 itself --\n  non-commercial use only.\n- `ar_lora_inst_v3abc_comfyui.safetensors` from the same page works as\n  well; choose it on the row instead.\n\n## How to use it\n\n1. Describe the sound in the style: genre, instruments, mood, BPM.\n2. Leave the lyrics at `[instrumental]`, or plan the sections yourself,\n   one bare tag a line and nothing else:\n\n   ```\n   [intro]\n   [verse]\n   [chorus]\n   [bridge]\n   [chorus]\n   [outro]\n   ```\n\n   The adapter knows `intro`, `verse`, `pre-chorus`, `chorus`, `bridge` and\n   `outro`.\n3. Run. With `max_seconds` at 0 a song without words may run to 180 s;\n   the adapter likes two to three minutes and ends most songs by itself.\n\n## What makes it sing again\n\n- `cot` at anything but `full`. With `melody` the model writes a tune for\n  the voice and sings it. Keep the options node at `full`.\n- Words in the lyrics. They get sung.\n- An AR strength below 1. At 0.5 every song had a voice.\n\nThe adapter changes the AR half only, so its NAR column shows a dash.\n\n## Where to go next\n\n- **10 - A song with LoRA** -- the same node with an empty list, for\n  adapters of your own.\n- **9 - An a cappella song** -- the other way round: the voice alone.\n- **11 - Edit a song** -- **Break...** puts an instrumental break into a\n  song that is sung.\n"
+      ],
+      "widgets_values_named": {
+        "text": "# 12 - An instrumental\n\nMusic with no voice in it. YuE2 on its own sings whatever the style says --\n\"instrumental\" or \"no vocals\" in the style does not stop it -- so this\ntemplate puts Mothersuperior's instrumental adapter in front of the song\nnode. It was trained on instrumental tracks and writes a score with no notes\nfor the voice, and then plays that score.\n\n## What it needs\n\n- The YuE2-3B weights, 7.26 GB, fetched on the first run.\n- The adapter, which this pack never downloads:\n  `ar_lora_inst_v3abc.safetensors`, 279 MB, from\n  https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras\n  Put it anywhere under ComfyUI's `models/loras`: the row finds a file by\n  its name in any folder there. It is CC BY-NC 4.0, like YuE2 itself --\n  non-commercial use only.\n- `ar_lora_inst_v3abc_comfyui.safetensors` from the same page works as\n  well; choose it on the row instead.\n\n## How to use it\n\n1. Describe the sound in the style: genre, instruments, mood, BPM.\n2. Leave the lyrics at `[instrumental]`, or plan the sections yourself,\n   one bare tag a line and nothing else:\n\n   ```\n   [intro]\n   [verse]\n   [chorus]\n   [bridge]\n   [chorus]\n   [outro]\n   ```\n\n   The adapter knows `intro`, `verse`, `pre-chorus`, `chorus`, `bridge` and\n   `outro`.\n3. Run. With `max_seconds` at 0 a song without words may run to 180 s;\n   the adapter likes two to three minutes and ends most songs by itself.\n\n## What makes it sing again\n\n- `cot` at anything but `full`. With `melody` the model writes a tune for\n  the voice and sings it. Keep the options node at `full`.\n- Words in the lyrics. They get sung.\n- An AR strength below 1. At 0.5 every song had a voice.\n\nThe adapter changes the AR half only, so its NAR column shows a dash.\n\n## Where to go next\n\n- **10 - A song with LoRA** -- the same node with an empty list, for\n  adapters of your own.\n- **9 - An a cappella song** -- the other way round: the voice alone.\n- **11 - Edit a song** -- **Break...** puts an instrumental break into a\n  song that is sung.\n"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 2,
+      "type": "YuE2LoRA",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        440,
+        132
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "lora",
+          "name": "lora",
+          "shape": 7,
+          "type": "YUE2_LORA",
+          "link": null
+        },
+        {
+          "localized_name": "loras",
+          "name": "loras",
+          "type": "STRING",
+          "widget": {
+            "name": "loras"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "lora",
+          "name": "lora",
+          "type": "YUE2_LORA",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "The instrumental adapter",
+      "properties": {
+        "cnr_id": "yue2-comfyui",
+        "ver": "1d1059ef94dc5ec35f91fcba39db905aab604987",
+        "Node name for S&R": "YuE2LoRA",
+        "aux_id": "pytraveler/YuE2-ComfyUI"
+      },
+      "widgets_values": [
+        "[{\"name\": \"ar_lora_inst_v3abc.safetensors\", \"ar\": 1, \"nar\": 1, \"on\": true}]"
+      ],
+      "widgets_values_named": {
+        "loras": "[{\"name\": \"ar_lora_inst_v3abc.safetensors\", \"ar\": 1, \"nar\": 1, \"on\": true}]"
+      }
+    },
+    {
+      "id": 3,
+      "type": "YuE2GenerateSong",
+      "pos": [
+        500,
+        0
+      ],
+      "size": [
+        430,
+        640
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "shape": 7,
+          "type": "YUE2_OPTIONS",
+          "link": 3
+        },
+        {
+          "localized_name": "lora",
+          "name": "lora",
+          "shape": 7,
+          "type": "YUE2_LORA",
+          "link": 1
+        },
+        {
+          "localized_name": "style",
+          "name": "style",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "style"
+          }
+        },
+        {
+          "localized_name": "lyrics",
+          "name": "lyrics",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "lyrics"
+          }
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "shape": 7,
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "score_abc"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            2
+          ]
+        },
+        {
+          "localized_name": "score_abc",
+          "name": "score_abc",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Write the music",
+      "properties": {
+        "cnr_id": "yue2-comfyui",
+        "ver": "1d1059ef94dc5ec35f91fcba39db905aab604987",
+        "Node name for S&R": "YuE2GenerateSong",
+        "aux_id": "pytraveler/YuE2-ComfyUI"
+      },
+      "widgets_values": [
+        "instrumental, cinematic synthwave, analog synth arpeggios, warm pads, electric guitar, punchy drums, deep bass, 100 BPM",
+        "[instrumental]",
+        831001,
+        "fixed",
+        ""
+      ],
+      "widgets_values_named": {
+        "style": "instrumental, cinematic synthwave, analog synth arpeggios, warm pads, electric guitar, punchy drums, deep bass, 100 BPM",
+        "lyrics": "[instrumental]",
+        "seed": 831001,
+        "control_after_generate": "fixed",
+        "score_abc": ""
+      }
+    },
+    {
+      "id": 5,
+      "type": "YuE2Options",
+      "pos": [
+        0,
+        210
+      ],
+      "size": [
+        440,
+        538
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "cot",
+          "name": "cot",
+          "type": "COMBO",
+          "widget": {
+            "name": "cot"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "max_seconds",
+          "name": "max_seconds",
+          "type": "FLOAT",
+          "widget": {
+            "name": "max_seconds"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "keep_model_loaded",
+          "name": "keep_model_loaded",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "keep_model_loaded"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg_scale",
+          "name": "cfg_scale",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg_scale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "vae"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "attention_backend",
+          "name": "attention_backend",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "attention_backend"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "download",
+          "name": "download",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "download"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "quantization",
+          "name": "quantization",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "quantization"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ode_steps",
+          "name": "ode_steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "ode_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_temperature",
+          "name": "abc_temperature",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "abc_temperature"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_top_p",
+          "name": "abc_top_p",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "abc_top_p"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "abc_top_k",
+          "name": "abc_top_k",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "abc_top_k"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "temperature",
+          "name": "temperature",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "temperature"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "top_p",
+          "name": "top_p",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "top_p"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "top_k",
+          "name": "top_k",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "top_k"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "repetition_penalty",
+          "name": "repetition_penalty",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "repetition_penalty"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "offload",
+          "name": "offload",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "offload"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "transpose",
+          "name": "transpose",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "transpose"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vocals_only",
+          "name": "vocals_only",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "vocals_only"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "low_vram",
+          "name": "low_vram",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "low_vram"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "options",
+          "name": "options",
+          "type": "YUE2_OPTIONS",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "The length and cot",
+      "properties": {
+        "cnr_id": "yue2-comfyui",
+        "ver": "1de6f8691eca0cc7e894e9e23f7926c4b28e5d2d",
+        "Node name for S&R": "YuE2Options",
+        "aux_id": "pytraveler/YuE2-ComfyUI"
+      },
+      "widgets_values": [
+        "full",
+        0,
+        false,
+        0,
+        "standard",
+        "auto",
+        "sdpa",
+        "auto",
+        "bf16",
+        32,
+        0.7,
+        0.9,
+        30,
+        1,
+        0.95,
+        100,
+        1.2,
+        "auto",
+        0,
+        false,
+        false
+      ],
+      "widgets_values_named": {
+        "cot": "full",
+        "max_seconds": 0,
+        "keep_model_loaded": false,
+        "cfg_scale": 0,
+        "vae": "standard",
+        "device": "auto",
+        "attention_backend": "sdpa",
+        "download": "auto",
+        "quantization": "bf16",
+        "ode_steps": 32,
+        "abc_temperature": 0.7,
+        "abc_top_p": 0.9,
+        "abc_top_k": 30,
+        "temperature": 1,
+        "top_p": 0.95,
+        "top_k": 100,
+        "repetition_penalty": 1.2,
+        "offload": "auto",
+        "transpose": 0,
+        "vocals_only": false,
+        "low_vram": false
+      }
+    },
+    {
+      "id": 4,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        1000,
+        0
+      ],
+      "size": [
+        400,
+        140
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 2
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "The instrumental",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.36.0",
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio/YuE2",
+        "flac"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio/YuE2",
+        "format": "flac"
+      }
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      3,
+      1,
+      "YUE2_LORA"
+    ],
+    [
+      2,
+      3,
+      0,
+      4,
+      0,
+      "AUDIO"
+    ],
+    [
+      3,
+      5,
+      0,
+      3,
+      0,
+      "YUE2_OPTIONS"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        710.6,
+        129.4
+      ]
+    }
+  },
+  "version": 0.4
+}

@@ -195,7 +195,7 @@ const STYLE = `
 .yue2-lora-note { padding: 4px 8px; font-size: 11px; line-height: 15px; color: var(--descrip-text, #999); }
 `;
 
-const LISTED = { items: null, failed: "", when: 0, asking: null, byName: new Map() };
+const LISTED = { items: null, failed: "", when: 0, asking: null, byName: new Map(), byBase: new Map() };
 const LIVE = new Set();
 let PICKER = null;
 
@@ -208,7 +208,19 @@ function same(one, other) {
 }
 
 function known(name) {
-    return LISTED.byName.get(clean(name));
+    const wanted = clean(name);
+    const found = LISTED.byName.get(wanted);
+    if (found || wanted.includes("/")) return found;
+    return LISTED.byBase.get(wanted) || undefined;
+}
+
+function bases(items) {
+    const found = new Map();
+    for (const item of items) {
+        const base = clean(item.name).slice(clean(item.name).lastIndexOf("/") + 1);
+        found.set(base, found.has(base) ? null : item);
+    }
+    return found;
 }
 
 function slashed(name) {
@@ -329,6 +341,7 @@ function refreshListing() {
         if (items) {
             LISTED.items = items;
             LISTED.byName = new Map(items.map((item) => [clean(item.name), item]));
+            LISTED.byBase = bases(items);
         } else if (!LISTED.items) {
             LISTED.items = [];
         }

@@ -141,3 +141,41 @@ def test_a_stray_thirty_second_among_sixteenths_is_kept():
     out = score.convert(song_of(("Tune", 0, 0, line(SCALE) + [(3840, 3900, 74), (3900, 4320, 72)], [])))
     assert out["facts"]["grid"] == 32
     assert sung(out["abc"])[-2:] == [(Fraction(8), 74, Fraction(1, 8)), (Fraction(65, 8), 72, Fraction(7, 8))]
+
+
+def test_a_chords_track_is_read_chord_by_chord_and_each_chord_named_from_the_key():
+    tune = line([65, 67, 69, 70, 72, 70, 69, 67])
+    held = (chord([53, 57, 60], 0, 1920) + chord([58, 62, 65], 1920, 2880) + chord([41, 48, 52, 55], 2880, 3840))
+    out = score.convert(song_of(("Vocal", 0, 0, tune, []), ("Chords", 2, 48, held, []), keys=((0, -1, False),)),
+                        "full")
+    written = abc_tools.parse(out["abc"]).voices["Vocal"].chords
+    assert [(onset, name) for onset, name in written] == [
+        (Fraction(0), "F"), (Fraction(4), "Bb"), (Fraction(6), "C/F")]
+    assert out["notices"] == [score.CHORDS_READ.format(number=2, name="Chords")]
+    assert [row["role"] for row in out["parts"]] == ["voice", "chords"]
+
+
+def test_notes_that_make_no_chord_get_the_nearest_and_the_node_names_their_bars():
+    tune = line([64, 67, 72, 67, 64, 67, 72, 67, 65, 69, 72, 69])
+    held = chord([48, 52, 55], 0, 1920) + chord([48, 50, 52, 55], 1920, 3840) + chord([41, 45, 48], 3840, 5760)
+    out = score.convert(song_of(("Vocal", 0, 0, tune, []), ("Chords", 2, 48, held, [])), "full")
+    names = [name for _onset, name in abc_tools.parse(out["abc"]).voices["Vocal"].chords]
+    assert names == ["C", "C", "F"]
+    assert score.UNNAMED.format(number=2, bars="bar 2") in out["notices"]
+
+
+def test_melody_writes_no_chords_even_from_a_chords_track():
+    parts = (("Vocal", 0, 0, line([64, 67, 72, 67]), []), ("Chords", 2, 48, chord([48, 52, 55], 0, 1920), []))
+    out = score.convert(song_of(*parts), "melody")
+    assert edits.chordless(out["abc"]) and out["notices"] == []
+    assert [row["role"] for row in out["parts"]] == ["voice", ""]
+
+
+@pytest.mark.parametrize("numbers, words", [
+    ([5], "bar 5"),
+    ([5, 9], "bars 5 and 9"),
+    ([2, 3, 4], "bars 2, 3 and 4"),
+    (list(range(1, 12)), "bars 1, 2, 3, 4, 5, 6, 7, 8 and 3 more"),
+])
+def test_the_bars_are_named_the_way_the_node_says_them(numbers, words):
+    assert score._bar_list(numbers) == words

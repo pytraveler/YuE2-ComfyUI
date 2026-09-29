@@ -7,6 +7,99 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.11.0 - 2026-09-29
+
+### Added
+
+- **Chords as notes in the piano roll.** A `Chords` part joins
+  `Voice | Instrument | Both`: every chord symbol stands on the roll as the
+  notes it is made of, held until the next chord, laid out as
+  `Save as MIDI...` writes it. A click on an empty place starts a chord of the
+  kind the key gives that row; dragging the root moves the chord whole --
+  up or down to another root, sideways to another moment -- and dragging its
+  right end moves the next one. Dragging any other note, or Ctrl+click on a
+  row, changes the chord note by note, and the chord is renamed from its
+  notes by the rule `YuE2 Load MIDI` reads a Chords track with, checked equal
+  on 5,340 sets of notes in 30 keys; a set of notes the score has no name for
+  is refused. **repeats too** makes each edit in the other sections of the same
+  name that still have this section's chords as well. It was measured before it
+  was built: with eight bars of chords changed in three songs at two seeds,
+  SheetSage2 heard the new chord on 171 and 161 of the 192 changed beats and
+  the old one on 8 and 16, and the voice kept its melody. See
+  [The score editor](README.md#the-score-editor).
+- **The key as a list.** Beside the tempo in the score window, the twelve keys
+  of the song's mode, each with the semitones it lies away. Picking one moves
+  the whole score there -- both parts, every chord and the key -- as
+  `transpose` does, and Ctrl+Z moves it back. Typing another `K:` into the ABC
+  text never did this: the letters are read again in the new key, so an
+  F-sharp in F-sharp minor became an F in A minor.
+- **A strings sound for the chords,** now what they play in the window unless
+  you picked another: three detuned voices, a slow attack and a vibrato that
+  comes in late, held the way a string section holds a chord. Like every sound
+  in the window it is for your ear only; YuE2 never hears it.
+- **Copy, Cut, Paste and Duplicate in the piano roll** (issue #9): buttons after
+  Undo and Redo, and Ctrl+C, Ctrl+X, Ctrl+V, and Ctrl+D or Ctrl+B. Paste puts
+  the copy into the bar the playhead is in, at the same places in the bar, and
+  replaces the notes under it; Duplicate puts it right after the selection, and
+  again after that, which is the quick way to make a tune longer. A paste past
+  the end of the song adds the bars it needs. What is copied follows the part --
+  one part's notes, both parts with their chords, or the chords as blocks --
+  and the copy is kept for every score window on the page.
+- **Keep for new words** (issue #10), beside Apply: an edit kept so is sung
+  when the lyrics or the style change, instead of a new score being written
+  for the new words, and the node says in yellow that the words changed.
+  Ticked with nothing edited, it keeps the model's own tune while only the
+  words are rewritten. Measured on three songs at two seeds, by the lyrics
+  Qwen3-ASR heard in order: words changed within their lines, 0.95, as over a
+  new score written for them; every line new, 0.92 against 0.95; a line added
+  to each verse, 0.85 against 0.96, because the song keeps the edit's length
+  and the chorus after it loses its last line.
+- **Template 12, *An instrumental*: music with no voice in it.** YuE2 sings
+  whatever the style says, and "instrumental" or "no vocals" there does not
+  stop it. The template puts Mothersuperior's instrumental adapter in front of
+  the song node, set up as the adapter's card says: AR at 1, `cot` at `full`,
+  the lyrics `[instrumental]`. Set up that way it gave 17 songs of 17 with no
+  voice, 100 to 180 seconds long; `cot` at `melody`, words in the lyrics or an
+  AR strength of 0.5 brought the voice back. The adapter is not downloaded by
+  the pack: its note says where to get it. See
+  [Music with no voice](README.md#yue2-lora).
+
+### Changed
+
+- **`YuE2 Load MIDI` reads a track named Chords chord by chord.** With `mode`
+  at `full` the chords were guessed half a bar at a time from every track, the
+  Chords track of a `Save as MIDI...` file among them, so chords set right by
+  ear in a DAW came back as a guess. Such a track is now read where each chord
+  begins and named exactly from its notes, and it is neither sung nor played
+  as the instrument line. On twelve scores saved and read back, the chords agreed
+  beat for beat, 6,314 of 6,314, where the guess agreed on 92.8 percent.
+  Files without a Chords track are read as before. See
+  [YuE2 Load MIDI](README.md#yue2-load-midi).
+- **An edit typed in the ABC tab stays tied to its words.** Any change typed
+  there took the mark of the words off, so such an edit was sung with any
+  words while one made on the roll was not.
+- **A LoRA row that names a bare file finds it in any folder.** A row named
+  its file by the path under a `loras` folder, so a template naming a file
+  could not know where each person keeps it. A name with no folder in it is
+  now also the file of that name in any folder, as long as only one file has
+  it; two such files are refused with both paths.
+
+### Fixed
+
+- **Keys pressed in the pack's windows no longer reach the graph behind them.**
+  Ctrl+C, Ctrl+X and Ctrl+V in the score window copied, cut and pasted the
+  graph's selected nodes under it, and Ctrl+Z in any of the pack's windows
+  undid the last change to the graph as well as the edit. The windows now tell
+  ComfyUI they are modal, and the score window keeps the clipboard keys to
+  itself; checked against the ComfyUI frontend itself, where Ctrl+Z inside the
+  window had taken a node off the graph.
+- **Ctrl+Z, Ctrl+Y and Ctrl+A work with a Cyrillic keyboard layout.** The
+  browser reports those keys by the letter of the layout, and the score window
+  knew them only by the Latin one.
+- **Chord names no longer run into each other on the chord lane.** Two chords
+  close together were written over each other, and a click could pick the one
+  behind; a name now stops where the next chord begins.
+
 ## 0.10.0 - 2026-09-26
 
 ### Added

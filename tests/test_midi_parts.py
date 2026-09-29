@@ -175,3 +175,37 @@ def test_an_open_fifth_takes_the_third_the_key_has():
     d_minor = {5, 7, 9, 10, 0, 2, 4}
     assert chords.label(fifth, 2) == "D:maj"
     assert chords.label(fifth, 2, scale=d_minor) == "D:min"
+
+
+@pytest.mark.parametrize("pitches, expected", [
+    ([48, 52, 55], "C:maj"),
+    ([57, 60, 64, 67], "A:min7"),
+    ([48, 52, 55, 57], "C:maj6"),
+    ([57, 60, 64, 67, 69], "A:min7"),
+    ([52, 55, 60], "C:maj/3"),
+    ([40, 48, 52, 55], "C:maj/3"),
+    ([45, 48, 52, 55], "C:maj/6"),
+    ([36, 57, 60, 64, 67], "A:min7/b3"),
+    ([38, 48, 52, 55], "C:maj/2"),
+    ([43, 48, 50, 55], "C:sus2/5"),
+    ([48, 50, 55], "C:sus2"),
+    ([55, 60, 62], "G:sus4"),
+    ([48, 51, 54, 57], "C:dim7"),
+    ([36, 60, 63, 66, 69], "C:dim7"),
+    ([42, 48, 51, 54, 57], "C:dim7/b5"),
+    ([44, 48, 52, 56], "C:aug/#5"),
+    ([48, 50, 52, 55], None),
+    ([48, 55], None),
+    ([60], None),
+])
+def test_notes_held_together_are_named_only_as_the_chord_they_are(pitches, expected):
+    assert chords.spelled(pitches) == expected
+
+
+def test_a_chords_track_changes_where_its_notes_start_and_a_common_tone_carries_over():
+    notes = ([(0, 16, 48), (0, 16, 52), (0, 8, 55), (8, 17, 45)] + chord([43, 47, 50, 53], 16, 24)
+             + chord([48, 50, 52, 55], 24, 32) + chord([48, 52, 55], 32, 40))
+    rows, unnamed = chords.read(notes, 48)
+    assert rows == [[0, 8, "C:maj"], [8, 16, "A:min"], [16, 24, "G:7"], [24, 48, "C:maj"]]
+    assert unnamed == [24]
+    assert chords.read([(0, 8, 60)], 8) == ([[0, 8, "N"]], [0])

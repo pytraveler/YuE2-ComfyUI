@@ -1,7 +1,24 @@
-"""Chord symbols guessed from what a MIDI file's parts play, for 'cot' at 'full'.
+"""Chord symbols from what a MIDI file's parts play, for 'cot' at 'full': read from a chords track, or guessed.
 
-A file has no chord symbols, only notes: the harmony is in what sounds
-together. Each bar is cut in halves where its meter has an even number of
+A file has no chord symbols, only notes, but a track named Chords -- the one
+'Save as MIDI...' writes, perhaps put right by ear in a sequencer since -- is
+held chords and nothing else, so it is read chord by chord. A chord starts
+wherever a note of the track starts, and is the notes struck there with the
+ones carried over from before that sound for at least half of it, so a common
+tone held across a change counts and a note let ring a little late does not.
+Those notes are named only when they are exactly one of the fifteen chords the
+score format knows, on any root, with a bass under it: the lowest note, when
+it is not the root. Some sets are two chords at once -- C, E, G and A is C6
+and Am7 -- and the lowest note decides: the root when it is one, else the
+chord over it. The track 'Save as MIDI...' writes has a layout of its own that
+decides the rest: the root between C3 and B3 with the chord above it, and a
+bass written after a slash below C3, so a lowest note below C3 under the rest
+from C3 up is such a bass -- C/A rather than Am7, Am7/C rather than C6. A set
+that is no chord of the format -- an added ninth, an open fifth, a single note
+-- gets the chord the guess below would give it, and the node names its bars.
+
+A file without such a track has the harmony in what its parts sound
+together, and it is guessed. Each bar is cut in halves where its meter has an even number of
 beats, four or more, and is taken whole otherwise. A piece in which no two
 pitch classes ever sound at once -- a bass line or a tune alone -- is no
 chord. In every other piece the pitch classes sounding are weighed by how long
@@ -17,6 +34,8 @@ neighbours with the same chord are one.
 
 This is a guess, and the node says so: close enough for 'cot' at 'full' to
 follow the file's harmony, not a transcription of it.
+
+Both name roots with sharps; the score names them from its key afterwards.
 """
 
 from __future__ import annotations
@@ -24,6 +43,14 @@ from __future__ import annotations
 import math
 
 from ..sheetsage import abc_rebuild
+from . import export
+
+STEPS = {quality: export.QUALITY_STEPS[text] for quality, text in abc_rebuild.QUALITY_TEXT.items()}
+"""The steps above the root of every quality the score format knows, under the labels the writer reads, triads first."""
+
+DEGREES = ("1", "b2", "2", "b3", "3", "4", "#4", "5", "b6", "6", "b7", "7")
+TONE_DEGREES = {"dim": {6: "b5"}, "hdim7": {6: "b5"}, "dim7": {6: "b5", 9: "bb7"}, "aug": {8: "#5"}}
+"""A bass named as its degree above the root, so it is spelled from the root's name; chord tones as the chord spells them."""
 
 SHAPES = (("maj", (0, 4, 7), 0.0), ("min", (0, 3, 7), 0.0), ("7", (0, 4, 7, 10), 0.03),
           ("maj7", (0, 4, 7, 11), 0.03), ("min7", (0, 3, 7, 10), 0.03), ("dim", (0, 3, 6), 0.03),
@@ -109,3 +136,69 @@ def guess(notes: list, pieces: list, flats: bool = False, scale=None) -> list:
         else:
             rows.append([start, end, chord])
     return rows
+
+
+def _shape(classes: set, prefer: list):
+    """``(root, quality)`` of the chord made of exactly these pitch classes, a preferred root first, or None."""
+    found = [(root, quality) for quality, steps in STEPS.items() for root in range(12)
+             if {(root + step) % 12 for step in steps} == classes]
+    for root in prefer:
+        for candidate in found:
+            if candidate[0] == root:
+                return candidate
+    return found[0] if found else None
+
+
+def spelled(pitches) -> str:
+    """The chord label -- ``A:min7/b7`` -- that pitches sounding together make exactly, or None when they make none."""
+    pitches = sorted(set(pitches))
+    classes = {pitch % 12 for pitch in pitches}
+    if len(classes) < 3:
+        return None
+    bass, upper = pitches[0], pitches[1:]
+    above = {pitch % 12 for pitch in upper}
+    tries = []
+    if bass < export.CHORD_ROOT <= upper[0]:
+        tries.append((above, [upper[0] % 12, bass % 12]))
+    tries.append((classes, [bass % 12, upper[0] % 12]))
+    if bass % 12 not in above:
+        tries.append((above, [upper[0] % 12]))
+    for wanted, prefer in tries:
+        found = _shape(wanted, prefer)
+        if found is None:
+            continue
+        root, quality = found
+        label = abc_rebuild.SHARP_NAMES[root] + ":" + quality
+        step = (bass - root) % 12
+        if step:
+            label += "/" + TONE_DEGREES.get(quality, {}).get(step, DEGREES[step])
+        return label
+    return None
+
+
+def read(notes: list, end: int, scale=None) -> tuple:
+    """``([start, end, chord], unnamed)`` from a chords track's notes ``(start, end, pitch)``; equal neighbours merged.
+
+    Times are whatever the notes are given in -- the score's grid points --
+    and the last chord runs to ``end``. ``unnamed`` holds the start of every
+    chord whose notes are no chord of the score format, given the guess.
+    """
+    onsets = sorted({start for start, _stop, _pitch in notes})
+    rows = []
+    unnamed = []
+    for index, onset in enumerate(onsets):
+        stop = onsets[index + 1] if index + 1 < len(onsets) else max(end, onset + 1)
+        sounding = [pitch for start, finish, pitch in notes
+                    if start == onset or (start < onset < finish and 2 * (min(finish, stop) - onset) >= stop - onset)]
+        chord = spelled(sounding)
+        if chord is None:
+            unnamed.append(onset)
+            weights = [0.0] * 12
+            for pitch in sounding:
+                weights[pitch % 12] += 1.0
+            chord = label(weights, min(sounding) % 12, scale=scale)
+        if rows and rows[-1][2] == chord and rows[-1][1] == onset:
+            rows[-1][1] = stop
+        else:
+            rows.append([onset, stop, chord])
+    return rows, unnamed

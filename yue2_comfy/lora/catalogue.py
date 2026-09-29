@@ -198,8 +198,17 @@ def _clean(name: str) -> str:
     return str(name or "").strip().replace("\\", "/")
 
 
+def _base(name: str) -> str:
+    return name.rsplit("/", 1)[-1].lower()
+
+
 def find(name: str) -> Entry:
-    """The entry a row names, or FileNotFoundError saying what is there instead."""
+    """The entry a row names, or FileNotFoundError saying what is there instead.
+
+    A row names a file by its path under a LoRA folder. A name with no folder
+    in it -- the way a template names a file whose place it cannot know -- is
+    also the file of that name in any folder, as long as only one file has it.
+    """
     wanted = _clean(name)
     listed = entries()
     for entry in listed:
@@ -208,6 +217,14 @@ def find(name: str) -> Entry:
     for entry in listed:
         if entry.name.lower() == wanted.lower():
             return entry
+    if "/" not in wanted:
+        alike = [entry for entry in listed if _base(entry.name) == wanted.lower()]
+        if len(alike) == 1:
+            return alike[0]
+        if alike:
+            raise FileNotFoundError(
+                "'{}' is in more than one LoRA folder: {}. Pick the one to use on the 'YuE2 LoRA' "
+                "node.".format(wanted, ", ".join(entry.name for entry in alike)))
     known = ", ".join(entry.name for entry in listed[:12]) or "none"
     raise FileNotFoundError(
         "'{}' is not in the LoRA folders any more, or is not a LoRA for YuE2. What is there "

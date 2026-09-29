@@ -703,3 +703,16 @@ def test_a_device_that_cannot_be_read_says_nothing(monkeypatch):
 
     monkeypatch.setattr(devices, "resolve", broken)
     assert devices.cpu_notice("auto") is None
+
+
+def test_the_render_node_sings_an_edit_kept_for_new_words_and_says_so(monkeypatch):
+    calls = stub_singing(monkeypatch)
+    said = []
+    monkeypatch.setattr(staged, "announce",
+                        lambda node, findings, kind="notice": said.append(findings))
+    plan = plain_plan()
+    kept = edits.attach("X:1\nK:G\n", edits.mark("s", "other words", plan["settings"]["cot"]), keep=True)
+    staged.YuE2RenderPlan().render(plan, score_abc=kept, unique_id="9")
+    assert calls[0]["ids"] is None
+    assert calls[0]["abc"] == "X:1\nK:G", "the mark must never reach the model"
+    assert said == [[("warn", edits.KEPT)]]

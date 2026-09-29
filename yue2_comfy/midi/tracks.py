@@ -15,7 +15,7 @@ instrument is a part named for it, or the busiest remaining part above G3
 that strikes at most half its notes in chords, or nothing:
 in YuE2's own scores the second voice is a melodic line, not a bass. A part
 named 'Chords' -- the harmony this pack writes when it saves a score as MIDI --
-is neither.
+is neither: with 'full' it is where the chord symbols are read from.
 
 Names are bytes, and the format names no encoding. UTF-8 is tried first;
 failing that, text whose letters are mostly bytes from 0xC0 up is read as
@@ -255,6 +255,11 @@ def choose(found: list, vocal="auto", instrument="auto", syllables=(), division:
         else:
             why["instrument"] = "chosen"
     return {"voice": voice, "instrument": chosen, "why": why}
+
+
+def chords_part(found: list):
+    """The first part named as the chords, the way 'Save as MIDI...' names them, or None; drums are never it."""
+    return next((part for part in found if not part.drums and CHORDS_NAME.match(part.name)), None)
 
 
 def describe(found: list, chosen: dict) -> list:

@@ -141,6 +141,44 @@ def answer_score_length(body) -> tuple:
         return _score_problem(error), 200
 
 
+def answer_score_transpose(body) -> tuple:
+    """``(payload, status)`` for the score editor moving the whole score to another key.
+
+    The move is the one the 'transpose' option makes, so both parts, every
+    chord symbol and every key field go together, and the moved text is read
+    back note by note before it is handed over. Writing another K: into the
+    text would do something else: the same letters read in the new key.
+
+    A cut score is moved on its whole groups, as an edit is written on them. A
+    score the move cannot spell is refused with the reason, and the window
+    keeps the key it had.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("abc"), str):
+        return {"ok": False, "error": "Send a JSON object with the score as 'abc' and "
+                                      "the move as a whole number 'semitones'."}, 400
+    semitones = body.get("semitones")
+    if not isinstance(semitones, int) or isinstance(semitones, bool) or not 0 < abs(semitones) < 12:
+        return {"ok": False, "error": "'semitones' must be a whole number from -11 to 11, not 0."}, 400
+    if len(body["abc"]) > LONGEST:
+        return {"ok": False, "error": "That is far longer than any score."}, 413
+
+    from . import notation, transpose
+
+    try:
+        text, _cut = notation.editable(body["abc"])
+        try:
+            moved = transpose.move(text, semitones)
+        except ValueError as error:
+            return {"ok": False, "error": str(error).split("\n\n")[0]
+                    + " The score stays in the key it is in."}, 200
+        sheet = notation.read(moved.text)
+        sheet["cut"] = False
+        return {"ok": True, "abc": moved.text, "sheet": sheet, "before": moved.before,
+                "after": moved.after}, 200
+    except Exception as error:  # noqa: BLE001 - the window shows what went wrong
+        return _score_problem(error), 200
+
+
 def answer_midi_tracks(body) -> tuple:
     """``(payload, status)`` for 'YuE2 Load MIDI' asking what a file in the input folder holds.
 
@@ -542,6 +580,12 @@ def register() -> None:
     async def score_length(request):
         """A blank score, or the one sent with empty bars added at its end."""
         payload, status = await asyncio.to_thread(answer_score_length, await body_of(request))
+        return web.json_response(payload, status=status)
+
+    @routes.post(PREFIX + "/score/transpose")
+    async def score_transpose(request):
+        """The whole score moved to another key, for the key list in the piano roll."""
+        payload, status = await asyncio.to_thread(answer_score_transpose, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/score/midi")

@@ -400,7 +400,7 @@ class YuE2GenerateSong:
         settings["loras"] = list(lora or [])
         if int(settings.get("transpose") or 0) and settings["cot"] == "off":
             refuse(unique_id, transpose.COT_OFF)
-        adapters(settings, unique_id)
+        loras = adapters(settings, unique_id)
         edit = edits.read(score_abc)
         problem = edits.mismatch(edit, style, lyrics, settings["cot"], GENERATE_INSTEAD)
         if problem:
@@ -431,7 +431,7 @@ class YuE2GenerateSong:
         song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
         separator = separator_weights(settings, unique_id, song_progress) if voice else None
         began = time.perf_counter()
-        with session(settings, unique_id, song_progress) as models:
+        with session(settings, unique_id, song_progress, loras) as models:
             waveform, score, written, timing, performance = generate.run(
                 models, style, lyrics, seed, settings,
                 progress=song_progress, cancelled=interrupted, edited=edited,

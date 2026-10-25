@@ -130,6 +130,40 @@ def test_what_cannot_be_read_or_sung_is_refused_with_the_reason(folder, name, da
         run(name, vocal=vocal)
 
 
+@pytest.mark.parametrize("name", [
+    "../song.mid", "sub/../../song.mid", "..\\song.mid", "/etc/song.mid", "//host/share/song.mid",
+    "\\\\host\\share\\song.mid",
+    pytest.param("C:\\Windows\\song.mid", marks=pytest.mark.skipif(os.name != "nt", reason="a drive is Windows'")),
+    pytest.param("song.txt:x.mid", marks=pytest.mark.skipif(os.name != "nt", reason="a stream is NTFS'")),
+])
+def test_a_path_instead_of_a_name_is_refused_before_the_disk_is_asked(folder, monkeypatch, name):
+    """A workflow sent to /prompt or a request to the route can name anything; on Windows resolving a share reaches it."""
+    root, _said = folder
+    asked = []
+    real = os.path.realpath
+    monkeypatch.setattr(os.path, "realpath", lambda path: asked.append(path) or real(path))
+    with pytest.raises(ValueError, match="not a path"):
+        load_midi.path_of(name)
+    assert asked == []
+    payload, status = routes.answer_midi_tracks({"name": name})
+    assert status == 200 and payload["ok"] is False and str(root) not in payload["error"]
+
+
+def test_a_file_that_cannot_be_read_keeps_its_path_in_the_console(folder, monkeypatch, caplog):
+    """An OSError names the file by its whole path; the node's refusal reaches the browser and does not."""
+    root, _said = folder
+
+    def failing(_name):
+        raise OSError(13, "Permission denied", str(root / "song.mid"))
+
+    monkeypatch.setattr(load_midi, "read_midi", failing)
+    with pytest.raises(ValueError, match=re.escape(load_midi.UNREADABLE)):
+        run("song.mid")
+    monkeypatch.setattr(load_midi, "path_of", failing)
+    assert load_midi.YuE2LoadMidi.VALIDATE_INPUTS(midi="song.mid") == load_midi.UNREADABLE
+    assert root.name not in load_midi.UNREADABLE and root.name in caplog.text
+
+
 def test_a_changed_file_runs_again_and_a_wrong_name_is_caught_before_the_run(folder):
     root, _said = folder
     node = load_midi.YuE2LoadMidi
@@ -138,7 +172,8 @@ def test_a_changed_file_runs_again_and_a_wrong_name_is_caught_before_the_run(fol
     assert node.IS_CHANGED(midi="song.mid", mode="melody") != before
     assert node.VALIDATE_INPUTS(midi="song.mid") is True
     assert "not in ComfyUI's input folder" in node.VALIDATE_INPUTS(midi="gone.mid")
-    assert "outside ComfyUI's input folder" in node.VALIDATE_INPUTS(midi="../song.mid")
+    assert str(root) not in node.VALIDATE_INPUTS(midi="gone.mid")
+    assert "not a path" in node.VALIDATE_INPUTS(midi="../song.mid")
     assert "not a MIDI file" in node.VALIDATE_INPUTS(midi="song.wav")
     assert load_midi.path_of("song.mid [input]") == os.path.realpath(str(root / "song.mid"))
 

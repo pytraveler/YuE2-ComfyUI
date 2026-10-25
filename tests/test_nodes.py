@@ -217,7 +217,7 @@ def stub_run(monkeypatch, performance=None):
     said = []
 
     @contextlib.contextmanager
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         yield FakeModels()
 
     def run(models, style, lyrics, seed, settings, progress=None, cancelled=None, edited=None,

@@ -383,6 +383,9 @@ export function openModelList() {
     const banner = element("div", "yue2-m-banner");
     banner.hidden = true;
     panel.appendChild(banner);
+    const away = element("div", "yue2-m-banner");
+    away.hidden = true;
+    panel.appendChild(away);
     const list = element("div", "yue2-m-list");
     panel.appendChild(list);
 
@@ -404,6 +407,11 @@ export function openModelList() {
         message = text;
         failed = bad;
         paintSaid();
+    }
+
+    function lockedWhy() {
+        if (state?.refused) return state.refused;
+        return state && !state.writable ? LOCKED : "";
     }
 
     function paintSaid() {
@@ -453,10 +461,11 @@ export function openModelList() {
             load();
         }));
         drop.addEventListener("click", () => erase(row, drop));
-        if (!state.writable) {
+        const why = lockedWhy();
+        if (why) {
             for (const one of [change, drop]) {
                 one.disabled = true;
-                one.title = LOCKED;
+                one.title = why;
             }
         }
         acts.append(change, drop);
@@ -466,6 +475,8 @@ export function openModelList() {
 
     function draw() {
         list.replaceChildren();
+        away.hidden = !state?.refused;
+        away.textContent = state?.refused || "";
         banner.hidden = !state?.problem;
         if (state?.problem) {
             banner.textContent = state.problem + ".\n\nThe pack's own list is shown and nothing here can be "
@@ -482,7 +493,8 @@ export function openModelList() {
         const words = element("div", "", FOUND_TEXT);
         if (state.folder) words.appendChild(element("div", "yue2-m-path", state.folder));
         heading.appendChild(words);
-        const folder = button(FOLDER_LABEL, "", FOLDER_TOOLTIP);
+        const folder = button(FOLDER_LABEL, "", state.refused || FOLDER_TOOLTIP);
+        folder.disabled = Boolean(state.refused);
         folder.addEventListener("click", () => reveal("folder", tell));
         heading.appendChild(folder);
         list.appendChild(heading);
@@ -495,11 +507,14 @@ export function openModelList() {
         }
         list.appendChild(found);
         const coming = state.restorable || [];
-        restoring.disabled = !coming.length || !state.writable;
-        restoring.title = !state.writable ? LOCKED : coming.length
-            ? "Puts back: " + coming.join(", ") : "Every entry the pack ships is already in the list.";
-        adding.disabled = !state.writable;
-        adding.title = state.writable ? "" : LOCKED;
+        const why = lockedWhy();
+        restoring.disabled = !coming.length || Boolean(why);
+        restoring.title = why || (coming.length
+            ? "Puts back: " + coming.join(", ") : "Every entry the pack ships is already in the list.");
+        adding.disabled = Boolean(why);
+        adding.title = why;
+        opening.disabled = Boolean(state.refused);
+        opening.title = state.refused || FILE_TOOLTIP;
         paintSaid();
     }
 

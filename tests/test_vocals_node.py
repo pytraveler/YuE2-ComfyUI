@@ -112,7 +112,7 @@ def fake_timing(seconds):
 
 def stub_song(monkeypatch):
     @contextlib.contextmanager
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         yield FakeModels()
 
     monkeypatch.setattr(nodes, "session", session)
@@ -144,7 +144,7 @@ def stub_staged(monkeypatch):
             return self
 
     @contextlib.contextmanager
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         yield FakeModels()
 
     monkeypatch.setattr(staged, "session", session)

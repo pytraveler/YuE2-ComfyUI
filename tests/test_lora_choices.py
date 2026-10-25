@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 import lora_files as lf
-from yue2_comfy.lora import choices
+from yue2_comfy.lora import catalogue, choices
+
+
+@pytest.fixture(autouse=True)
+def lora_folder(tmp_path, monkeypatch):
+    """The test's own folder stands for ComfyUI's LoRA folder: only files found there are read."""
+    monkeypatch.setattr(catalogue, "roots", lambda: [str(tmp_path)])
 
 
 def row(path, name, sha, ar=1.0, nar=1.0):

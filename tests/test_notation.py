@@ -597,12 +597,13 @@ def test_an_edit_of_a_cut_score_leaves_the_unfinished_end_out_and_no_edit_leaves
     assert payload["ok"] is True
 
 
-def test_a_failure_nobody_foresaw_reaches_the_window_as_a_sentence(monkeypatch):
+def test_a_failure_nobody_foresaw_reaches_the_window_as_a_sentence(monkeypatch, caplog):
     def broken(_text):
         raise RuntimeError("boom")
     monkeypatch.setattr(notation, "read", broken)
     payload, status = routes.answer_score_read({"abc": AWKWARD})
-    assert status == 200 and payload["ok"] is False and "boom" in payload["error"]
+    assert status == 200 and payload["ok"] is False and "did not expect" in payload["error"]
+    assert "boom" not in payload["error"] and "boom" in caplog.text
 
 
 def test_the_write_route_carries_a_new_tempo_into_the_sheet_it_reads_back():

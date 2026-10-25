@@ -82,6 +82,34 @@ def _folder_paths():
     return folder_paths
 
 
+def shown(path) -> str:
+    """A path as a browser on another machine may be told it: from ComfyUI's folder down, or the name alone.
+
+    The routes answer whoever reaches ComfyUI's port, and a whole path says
+    whose machine it is and how it is laid out. Inside ComfyUI's folder the
+    part a person needs is the part below it ("models/LLM/x.gguf"); anywhere
+    else only the file's name is given, and the machine's own console has the
+    rest.
+    """
+    text = str(path or "").strip()
+    if not text:
+        return ""
+    name = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if is_network_path(text):
+        return name
+    folder_paths = _folder_paths()
+    base = getattr(folder_paths, "base_path", "") if folder_paths is not None else ""
+    if not base:
+        return name
+    try:
+        inner = os.path.relpath(os.path.abspath(text), os.path.abspath(base))
+    except ValueError:
+        return name
+    if inner in (os.curdir, os.pardir) or inner.startswith(os.pardir + os.sep) or os.path.isabs(inner):
+        return name
+    return inner.replace(os.sep, "/")
+
+
 def _override_root() -> str:
     """YUE2_MODELS_ROOT when ``search_roots`` would search it, otherwise "".
 

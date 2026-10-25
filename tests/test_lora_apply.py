@@ -19,9 +19,15 @@ torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
 
 from yue2_comfy import placement, quantized  # noqa: E402
-from yue2_comfy.lora import apply, choices, formats  # noqa: E402
+from yue2_comfy.lora import apply, catalogue, choices, formats  # noqa: E402
 
 H, F, KV, LAT = 2048, 6144, 1024, 64
+
+
+@pytest.fixture(autouse=True)
+def lora_folder(tmp_path, monkeypatch):
+    """The test's own folder stands for ComfyUI's LoRA folder: only files found there are folded."""
+    monkeypatch.setattr(catalogue, "roots", lambda: [str(tmp_path)])
 
 
 def linear(out_features, in_features, bias=False, seed=0):

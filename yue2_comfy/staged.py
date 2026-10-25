@@ -128,20 +128,26 @@ def words(style, lyrics, unique_id):
     return style, lyrics
 
 
-def adapters(settings, unique_id) -> None:
-    """Refuse a run whose adapter files are gone, and warn about any the run does not suit.
+def adapters(settings, unique_id) -> tuple:
+    """Refuse a run whose adapter files are gone, warn about any the run does not suit, and hand back the choices it folds.
 
     Checked before anything loads, like every other refusal here: a plan
-    written yesterday may name a LoRA file that has since been moved.
+    written yesterday may name a LoRA file that has since been moved. The LoRA
+    folders are walked once here, for all three questions; ``session`` takes
+    the choices rather than walking them again.
     """
+    from .lora import catalogue, choices
     from .lora import node as lora_node
 
-    problem = lora_node.missing(settings.get("loras"))
+    specs = settings.get("loras")
+    allowed = catalogue.held() if lora_node.pathed(specs) else frozenset()
+    problem = lora_node.missing(specs, allowed)
     if problem:
         refuse(unique_id, problem)
-    found = lora_node.notices(settings.get("loras"), settings["cot"])
+    found = lora_node.notices(specs, settings["cot"], allowed)
     if found:
         announce(unique_id, found)
+    return choices.from_settings(specs, allowed)
 
 
 def stage_times(timing: dict, wall: float) -> str:
@@ -180,7 +186,7 @@ def engine_line(timing: dict) -> str:
 
 
 @contextlib.contextmanager
-def session(settings, unique_id, progress):
+def session(settings, unique_id, progress, loras=None):
     """The weights on disk and the model on the card, unloaded on the way out.
 
     Every node in this pack that touches YuE2 needs the same steps first, in the
@@ -190,6 +196,9 @@ def session(settings, unique_id, progress):
     The notice about a run on the CPU belongs here for that reason: it is the
     one place every singing node passes through, and an hour of silence is not
     a thing to learn from the log afterwards.
+
+    ``loras`` is what ``adapters`` handed back. Without it the choices are read
+    from the settings here, with a walk of the LoRA folders of its own.
     """
     try:
         settings["device"] = devices.validate(settings["device"])
@@ -209,11 +218,11 @@ def session(settings, unique_id, progress):
 
     from .lora import choices
 
+    chosen = loras if loras is not None else choices.from_settings(settings.get("loras"))
     try:
         yield loader.acquire(files, settings["device"], settings["vae"], progress,
                              settings.get("offload", "auto"),
-                             bool(settings.get("low_vram", False)),
-                             choices.from_settings(settings.get("loras")))
+                             bool(settings.get("low_vram", False)), chosen)
     except InterruptedError:
         translate_interrupt()
         raise
@@ -351,9 +360,9 @@ class YuE2Plan:
         settings["loras"] = list(lora or [])
         if settings["cot"] == "off":
             refuse(unique_id, COT_OFF_REFUSAL)
-        adapters(settings, unique_id)
+        loras = adapters(settings, unique_id)
 
-        with session(settings, unique_id, progress) as models:
+        with session(settings, unique_id, progress, loras) as models:
             score, ids, timing = generate.write_score(
                 models, style, lyrics, seed, settings, progress, interrupted,
                 stages=generate.alone(generate.Stages.ABC))
@@ -398,11 +407,11 @@ class YuE2PlanBatch:
         settings["loras"] = list(lora or [])
         if settings["cot"] == "off":
             refuse(unique_id, COT_OFF_REFUSAL)
-        adapters(settings, unique_id)
+        loras = adapters(settings, unique_id)
 
         count = max(2, min(int(count), MAX_TAKES))
         plans = []
-        with session(settings, unique_id, progress) as models:
+        with session(settings, unique_id, progress, loras) as models:
             for index in range(count):
                 take = normalize_seed(int(seed) + index)
                 score, ids, timing = generate.write_score(
@@ -504,7 +513,7 @@ class YuE2RenderPlan:
         settings = _settings(plan, options, unique_id)
         if lora is not None:
             settings["loras"] = list(lora)
-        adapters(settings, unique_id)
+        loras = adapters(settings, unique_id)
         problem = edits.mismatch(edits.read(score_abc), plan.get("style"),
                                  plan.get("lyrics"), settings["cot"], RENDER_INSTEAD)
         if problem:
@@ -538,7 +547,7 @@ class YuE2RenderPlan:
 
         separator = separator_weights(settings, unique_id, song_progress) if voice else None
         began = time.perf_counter()
-        with session(settings, unique_id, song_progress) as models:
+        with session(settings, unique_id, song_progress, loras) as models:
             latents, timing, performance = generate.sing(
                 models, plan["style"], plan["lyrics"], plan["seed"], settings,
                 abc_ids=ids, abc=score, progress=song_progress, cancelled=interrupted,

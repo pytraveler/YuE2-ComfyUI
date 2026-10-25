@@ -698,6 +698,14 @@ the list itself:
   what is wrong, and nothing is saved over it until it parses again.
 - **Open** acts on the machine ComfyUI runs on, and says the path when it
   cannot.
+- Editing the list, **Check it** and both **Open** buttons answer a browser on
+  the machine ComfyUI runs on. From another machine -- ComfyUI started with
+  `--listen` -- the window shows the list with its paths cut short, turns
+  those buttons off and says why. On a remote server an SSH tunnel counts as
+  that machine and needs nothing else: `ssh -L 8188:127.0.0.1:8188 <server>`,
+  then open `http://127.0.0.1:8188`. `YUE2_ALLOW_REMOTE_EDITS=1` in ComfyUI's
+  environment turns them on for anyone who can reach the server; see
+  [Environment variables](#environment-variables).
 
 #### Models you already have
 
@@ -1392,6 +1400,9 @@ decode away.*
 - The search finds a song by its style, words, seed or note; the pencil writes
   a note of up to 80 characters on it, and the bin deletes a song with its
   edits, or one edit alone.
+- From another machine a song can be opened but not deleted or noted, and the
+  sounds switch is off; an SSH tunnel or `YUE2_ALLOW_REMOTE_EDITS=1` allows
+  them, as they allow the model list's edits.
 - Songs and sounds get 4 GiB each, and the one used longest ago goes first.
   The folder can be deleted at any time; a song sung again with the same seed
   is found again.
@@ -1950,6 +1961,7 @@ per run turns one fix into three.
 | `YUE2_LLAMA_BIN` | The llama.cpp binary to use, ahead of every other place it is looked for |
 | `HF_HUB_CACHE`, `HF_HOME` | Honoured when looking through the Hugging Face cache |
 | `YUE2_CONSOLE_PROGRESS` | `0`, `no`, `off` or `false` leaves the console alone; the bar on the node itself is untouched. Anything else, or nothing at all, draws the line |
+| `YUE2_ALLOW_REMOTE_EDITS` | `1` lets a browser on another machine change what the pack keeps: edit the model list and check a model, open its folders on this machine, delete songs, write notes on them, keep or delete their sounds. Without it only a browser on this machine can, opened as `127.0.0.1` or `localhost` -- the rule ComfyUI-Manager keeps for its own risky features. An SSH tunnel to a remote server (`ssh -L 8188:127.0.0.1:8188 <server>`, then `http://127.0.0.1:8188`) counts as this machine and needs no switch. ComfyUI's routes have no login, so set it only where everyone who can reach the server is trusted |
 
 ## Notes
 

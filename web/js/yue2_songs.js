@@ -340,6 +340,7 @@ export function openSongs(node, chosen, joined, onPick, onDrop) {
     let unfolded = "";
     let trouble = "";
     let keeping = {};
+    let away = "";
     let writing = "";
     let busy = false;
     let struck = { key: "", at: 0 };
@@ -428,13 +429,20 @@ export function openSongs(node, chosen, joined, onPick, onDrop) {
 
     function acts(row, whole) {
         const box = element("span", "yue2-s-acts");
-        box.appendChild(iconButton("\u270e", row.note ? NOTE_AGAIN : NOTE_NEW, () => {
+        const pencil = iconButton("\u270e", row.note ? NOTE_AGAIN : NOTE_NEW, () => {
             writing = row.key;
             draw();
-        }));
+        });
+        box.appendChild(pencil);
         const bin = iconButton("\u2715", whole ? DROP_ALL : DROP_ONE, () => erase(row, whole));
         bin.classList.add("yue2-s-bin");
         box.appendChild(bin);
+        if (away) {
+            for (const one of [pencil, bin]) {
+                one.disabled = true;
+                one.title = away;
+            }
+        }
         return box;
     }
 
@@ -540,7 +548,8 @@ export function openSongs(node, chosen, joined, onPick, onDrop) {
                 + size(keeping.bytes) + " of " + size(keeping.budget);
         }
         sweep.hidden = !count;
-        sweep.disabled = busy;
+        sweep.disabled = busy || !can;
+        sweep.title = can ? SWEEP_WHY : keeping.why || "";
     }
 
     async function writeNote(row, text) {
@@ -622,6 +631,7 @@ export function openSongs(node, chosen, joined, onPick, onDrop) {
             if (ok && payload?.ok !== false && Array.isArray(payload?.songs)) {
                 rows = payload.songs;
                 keeping = payload.sounds || NO_SWITCH;
+                away = payload.local === false ? String(payload.refused || "") : "";
             } else failed = payload?.error || "The songs could not be read.";
         } catch (error) {
             failed = "The songs could not be read: " + (error?.message || error);

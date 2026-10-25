@@ -10,7 +10,7 @@ import pytest
 
 import lora_files as lf
 from yue2_comfy import constants, generate, nodes, routes, songs, staged
-from yue2_comfy.lora import catalogue
+from yue2_comfy.lora import catalogue, choices
 from yue2_comfy.lora import node as lora_node
 
 
@@ -109,7 +109,7 @@ def test_the_song_node_sings_with_the_adapters_it_is_handed(folder, monkeypatch)
     seen, kept = [], []
 
     @contextlib.contextmanager
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         seen.append(dict(settings))
         yield object()
 
@@ -132,7 +132,7 @@ def test_a_plan_carries_its_adapters_and_the_render_node_keeps_or_replaces_them(
     sung = []
 
     @contextlib.contextmanager
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         sung.append(settings.get("loras"))
         yield object()
 
@@ -159,9 +159,64 @@ def test_a_file_gone_since_it_was_chosen_is_refused_before_anything_loads(folder
     catalogue.forget()
     loaded = []
     monkeypatch.setattr(nodes, "session", lambda *args: loaded.append(True))
-    with pytest.raises(ValueError, match="jpop.safetensors is no longer where it was chosen"):
+    with pytest.raises(ValueError, match="jpop.safetensors is not in ComfyUI's loras folders any more"):
         nodes.YuE2GenerateSong().generate(style="s", lyrics="l", seed=1, lora=chosen)
     assert loaded == []
+
+
+def test_a_path_handed_in_by_hand_is_refused_and_never_opened(folder, tmp_path, monkeypatch):
+    """A workflow sent to /prompt can carry an adapter row of its own, path and all, in 'lora' or in a plan.
+
+    Only the files the list found in the LoRA folders are read; a path from
+    anywhere else is refused before anything loads and is not even looked at.
+    """
+    outside = tmp_path / "elsewhere" / "jpop.safetensors"
+    outside.parent.mkdir()
+    lf.write(outside, lf.comfy_layer(0))
+    forged = [{"name": "jpop.safetensors", "path": str(outside), "sha256": "x", "ar": 0.0, "nar": 1.0}]
+    looked = []
+    stamp = catalogue.stamp
+    monkeypatch.setattr(catalogue, "stamp", lambda path: looked.append(str(path)) or stamp(path))
+    assert choices.from_settings(forged) == ()
+    assert "jpop.safetensors is not in ComfyUI's loras folders" in lora_node.missing(forged)
+    assert lora_node.notices(forged, "off") == []
+    loaded = []
+    monkeypatch.setattr(nodes, "session", lambda *args: loaded.append(True))
+    monkeypatch.setattr(staged, "session", lambda *args: loaded.append(True))
+    with pytest.raises(ValueError, match="not in ComfyUI's loras folders"):
+        nodes.YuE2GenerateSong().generate(style="s", lyrics="l", seed=1, lora=forged)
+    with pytest.raises(ValueError, match="not in ComfyUI's loras folders"):
+        staged.YuE2RenderPlan().render({"style": "s", "lyrics": "l", "seed": 1, "settings": {"loras": forged}})
+    assert loaded == []
+    assert str(outside) not in looked and looked, "the folder was walked, the path from outside never asked"
+    real = lora_node.YuE2LoRA().pick(rows({"name": "jpop.safetensors", "ar": 0.0}))[0]
+    assert lora_node.missing(real) == "" and len(choices.from_settings(real)) == 1
+
+
+def test_the_lora_folders_are_walked_once_a_run(folder, monkeypatch):
+    """adapters() asks the folders once for all three questions and hands session the choices; no adapters, no walk."""
+    chosen, = lora_node.YuE2LoRA().pick(rows({"name": "jpop.safetensors"}))
+    walked, given = [], []
+    held = catalogue.held
+    monkeypatch.setattr(catalogue, "held", lambda: walked.append(True) or held())
+
+    @contextlib.contextmanager
+    def session(settings, unique_id, progress, loras=None):
+        given.append(loras)
+        yield object()
+
+    monkeypatch.setattr(nodes, "session", session)
+    monkeypatch.setattr(generate, "run", lambda *args, **kwargs: (
+        "waveform", "X:1", "X:1", {"seconds_of_audio": 1.0, "total_seconds": 1.0,
+                                   "semantic": {"output_tokens": 1, "output_tps": 1.0,
+                                                "execution": "x", "attention": "sdpa"}}, "performed"))
+    monkeypatch.setattr(songs, "keep", lambda *args: None)
+    nodes.YuE2GenerateSong().generate(style="s", lyrics="l", seed=1, lora=chosen)
+    assert len(walked) == 1
+    assert given == [choices.from_settings(chosen)] and len(given[0]) == 1
+    walked.clear()
+    nodes.YuE2GenerateSong().generate(style="s", lyrics="l", seed=1)
+    assert walked == [] and given[1] == ()
 
 
 def test_an_adapter_made_for_another_cot_is_warned_about(folder):

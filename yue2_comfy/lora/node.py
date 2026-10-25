@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 from ..constants import CATEGORY, LORA_TYPE
 from ..progress import refuse
@@ -83,30 +84,48 @@ def picked(text) -> list:
     return chosen
 
 
-def missing(specs) -> str:
-    """Why a run cannot sing with these adapters -- a file gone since it was chosen -- or ""."""
-    gone = [str(spec.get("name") or spec.get("path")) for spec in specs or ()
-            if isinstance(spec, dict) and spec.get("path") and catalogue.stamp(spec["path"]) is None]
+def pathed(specs) -> list:
+    """The rows of ``specs`` that name a file: the dicts with a ``path``."""
+    return [spec for spec in specs or () if isinstance(spec, dict) and spec.get("path")]
+
+
+def missing(specs, among=None) -> str:
+    """Why a run cannot sing with these adapters -- a file that is not a LoRA in ComfyUI's LoRA folders -- or "".
+
+    Most often the file was moved or deleted since it was chosen. A path handed
+    in by hand that was never in those folders is refused the same way and is
+    never looked at, not even to see whether it exists; see ``catalogue.held``.
+    ``among`` is that set when the caller has walked the folders already.
+    """
+    specs = pathed(specs)
+    if not specs:
+        return ""
+    allowed = catalogue.held() if among is None else among
+    gone = [str(spec.get("name") or os.path.basename(str(spec["path"]))) for spec in specs
+            if not catalogue.is_held(spec["path"], allowed)]
     if not gone:
         return ""
-    return ("The LoRA file{} {} {} no longer where {} chosen. Put {} back, or choose again on the "
-            "'YuE2 LoRA' node.".format("s" if len(gone) > 1 else "", ", ".join(gone),
-                                       "are" if len(gone) > 1 else "is",
-                                       "they were" if len(gone) > 1 else "it was",
-                                       "them" if len(gone) > 1 else "it"))
+    many = len(gone) > 1
+    return ("The LoRA file{} {} {} not in ComfyUI's loras folders any more. Put {} back, or choose again on "
+            "the 'YuE2 LoRA' node.".format("s" if many else "", ", ".join(gone), "are" if many else "is",
+                                           "them" if many else "it"))
 
 
-def notices(specs, cot: str) -> list:
+def notices(specs, cot: str, among=None) -> list:
     """Warnings about adapters this run does not suit, as (level, message) pairs.
 
     Only what a file says about itself: Mothersuperior's instrumental adapter
     names the ``cot`` it was trained for, and in its authors' renders the
     score-first path ended songs by itself eight times in nine where the
-    score-free one did not.
+    score-free one did not. Only files in ComfyUI's LoRA folders are asked;
+    ``among`` is ``catalogue.held()`` when the caller has walked them already.
     """
     found = []
-    for spec in specs or ():
-        if not isinstance(spec, dict) or not spec.get("path"):
+    allowed = among
+    for spec in pathed(specs):
+        if allowed is None:
+            allowed = catalogue.held()
+        if not catalogue.is_held(spec["path"], allowed):
             continue
         verdict = catalogue.verdict(spec["path"]) or {}
         wanted = str(verdict.get("intended_cot") or "").strip()

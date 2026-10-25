@@ -52,7 +52,7 @@ class FakeModels:
 
 
 @contextlib.contextmanager
-def fake_session(settings, unique_id, progress):
+def fake_session(settings, unique_id, progress, loras=None):
     """staged.session without the six gigabytes or the ComfyUI it talks to."""
     yield FakeModels()
 
@@ -573,7 +573,7 @@ def test_a_score_that_cannot_be_moved_is_refused_before_the_model_loads(monkeypa
     entered = []
 
     @contextlib.contextmanager
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         entered.append(True)
         yield FakeModels()
 

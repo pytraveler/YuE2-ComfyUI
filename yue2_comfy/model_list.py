@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 
-from . import catalog, chat_template, download, gguf_meta, llm
+from . import catalog, chat_template, download, gguf_meta, llm, paths
 
 log = logging.getLogger(__name__)
 
@@ -46,12 +46,20 @@ def _disk_rows() -> list:
             for label, target in llm.offered() if isinstance(target, str)]
 
 
-def listing() -> dict:
+def listing(local: bool = True) -> dict:
     """Everything the window draws: the entries as written, what each is now, and the files found.
 
     An entry the widget cannot use (no name, no file) is still shown, marked,
     so that it can be mended or deleted here rather than only in the file.
+
+    ``local`` is whether the browser asking is on this machine. Anyone else
+    gets every path as ``paths.shown`` cuts it -- below ComfyUI's folder, or
+    the file's name -- since the list is there to say what can be picked, not
+    how this machine is laid out.
     """
+    def place(path):
+        return path if local else paths.shown(path)
+
     found = llm.catalogue()
     seeded = {name.casefold() for name in catalog.seed_names()}
     rows = []
@@ -61,22 +69,26 @@ def listing() -> dict:
         if entry is None:
             row.update(label=catalog.label_of(raw) or "(no name)", usable=False, on_disk=False,
                        where="", from_pack=False, local=False)
+            if isinstance(row.get("file"), str) and not row.get("repo"):
+                row["file"] = place(row["file"])
         else:
             here = llm.listed_file(entry, found)
             row.update(name=entry.name, label=entry.shown(bool(here)), usable=True,
-                       on_disk=bool(here), where=here,
+                       on_disk=bool(here), where=place(here),
                        from_pack=entry.name.casefold() in seeded, local=entry.local)
+            if entry.local:
+                row["file"] = place(entry.file)
         rows.append(row)
     problem = catalog.problem()
     return {
         "ok": True,
-        "path": catalog.live_file(),
+        "path": place(catalog.live_file()),
         "writable": not problem,
         "problem": problem,
         "entries": rows,
-        "found": _disk_rows(),
+        "found": [dict(row, path=place(row["path"])) for row in _disk_rows()],
         "restorable": catalog.restorable(),
-        "folder": download.writer_root(),
+        "folder": place(download.writer_root()),
         "choices": llm.choices(),
     }
 

@@ -7,6 +7,46 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.14.2 - 2026-10-25
+
+### Security
+
+The Comfy Registry's review flags the versions since 0.8.0 for reading files
+through ComfyUI's API, and the earlier ones for telling too much about the
+machine. ComfyUI's routes and the workflows sent to it carry no login, so
+anyone who can reach a server started with `--listen` can use them. This
+release closes what the review points at.
+
+- **A LoRA is read only from ComfyUI's `loras` folders.** `YuE2 LoRA` hands
+  its rows on as plain data, path included, and a workflow sent to the API
+  could hand in rows of its own -- through the `lora` input, `YuE2 Options`
+  or a plan -- and have any file on the machine opened as an adapter. The
+  nodes that sing now read only the files the LoRA list itself finds in those
+  folders. Anything else stops the run before anything loads, with the
+  message a file moved since it was chosen gets, and is never looked at.
+- **What changes what the pack keeps answers this machine only.** Editing the
+  model list, `Check it`, the two `Open` buttons, deleting a song, a note on
+  one and the sounds switch answer a browser on the machine ComfyUI runs on,
+  opened as `127.0.0.1` or `localhost`. Anywhere else they are refused, and
+  the windows turn those buttons off and say why; the lists, opening a song,
+  the editors and the players work as before, and so does every node. On a
+  remote server an SSH tunnel counts as that machine:
+  `ssh -L 8188:127.0.0.1:8188 <server>`, then `http://127.0.0.1:8188`.
+  `YUE2_ALLOW_REMOTE_EDITS=1` opens them to the network on a server whose
+  users are trusted -- the rule ComfyUI-Manager keeps for its own risky
+  features.
+- **No route hands out a whole path or an exception's own words.** A browser
+  on another machine sees the model list's paths from ComfyUI's folder down,
+  or a file's name alone. A failure nobody expected goes to the console, and
+  the window says to look there. `YuE2 Load MIDI` does the same with a file
+  that cannot be read: its path stays in the console.
+- **A MIDI name that is a path is refused before the disk is asked.** `YuE2
+  Load MIDI` already read only its input folder, but a name such as
+  `\\host\share\x.mid` was refused only after Windows had resolved it, and
+  resolving it already reaches out to that host.
+- The package sent to the Comfy Registry leaves out `tests/`, `tools/` and
+  `.github/` (`.comfyignore`). The release archive on GitHub keeps its tests.
+
 ## 0.14.1 - 2026-10-22
 
 ### Fixed

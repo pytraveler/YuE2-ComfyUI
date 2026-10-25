@@ -152,12 +152,17 @@ def _identity(path: str):
 
 
 def _read(path: str) -> tuple:
-    """``(data, "")``, or ``({}, why)`` when the file cannot be read as a list."""
+    """``(data, "")``, or ``({}, why)`` when the file cannot be read as a list.
+
+    The reason names the file, not where it is: it reaches the Model list
+    window, which a browser on another machine may be showing.
+    """
     try:
         with open(path, "rb") as handle:
             data = json.loads(handle.read().decode("utf-8"))
     except OSError as error:
-        return {}, FILE_NAME + " could not be read: " + str(error)
+        log.warning("[yue2_comfy.catalog] %s could not be read: %s", path, error)
+        return {}, FILE_NAME + " could not be read: " + (error.strerror or type(error).__name__)
     except (UnicodeDecodeError, ValueError) as error:
         return {}, FILE_NAME + " is not valid JSON: " + str(error)
     if not isinstance(data, dict):

@@ -33,7 +33,7 @@ import hashlib
 import logging
 import os
 
-from . import edits, phrasing
+from . import edits, paths, phrasing
 from .constants import CATEGORY
 from .midi import tracks
 from .progress import NodeProgress, announce, refuse
@@ -95,6 +95,8 @@ NO_FILE = (
     "or drop the file on the node."
 )
 CANNOT_READ = "'{name}' could not be read as a MIDI file: {reason}."
+UNREADABLE = "The file could not be read. The ComfyUI console says why."
+OUTSIDE = "'{}' is not a file in ComfyUI's input folder: the node reads a name there, not a path"
 NO_SCORE = "No score could be written from '{name}': {reason}."
 OTHER_FILE_SCORE = (
     "The edited score on this node was made for another file, or for another 'mode' or choice of tracks. "
@@ -128,12 +130,29 @@ def midi_files() -> list:
                   key=str.lower)
 
 
+def _plain_name(name: str) -> bool:
+    """Whether a name stays below the folder it is joined to, told from the text alone.
+
+    Asked before the name is joined or resolved: on Windows resolving a
+    ``\\\\host\\share`` name already reaches out to that host, and a name that
+    is a whole path, a drive or a climb out of the folder is not a file in it
+    whatever is at the end.
+    """
+    if os.path.isabs(name) or paths.is_network_path(name) or os.path.splitdrive(name)[0]:
+        return False
+    if name.startswith(("/", "\\")) or (os.name == "nt" and ":" in name):
+        return False
+    return all(part not in ("", ".", "..") for part in name.replace("\\", "/").split("/"))
+
+
 def path_of(name) -> str:
     """Where a chosen file is; a ValueError says why it cannot be the file read.
 
-    Only the input folder is read: a name that climbs out of it is refused,
-    whatever is at the end of it. The ' [input]' that ComfyUI appends to some
-    uploaded names is taken off.
+    Only the input folder is read: a name that is a path of its own or climbs
+    out of it is refused before anything on disk is asked, and a name that
+    resolves outside it -- a link leading elsewhere -- is refused after. The
+    ' [input]' that ComfyUI appends to some uploaded names is taken off. No
+    message names a folder of this machine: they reach the browser too.
     """
     name = str(name or "").strip()
     if name.endswith(INPUT_ANNOTATION):
@@ -142,6 +161,8 @@ def path_of(name) -> str:
         raise ValueError(NO_FILE)
     if not name.lower().endswith(EXTENSIONS):
         raise ValueError("'{}' is not a MIDI file: the node reads {}".format(name, ", ".join(EXTENSIONS)))
+    if not _plain_name(name):
+        raise ValueError(OUTSIDE.format(name))
     root = os.path.realpath(input_folder())
     path = os.path.realpath(os.path.join(root, name))
     try:
@@ -149,9 +170,9 @@ def path_of(name) -> str:
     except ValueError:
         inside = False
     if not inside:
-        raise ValueError("'{}' lies outside ComfyUI's input folder".format(name))
+        raise ValueError(OUTSIDE.format(name))
     if not os.path.isfile(path):
-        raise ValueError("'{}' is not in ComfyUI's input folder, {}".format(name, root))
+        raise ValueError("'{}' is not in ComfyUI's input folder".format(name))
     return path
 
 
@@ -231,8 +252,11 @@ class YuE2LoadMidi:
         """True for a MIDI file in the input folder, or the reason there is none -- before anything runs."""
         try:
             path_of(midi)
-        except (OSError, ValueError) as error:
+        except ValueError as error:
             return str(error)
+        except OSError as error:
+            log.warning("[yue2_comfy.load_midi] %s could not be read: %s", midi, error)
+            return UNREADABLE
         return True
 
     def load(self, midi, mode, vocal_track, instrument_track, score_abc="", lyrics="", without_sections=True,
@@ -244,8 +268,14 @@ class YuE2LoadMidi:
             refuse(unique_id, "'mode' must be one of {}.".format(", ".join(MODE_CHOICES)))
         try:
             data = read_midi(midi)
+        except ValueError as error:
+            refuse(unique_id, str(error).rstrip(".") + ".")
+        except OSError as error:
+            log.warning("[yue2_comfy.load_midi] %s could not be read: %s", midi, error)
+            refuse(unique_id, UNREADABLE)
+        try:
             song = smf.read(data)
-        except (OSError, ValueError) as error:
+        except ValueError as error:
             refuse(unique_id, CANNOT_READ.format(name=midi, reason=str(error).rstrip(".")))
         try:
             out = score.convert(song, mode, vocal_track, instrument_track)

@@ -805,7 +805,7 @@ def test_a_song_sung_through_an_adapter_is_edited_through_the_same_one(torch, mo
     songs.remember(wave, RATE, song)
     seen = {}
 
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         seen["settings"] = dict(settings)
         return _no_models()
 
@@ -955,7 +955,7 @@ def test_a_refusal_from_inside_the_session_is_said_once(stand, monkeypatch):
         (kind, text) for _level, text in findings))
 
     @contextlib.contextmanager
-    def session(settings, unique_id, bar):
+    def session(settings, unique_id, bar, loras=None):
         try:
             yield object()
         except ValueError as error:
@@ -1546,7 +1546,7 @@ def test_a_small_card_listens_small_and_clears_the_card_before_the_song_model_si
     monkeypatch.setattr(asr_runtime, "word_times", lambda *args, **kwargs: events.append(
         ("times", kwargs["low_vram"])) or timed(*args, **kwargs))
 
-    def session(settings, unique_id, progress):
+    def session(settings, unique_id, progress, loras=None):
         events.append("sing")
         return _no_models()
 

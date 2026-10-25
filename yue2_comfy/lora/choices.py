@@ -51,11 +51,23 @@ def _number(value) -> float:
     return number if number == number and abs(number) != float("inf") else 0.0
 
 
-def from_settings(specs) -> tuple:
-    """Choices from what the settings carry, sorted into folding order, rows at zero left out."""
+def from_settings(specs, among=None) -> tuple:
+    """Choices from what the settings carry, sorted into folding order, rows at zero left out.
+
+    A path that is not a LoRA file in ComfyUI's LoRA folders is left out
+    unread; see ``catalogue.held``. The run has refused it before this by then
+    (``node.missing``), so leaving it out here is the second lock, not the
+    message. ``among`` is that set when the caller has walked the folders
+    already.
+    """
     found = []
+    allowed = among
     for spec in specs or ():
         if not isinstance(spec, dict) or not spec.get("path"):
+            continue
+        if allowed is None:
+            allowed = catalogue.held()
+        if not catalogue.is_held(spec["path"], allowed):
             continue
         choice = Choice(name=str(spec.get("name") or ""), path=str(spec["path"]),
                         sha256=str(spec.get("sha256") or ""), ar=_number(spec.get("ar")),

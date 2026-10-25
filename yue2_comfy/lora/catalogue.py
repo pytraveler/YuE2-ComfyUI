@@ -194,6 +194,29 @@ def listing() -> list:
     return [dict(entry.summary, name=entry.name) for entry in entries()]
 
 
+def _same(path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def held() -> frozenset:
+    """Every LoRA file for YuE2 in ComfyUI's LoRA folders, as paths compared without case where the system ignores it.
+
+    The adapters a run sings with travel as plain data -- in the settings, in a
+    plan, in a remembered song -- and a workflow sent to /prompt can hand any of
+    those in written by hand, path and all. A path is read only when it is one
+    of these, the files the list itself found; anything else is never opened,
+    not even to see whether it is there.
+    """
+    return frozenset(_same(entry.path) for entry in entries())
+
+
+def is_held(path, among=None) -> bool:
+    """Whether a path is one of ``held()``; pass ``among`` to check several against one walk of the folders."""
+    if not isinstance(path, str) or not path.strip():
+        return False
+    return _same(path) in (held() if among is None else among)
+
+
 def _clean(name: str) -> str:
     return str(name or "").strip().replace("\\", "/")
 

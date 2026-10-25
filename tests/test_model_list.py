@@ -88,6 +88,35 @@ def test_an_entry_the_widget_cannot_use_is_shown_to_be_mended(machine):
     assert half["usable"] is False and half["label"] == "Half"
 
 
+def strings(value):
+    """Every string anywhere inside a payload."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from strings(item)
+
+
+def test_a_browser_elsewhere_sees_the_list_without_this_machine_s_paths(machine):
+    """Names and what can be picked, yes; where the machine keeps them, no -- that is for its own browser."""
+    folder, _fetched = machine
+    write_gguf(folder / "Alpha-1B.gguf")
+    write_gguf(folder / "own.gguf")
+    mine = write_gguf(folder / "mine.gguf")
+    catalog.add({"name": "Mine", "file": str(mine)})
+    base = str(folder.parent)
+    far = model_list.listing(local=False)
+    assert not [text for text in strings(far) if base in text]
+    assert row(far, "Mine")["file"] == "mine.gguf" and far["folder"] == folder.name
+    found = {one["path"] for one in far["found"]}
+    assert "own.gguf" in found and not [path for path in found if "/" in path or "\\" in path]
+    here = model_list.listing(local=True)
+    assert row(here, "Mine")["file"] == str(mine) and here["folder"] == str(folder)
+
+
 def test_a_list_that_does_not_parse_is_shown_but_locked(machine):
     os.makedirs(os.path.dirname(catalog.live_file()), exist_ok=True)
     with open(catalog.live_file(), "wb") as handle:
@@ -246,10 +275,12 @@ def test_the_routes_answer_the_window(machine):
     assert status == 200 and payload["restored"] == ["Beta 2B"]
 
 
-def test_an_unexpected_failure_is_logged_and_read_out(machine, monkeypatch):
-    def broken():
+def test_an_unexpected_failure_is_logged_and_its_words_stay_in_the_console(machine, monkeypatch, caplog):
+    def broken(local=True):
         raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(model_list, "listing", broken)
     payload, status = routes.answer_writers()
-    assert status == 200 and payload["ok"] is False and "disk on fire" in payload["error"]
+    assert status == 200 and payload["ok"] is False
+    assert "disk on fire" not in payload["error"] and "console" in payload["error"]
+    assert "disk on fire" in caplog.text

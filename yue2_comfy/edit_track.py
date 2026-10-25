@@ -1882,7 +1882,7 @@ class YuE2EditTrack:
             if made_on != name:
                 refuse(unique_id, ANOTHER_SONG.format(_song_said(made_on), _song_said(name, song)))
         settings = _settings(song, options, unique_id)
-        adapters(settings, unique_id)
+        loras = adapters(settings, unique_id)
         sheet = notation.read(song.score) if song.score else None
         if wanted and wanted[0].bars is not None:
             if sheet is None:
@@ -1903,7 +1903,7 @@ class YuE2EditTrack:
                 _ears_away(settings)
                 held = contextlib.ExitStack()
                 stack.callback(held.close)
-                models[0] = held.enter_context(session(settings, unique_id, progress))
+                models[0] = held.enter_context(session(settings, unique_id, progress, loras))
                 singing[0] = held
             return models[0]
 

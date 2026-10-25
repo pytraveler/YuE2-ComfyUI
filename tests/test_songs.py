@@ -754,7 +754,7 @@ def test_the_route_hands_the_window_the_songs_and_says_when_it_cannot(tmp_path, 
     monkeypatch.setattr(songs, "listing", broken)
     payload, status = routes.answer_songs()
     assert status == 200 and payload["ok"] is False and payload["songs"] == []
-    assert "the disk is on fire" in payload["error"]
+    assert "the disk is on fire" not in payload["error"] and "console" in payload["error"]
     assert payload["sounds"]["on"] is False, "and the window is still told about the sounds"
 
 

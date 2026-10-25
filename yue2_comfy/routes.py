@@ -7,6 +7,13 @@ the registration is guarded and logged rather than raised.
 The score routes answer 200 with ``ok: false`` and a message when a score or an
 edit cannot be used, because that is something the person editing needs to
 read, and 400 only when the request itself is not what the editor sends.
+
+Every route answers whoever reaches ComfyUI's port, so none of them hands out
+a whole path or an exception's own words: those name files and folders on the
+machine, and they go to the console instead (see ``paths.shown``). The routes
+that change what the pack keeps, read a file the request names, or open a
+window on the desktop answer only a browser on the machine itself and are a
+403 to anyone else; see ``access``.
 """
 
 from __future__ import annotations
@@ -30,6 +37,8 @@ LONGEST = 200000
 
 A song's lyrics are a few thousand characters at most. The cap is there so a
 pasted book cannot tie up a server thread, not to shape any real use."""
+UNEXPECTED = "{} hit an error it did not expect. The ComfyUI console says what it was."
+"""What a route says about a failure it did not expect; the failure itself is logged."""
 
 
 def answer_tokens(body) -> tuple:
@@ -52,15 +61,18 @@ def answer_tokens(body) -> tuple:
         return tokens.lyric_cuts(style, lyrics), 200
     except Exception as error:
         log.warning("[yue2_comfy.routes] token cuts failed: %s", error, exc_info=True)
-        return {"ok": True, "available": False, "problem": str(error)}, 200
+        return {"ok": True, "available": False, "problem": UNEXPECTED.format("Drawing the token cuts")}, 200
 
 
 def _score_problem(error) -> dict:
-    """A failure the editor shows as it is, logged when it is not the person's doing."""
+    """A failure the editor shows: what is wrong with the score as it is, anything else logged.
+
+    A ValueError is the score's own fault and says which bar and why; any other
+    failure is the pack's, and its words stay in the console.
+    """
     if not isinstance(error, ValueError):
         log.warning("[yue2_comfy.routes] the score editor failed: %s", error, exc_info=True)
-        return {"ok": False, "error": "The score editor hit an error it did not expect: "
-                                      "{}".format(error)}
+        return {"ok": False, "error": UNEXPECTED.format("The score editor")}
     return {"ok": False, "error": str(error)}
 
 
@@ -221,12 +233,14 @@ def answer_midi_tracks(body) -> tuple:
               for key, default in (("mode", "melody"), ("vocal_track", "auto"), ("instrument_track", "auto"))]
     try:
         return load_midi.summary(body["name"], *choice), 200
-    except (OSError, ValueError) as error:
+    except ValueError as error:
         return {"ok": False, "error": str(error), "parts": []}, 200
+    except OSError as error:
+        log.warning("[yue2_comfy.routes] a MIDI file could not be read: %s", error)
+        return {"ok": False, "error": load_midi.UNREADABLE, "parts": []}, 200
     except Exception as error:  # noqa: BLE001 - the node shows what went wrong
         log.warning("[yue2_comfy.routes] reading a MIDI file failed: %s", error, exc_info=True)
-        return {"ok": False, "parts": [],
-                "error": "Reading the file hit an error it did not expect: {}".format(error)}, 200
+        return {"ok": False, "parts": [], "error": UNEXPECTED.format("Reading the file")}, 200
 
 
 def answer_score_midi(body) -> tuple:
@@ -263,8 +277,7 @@ def answer_loras() -> tuple:
         return {"ok": True, "loras": catalogue.listing()}, 200
     except Exception as error:  # noqa: BLE001 - the node shows what went wrong
         log.warning("[yue2_comfy.routes] listing the LoRA files failed: %s", error, exc_info=True)
-        return {"ok": False, "loras": [],
-                "error": "Listing the LoRA files hit an error it did not expect: {}".format(error)}, 200
+        return {"ok": False, "loras": [], "error": UNEXPECTED.format("Listing the LoRA files")}, 200
 
 
 def _model_list(work, *args) -> tuple:
@@ -282,14 +295,23 @@ def _model_list(work, *args) -> tuple:
         return {"ok": False, "error": str(error)}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         log.warning("[yue2_comfy.routes] the model list failed: %s", error, exc_info=True)
-        return {"ok": False, "error": "The model list hit an error it did not expect: {}".format(error)}, 200
+        return {"ok": False, "error": UNEXPECTED.format("The model list")}, 200
 
 
-def answer_writers() -> tuple:
-    """``(payload, status)`` for the Model list window opening: the list, its state, the files found."""
-    from . import model_list
+def answer_writers(local: bool = True) -> tuple:
+    """``(payload, status)`` for the Model list window opening: the list, its state, the files found.
 
-    return _model_list(model_list.listing)
+    ``local`` is whether the browser asking is on this machine. Anyone else
+    sees the list with its paths cut short and is told why its buttons are
+    off; see ``access``.
+    """
+    from . import access, model_list
+
+    payload, status = _model_list(model_list.listing, local)
+    if payload.get("ok"):
+        payload["local"] = bool(local)
+        payload["refused"] = "" if local else access.REMOTE
+    return payload, status
 
 
 def answer_writers_save(body) -> tuple:
@@ -345,7 +367,7 @@ touched long ago, and the row they want is better found by opening it again
 from its own workflow than by scrolling."""
 
 
-def answer_songs() -> tuple:
+def answer_songs(local: bool = True) -> tuple:
     """``(payload, status)`` for the picker on 'YuE2 Edit Track' asking what can be opened.
 
     The songs this install has sung and remembered, the one used last first,
@@ -354,16 +376,23 @@ def answer_songs() -> tuple:
     whether it is a voice-only song, which cannot be edited. No latents and no
     sound; see ``songs.Store.listing``. ``sounds`` is the switch that keeps
     each song's own sound beside it, and what those sounds take.
+
+    ``local`` is whether the browser asking is on this machine. Anyone else
+    can open a song but not delete one, write on one, or move the switch, and
+    the switch says why; see ``access``.
     """
-    from . import songs
+    from . import access, songs
 
     try:
-        return {"ok": True, "songs": songs.listing(SHOWN_SONGS), "sounds": songs.sounds()}, 200
+        sounds = songs.sounds()
+        if not local:
+            sounds.update(can=False, why=access.REMOTE)
+        return {"ok": True, "songs": songs.listing(SHOWN_SONGS), "sounds": sounds, "local": bool(local),
+                "refused": "" if local else access.REMOTE}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         log.warning("[yue2_comfy.routes] listing the songs failed: %s", error, exc_info=True)
         return {"ok": False, "songs": [], "sounds": NO_SOUNDS,
-                "error": "Listing the songs this pack remembers hit an error it did not "
-                         "expect: {}".format(error)}, 200
+                "error": UNEXPECTED.format("Listing the songs this pack remembers")}, 200
 
 
 NO_SOUNDS = {"on": False, "count": 0, "bytes": 0, "budget": 0, "can": False, "why": ""}
@@ -401,7 +430,7 @@ def answer_song_note(body) -> tuple:
         return {"ok": True, "key": name, "note": songs.remark(name, body.get("note", ""))}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         log.warning("[yue2_comfy.routes] writing a note failed: %s", error, exc_info=True)
-        return {"ok": False, "error": "The note could not be written: {}".format(error)}, 200
+        return {"ok": False, "error": UNEXPECTED.format("Writing the note")}, 200
 
 
 def answer_song_drop(body) -> tuple:
@@ -424,8 +453,7 @@ def answer_song_drop(body) -> tuple:
                 "sounds": songs.sounds()}, 200
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         log.warning("[yue2_comfy.routes] deleting a song failed: %s", error, exc_info=True)
-        return {"ok": False, "keys": [],
-                "error": "The song could not be deleted: {}".format(error)}, 200
+        return {"ok": False, "keys": [], "error": UNEXPECTED.format("Deleting the song")}, 200
 
 
 def answer_song_sounds(body) -> tuple:
@@ -449,7 +477,7 @@ def answer_song_sounds(body) -> tuple:
             return {"ok": False, "error": "Send 'on' as true or false, or 'sweep' as true."}, 400
     except Exception as error:  # noqa: BLE001 - the window shows what went wrong
         log.warning("[yue2_comfy.routes] the sounds switch failed: %s", error, exc_info=True)
-        return {"ok": False, "error": "That could not be done: {}".format(error)}, 200
+        return {"ok": False, "error": UNEXPECTED.format("The sounds switch")}, 200
     payload["ok"] = True
     return payload, 200
 
@@ -577,9 +605,16 @@ async def send_sound(request, folder):
     return response
 
 
+def refused_answer(why: str) -> tuple:
+    """``(payload, status)`` for a request from elsewhere to a route only this machine may use."""
+    return {"ok": False, "error": why, "local": False}, 403
+
+
 def register() -> None:
     from aiohttp import web
     from server import PromptServer
+
+    from . import access
 
     routes = PromptServer.instance.routes
 
@@ -588,6 +623,16 @@ def register() -> None:
             return await request.json()
         except ValueError:
             return None
+
+    def refused(request):
+        """The 403 a route that changes what the pack keeps gives a request from elsewhere; None on this machine."""
+        why = access.refusal_of(request)
+        if not why:
+            return None
+        log.warning("[yue2_comfy.routes] refused %s %s from %s: only this machine may use it",
+                    request.method, request.path, request.remote)
+        payload, status = refused_answer(why)
+        return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/score/read")
     async def score_read(request):
@@ -640,60 +685,84 @@ def register() -> None:
     @routes.get(PREFIX + "/writers")
     async def writers(request):
         """The model list and the writer files found, for the Model list window."""
-        payload, status = await asyncio.to_thread(answer_writers)
+        payload, status = await asyncio.to_thread(answer_writers, not access.refusal_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/writers/save")
     async def writers_save(request):
-        """An entry added, or edited in place."""
+        """An entry added, or edited in place; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_writers_save, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/writers/delete")
     async def writers_delete(request):
-        """An entry deleted from the list; its file stays where it is."""
+        """An entry deleted from the list, its file left where it is; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_writers_delete, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/writers/restore")
     async def writers_restore(request):
-        """The pack's deleted entries put back."""
+        """The pack's deleted entries put back; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_writers_restore)
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/writers/check")
     async def writers_check(request):
-        """What an entry is, read from its header or asked of the Hub."""
+        """What an entry is, read from its header or asked of the Hub; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_writers_check, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/writers/open")
     async def writers_open(request):
-        """The list file or the models folder, opened on the machine ComfyUI runs on."""
+        """The list file or the models folder, opened on the machine ComfyUI runs on; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_writers_open, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.get(PREFIX + "/songs")
     async def songs_kept(request):
         """The songs this install remembers, for the picker on 'YuE2 Edit Track'."""
-        payload, status = await asyncio.to_thread(answer_songs)
+        payload, status = await asyncio.to_thread(answer_songs, not access.refusal_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/songs/note")
     async def song_note(request):
-        """A word the person put on a song, written beside it."""
+        """A word the person put on a song, written beside it; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_song_note, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/songs/drop")
     async def song_drop(request):
-        """A song deleted from the picker, with everything kept beside it."""
+        """A song deleted from the picker, with everything kept beside it; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_song_drop, await body_of(request))
         return web.json_response(payload, status=status)
 
     @routes.post(PREFIX + "/songs/sounds")
     async def song_sounds(request):
-        """The switch that keeps each song's own sound beside it, and the sweep that clears them."""
+        """The switch that keeps each song's own sound beside it, and the sweep that clears them; this machine only."""
+        answer = refused(request)
+        if answer is not None:
+            return answer
         payload, status = await asyncio.to_thread(answer_song_sounds, await body_of(request))
         return web.json_response(payload, status=status)
 

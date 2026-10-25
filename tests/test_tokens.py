@@ -105,7 +105,7 @@ def test_the_route_refuses_what_it_cannot_read(body, status):
     assert payload["ok"] is False
 
 
-def test_a_tokenizer_failure_reaches_the_editor_as_a_note(monkeypatch):
+def test_a_tokenizer_failure_reaches_the_editor_as_a_note(monkeypatch, caplog):
     def broken(style, lyrics):
         raise RuntimeError("tiktoken is not installed")
 
@@ -113,7 +113,8 @@ def test_a_tokenizer_failure_reaches_the_editor_as_a_note(monkeypatch):
     payload, code = routes.answer_tokens({"style": "", "lyrics": "la"})
     assert code == 200
     assert payload == {"ok": True, "available": False,
-                       "problem": "tiktoken is not installed"}
+                       "problem": routes.UNEXPECTED.format("Drawing the token cuts")}
+    assert "tiktoken is not installed" in caplog.text
 
 
 def real_tokenizer():

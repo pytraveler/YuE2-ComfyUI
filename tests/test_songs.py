@@ -54,6 +54,20 @@ def test_a_song_comes_back_from_its_file_as_it_went_in(tmp_path):
     assert again.frames == FRAMES
 
 
+def test_the_resolved_checkpoint_survives_song_storage_and_a_restart(tmp_path):
+    from yue2_comfy import checkpoints, constants, discovery
+
+    weights = tmp_path / "fine.safetensors"
+    weights.write_bytes(b"weights used only to record an identity")
+    settings = dict(constants.DEFAULT_OPTIONS, checkpoint="fine.safetensors")
+    checkpoints.remember(settings, discovery.Files(repack=str(weights)))
+    song = a_song()
+    song.settings = songs._plain(settings)
+    songs.Store(str(tmp_path / "songs")).put(name(1), song)
+    again = songs.Store(str(tmp_path / "songs")).get(name(1))
+    assert again.settings[checkpoints.SOURCE] == settings[checkpoints.SOURCE]
+
+
 def test_lyrics_in_another_alphabet_are_written_as_words(tmp_path):
     """Opened with an archiver, song.json shows the lyrics, not escape codes."""
     words = "[verse]\n\u0441\u043b\u043e\u0432\u0430 \u043f\u0435\u0441\u043d\u0438"

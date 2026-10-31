@@ -278,7 +278,7 @@ def test_the_render_node_returns_audio_and_latents_on_the_cpu(monkeypatch):
     stub_singing(monkeypatch)
     plan = {"style": "s", "lyrics": "l", "seed": 5, "score": SCORE, "ids": IDS,
             "settings": dict(constants.DEFAULT_OPTIONS)}
-    audio, latents = staged.YuE2RenderPlan().render(plan)
+    audio, latents, info = staged.YuE2RenderPlan().render(plan)
     assert set(audio) == {"waveform", "sample_rate"}
     assert audio["sample_rate"] == constants.SAMPLE_RATE
     assert latents["latents"].moved == ["cpu"]
@@ -296,7 +296,7 @@ def test_the_render_node_remembers_the_song_it_sang(monkeypatch):
     stub_singing(monkeypatch, performance="sung from")
     plan = {"style": "s", "lyrics": "l", "seed": 5, "score": SCORE, "ids": IDS,
             "settings": dict(constants.DEFAULT_OPTIONS)}
-    audio, latents = staged.YuE2RenderPlan().render(plan)
+    audio, latents, info = staged.YuE2RenderPlan().render(plan)
     assert len(kept) == 1
     given, origin, style, lyrics, seed, settings, score, performance = kept[0]
     assert given is audio
@@ -314,7 +314,7 @@ def test_the_decode_node_remembers_the_song_under_its_own_decoder(monkeypatch):
     carried = {"latents": FakeLatents(), "settings": dict(constants.DEFAULT_OPTIONS),
                "seed": 5, "style": "s", "lyrics": "l", "score": SCORE,
                "performance": "sung from"}
-    audio, = staged.YuE2DecodeLatents().decode(
+    audio, info = staged.YuE2DecodeLatents().decode(
         carried, options=dict(constants.DEFAULT_OPTIONS, vae="legacy"))
     given, origin, style, lyrics, seed, settings, score, performance = kept[0]
     assert given is audio
@@ -323,12 +323,25 @@ def test_the_decode_node_remembers_the_song_under_its_own_decoder(monkeypatch):
     assert settings["vae"] == "legacy"
 
 
+def test_decode_info_keeps_the_performances_steps_and_sampling(monkeypatch):
+    stub_singing(monkeypatch)
+    carried = {"latents": FakeLatents(), "settings": dict(constants.DEFAULT_OPTIONS, ode_steps=16,
+               temperature=0.8, checkpoint_source={"name": "fine.safetensors"}),
+               "seed": 42, "style": "piano", "lyrics": "words", "score": SCORE}
+    audio, info = staged.YuE2DecodeLatents().decode(
+        carried, options=dict(constants.DEFAULT_OPTIONS, ode_steps=64, vae="legacy"))
+    data = json.loads(info)
+    assert (data["seed"], data["steps"], data["model_name"]) == (42, 16, "fine.safetensors")
+    assert data["settings"]["temperature"] == 0.8
+    assert data["settings"]["vae"] == "legacy"
+
+
 def test_latents_from_before_the_song_memory_are_decoded_and_not_remembered(monkeypatch):
     """A link cached by an older version carries no performance, and keep is told None."""
     kept = []
     monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
     stub_singing(monkeypatch)
-    audio, = staged.YuE2DecodeLatents().decode(
+    audio, info = staged.YuE2DecodeLatents().decode(
         {"latents": FakeLatents(), "settings": dict(constants.DEFAULT_OPTIONS)})
     assert audio["sample_rate"] == constants.SAMPLE_RATE
     assert kept[0][-1] is None
@@ -338,7 +351,7 @@ def test_the_decode_node_moves_the_latents_to_wherever_the_model_is(monkeypatch)
     """They arrive on the CPU, because that is where a link keeps them."""
     calls = stub_singing(monkeypatch)
     tensor = FakeLatents()
-    audio, = staged.YuE2DecodeLatents().decode(
+    audio, info = staged.YuE2DecodeLatents().decode(
         {"latents": tensor, "settings": dict(constants.DEFAULT_OPTIONS)})
     assert audio["sample_rate"] == constants.SAMPLE_RATE
     assert calls[0]["decode"] is tensor

@@ -111,7 +111,7 @@
   [YuE2 Write Song 写歌](#yue2-write-song-写歌) - [YuE2 Transcribe 扒谱](#yue2-transcribe-扒谱) -
   [YuE2 Load MIDI 加载 MIDI](#yue2-load-midi-加载-midi) - [YuE2 Vocals Only 只留人声](#yue2-vocals-only-只留人声) -
   [YuE2 Edit Track 编辑音轨](#yue2-edit-track-编辑音轨) - [YuE2 LoRA 适配器](#yue2-lora-适配器) -
-  [YuE2 Options 选项](#yue2-options-选项) - [分阶段节点](#分阶段节点)
+  [YuE2 Options 选项](#yue2-options-选项) - [Generation Info](#yue2-generation-info) - [分阶段节点](#分阶段节点)
 - [歌曲长度](#歌曲长度)
 - [写歌词](#写歌词) -
   [重音，以及大写字母真正起的作用](#重音以及大写字母真正起的作用)
@@ -276,12 +276,14 @@ git clone https://github.com/pytraveler/YuE2-ComfyUI
 按下 Apply 之前，什么都不会写进节点。和歌曲编辑器一样，窗口可以从边上调整大小，
 也可以铺满标签页，而且永远不会缩到比工具栏需要的还小。
 
-<img src="docs/piano_roll.png" width="400" alt="画布上方的乐谱编辑器，标题是 Score — YuE2 Generate Song，下面一行字是“The notes this node sings. Nothing is written to the node until Apply.”。顶上是 Piano roll、Notes 和 ABC 三个标签页，右边是 Key Fm、4/4、98 BPM、93 bars、3:47，以及琥珀色的 23 of 33 lines fit。它们下面是 Play 和 From start，voice 框已勾选、旁边是 synth，instrument 已勾选、配 piano，chords 未勾选、配 strings，一个 Tempo 滑块、旁边框里是 98，还有停在 Fm 上的 Key 列表。再下一行是 Voice、Instrument、Chords、Both 切换，亮着的是 Voice；一个已勾选的 words 框；Eighth notes 网格；Add bars...；两对缩放按钮 —— 一个左右箭头配减号和加号，再一个上下箭头配减号和加号 —— 以及 Whole song；然后是 Undo 和 Redo，Copy、Cut、Paste 和 Duplicate，还有 -oct、-1、+1、+oct 几个按钮，全都是灰的。卷帘上是一段主歌的结尾和第 43 到 46 小节的副歌，小节号下面的和弦轨上 Fm7 和 Bb 轮流出现。行比一开始高，所以键盘上的 C4、C5、C6、C7 隔得很开，音符和音名都很大。人声的音符是绿色的，标着音名 —— Eb5、F5 和 Ab5 —— 第 44 小节里还有几个淡淡的乐器音符。每个音符下面一行站着俄语副歌的一个音节，每行第一个音节加粗，延续到下一个音符的词以连字符结尾：一共两整行，第一行从主歌最后一小节里的弱起开始，右边缘还有第三行的第一个音节">
+<img src="docs/piano_roll.png" width="400" alt="乐谱编辑器中的人声音符和歌词音节，节拍器已开启，速度为 98 BPM。">
 
-*`YuE2 Generate Song` 上的窗口，选的是 `Voice` 声部，勾着 `words`，行用上下那对
-按钮调高了：人声音符下面是两行俄语副歌，一个音符一个音节，第一行从主歌最后一
-小节里的弱起开始。两行的每个音节都有一个音符，所以是白色的。右上角的信息统计的
-是整首歌：`23 of 33 lines fit`。速度旁边是调的列表。*
+*人声声部的音符下方显示歌词，Metronome 已开启。乐谱为 F 小调、4/4 拍，速度为 98 BPM。*
+
+**Metronome** 默认关闭，开启后按当前速度和拍号打拍子，每小节第一拍有重音。
+旁边的滑块单独控制节拍器音量。关闭 voice、instrument 和 chords 可只听节拍器。
+从小节中间开始播放时，拍子位置仍然保持正确。Stop 和关闭窗口都会停止节拍器。
+修改速度会停止播放；再次按 Play 时使用新速度。节拍声只在浏览器试听中播放，不写入歌曲或乐谱。
 
 在 `YuE2 Generate Song` 上，要编辑的乐谱是节点上一次运行时写出的那份，所以先跑
 一次。下一次运行会唱这份编辑，而不是重新写乐谱，之后的每次编辑都只花唱的那部分
@@ -1255,10 +1257,10 @@ CC BY-NC 4.0）：它写出一份没有人声音符的乐谱，然后把它演�
 主节点故意不问的所有东西都在这里。插槽空着从来不是特殊情况：这里的默认值，和图
 里根本没有这个节点时主节点用的值是同一套。
 
-![YuE2 Options 连到 YuE2 Generate Song 上。Options 从上到下：cot full，max_seconds 0，keep_model_loaded false，cfg_scale 0.00，vae standard，device auto，attention_backend sdpa，download auto，quantization bf16，ode_steps 32，abc_temperature 0.70，abc_top_p 0.90，abc_top_k 30，temperature 1.00，top_p 0.95，top_k 100，repetition_penalty 1.200，offload auto，transpose 0，vocals_only false，low_vram false。旁边的 Generate Song：options、style、lyrics 和 score_abc 输入，带 control after generate 的 seed，Edit song... 和 Edit score... 两个按钮，以及摘要 —— English, 88 BPM, expressive female voice; warm piano pop, acoustic piano, rounded bass and light drums, unhurried phrasing；段落写作 [Verse] 2, [Chorus] 2；还有歌词 —— 摘要下面是一个写着 no score yet 的面板](docs/node_options.png)
+![YuE2 Options 的最后一个选项是 checkpoint，当前选择了 RS-FW BF16 权重。](docs/node_options.png)
 
-*第一次运行之前，每个小部件都是默认值。底部的两个开关是小显卡需要的：`offload`，
-以及它下面的 `low_vram`。*
+*最后一个选项已选择 RS-FW BF16 权重。`offload` 和 `low_vram`
+控制显卡上保留多少模型权重。*
 
 - `cot` —— `full` 同时规划旋律与和声，`melody` 只规划旋律，`off` 跳过乐谱直接
   生成。`full` 是默认值，基准测试的数字也是用它跑出来的。
@@ -1314,6 +1316,31 @@ CC BY-NC 4.0）：它写出一份没有人声音符的乐谱，然后把它演�
   28 个文本层放在 INT8 里，并且让它的卷积和词对齐器每次只处理 40 秒：在一首四分钟
   的歌上，语音模型用 3.5 GiB 而不是 5.5，对齐器用 2.2 而不是 3.5，速度慢五分之一。
   这时 Whisper 和语音模型轮流占用显卡。
+
+`checkpoint` 是 **YuE2 Options** 的最后一个选项，用来选择本地 YuE2 权重。
+`auto` 保留原来的自动搜索和下载行为。明确选择的文件优先于 `quantization`；
+文件丢失或不兼容时会报错，不会改用基础模型。列表识别 ComfyUI BF16/INT8 ConvRot
+以及 m-a-p 原始格式，也识别改过名字的文件。文件可放在已配置的模型目录或其下一层子目录中，
+添加后请刷新节点定义。原始格式还需要 YuE2 VAE 和词表。此加载器会把 INT8 文件还原为 BF16，
+因此文件较小本身并不减少显存占用。
+
+新计划和已保存的歌曲会记录实际使用的文件。渲染时，选项中的 `auto` 保留计划所用的模型；
+明确选择另一个 checkpoint 则会覆盖它。编辑歌曲使用歌曲自己的模型。
+保存的文件丢失或发生变化时，请重新选择权重并生成新计划或歌曲。
+新选项和输出都追加在末尾，旧工作流的字段值和连接位置保持不变。
+
+### YuE2 Generation Info
+
+<img src="docs/generation_info.png" width="400" alt="YuE2 Generation Info：generation_info 输入，以及 lyrics、seed、style、model_name、steps 和 text 输出。">
+
+`Generate Song`、`Render Plan` 和 `Decode Latents` 在已有输出后追加了 `generation_info`。
+这是 JSON 字符串，包含 `format_version`、歌词、实际使用的 seed、风格、已加载权重的
+`model_name`、声学步数 `steps`（`ode_steps`）、设置和 `score_abc`。可直接连接到文本保存节点。
+
+`YuE2/Advanced` 下的 **YuE2 Generation Info** 节点将 JSON 拆成 `lyrics`、`seed`（INT）、
+`style`、`model_name`、`steps`（INT），并提供可直接保存的可读 `text`。
+JSON 不包含模型的绝对路径。旧 latent 数据若没有记录 seed，会输出 `null`；
+字段提取节点需要已知的 seed。再次解码会保留原来演唱时的参数。
 
 ### 分阶段节点
 

@@ -891,8 +891,11 @@ def ensure(settings: dict, progress=None):
     decoder too, unless 'download' asks for Comfy-Org's file by name. A decoder
     the search already found somewhere else is not fetched a second time.
     """
-    from . import discovery
+    from . import checkpoints, discovery
 
+    explicit = checkpoints.selected(settings, progress)
+    if explicit is not None:
+        return explicit
     quantization = settings.get("quantization", "bf16")
     variant = settings.get("vae", "standard")
     try:

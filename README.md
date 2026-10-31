@@ -111,7 +111,7 @@ reports are just as welcome, and so are songs that came out wrong: they go in
   [YuE2 Write Song](#yue2-write-song) - [YuE2 Transcribe](#yue2-transcribe) -
   [YuE2 Load MIDI](#yue2-load-midi) - [YuE2 Vocals Only](#yue2-vocals-only) -
   [YuE2 Edit Track](#yue2-edit-track) - [YuE2 LoRA](#yue2-lora) -
-  [YuE2 Options](#yue2-options) - [Staged nodes](#staged-nodes)
+  [YuE2 Options](#yue2-options) - [Generation Info](#yue2-generation-info) - [Staged nodes](#staged-nodes)
 - [Song length](#song-length)
 - [Writing lyrics](#writing-lyrics) -
   [Stress, and what capital letters really do](#stress-and-what-capital-letters-really-do)
@@ -300,14 +300,16 @@ canvas with three views of one score, and nothing is written to the node until
 Apply. Like the song editor's, the window is sized from its edges or fills the
 tab, and it never shrinks below what its toolbars need.
 
-<img src="docs/piano_roll.png" width="400" alt="The score editor over the canvas, titled Score -- YuE2 Generate Song, with the line The notes this node sings. Nothing is written to the node until Apply. On top the Piano roll, Notes and ABC tabs, and on the right Key Fm, 4/4, 98 BPM, 93 bars, 3:47 and, in amber, 23 of 33 lines fit. Under them Play and From start, the voice box ticked with synth beside it, instrument ticked with piano, chords unticked with strings, a Tempo slider with 98 in the box next to it, and a Key list on Fm. On the row below, the Voice, Instrument, Chords and Both switch with Voice lit, a ticked words box, an Eighth notes grid, Add bars..., two zoom pairs -- a left-right arrow with minus and plus, then an up-down arrow with minus and plus -- and Whole song, then Undo and Redo, Copy, Cut, Paste and Duplicate, and the -oct, -1, +1 and +oct buttons, all greyed out. The roll shows the end of a verse and bars 43 to 46, a chorus, with Fm7 and Bb by turns on the chord lane under the bar numbers. Its rows are taller than at first, so the keyboard's C4, C5, C6 and C7 stand far apart and the notes and their names are large. The voice's notes are green and named -- Eb5, F5 and Ab5 -- with a few of the instrument's notes faint in bar 44. Under each note stands a syllable of a Russian chorus on the row below it, the first syllable of each line bold and a word that goes on to the next note ending in a hyphen: two whole lines, the first starting on a pickup in the verse's last bar, and the first syllable of a third at the right edge">
+<img src="docs/piano_roll.png" width="400" alt="The score editor with vocal notes, syllables and the metronome enabled at 98 BPM.">
 
-*The window on `YuE2 Generate Song` with the `Voice` part picked, `words`
-ticked and the rows made taller with the up-down pair: two lines of a Russian
-chorus under the voice's notes, a syllable a note, the first line starting on a
-pickup in the verse's last bar. Both lines have a note for every syllable and
-are white. The facts at the top right count the whole song:
-`23 of 33 lines fit`. Beside the tempo is the key list.*
+*The voice part with words under its notes and Metronome enabled. The score is in F minor, 4/4, at 98 BPM.*
+
+The score editor's **Metronome** starts off. It clicks on each beat of the
+current meter at the score's BPM, accenting the first beat of each bar. A
+separate slider controls its volume. Turn off voice, instrument and chords
+to hear only clicks. Starting inside a bar preserves the beats' positions.
+Stop and closing the editor stop clicks too. Changing tempo stops playback;
+Play uses the new tempo. Clicks never enter the generated song or score.
 
 On `YuE2 Generate Song` the score to edit is the one the node wrote on its last
 run, so run it once first. The next run sings the edit instead of writing a
@@ -1561,10 +1563,10 @@ Everything the main node deliberately does not ask about. An unconnected socket
 is never a special case: the defaults here are the same values the node uses
 when this node is not on the graph at all.
 
-![YuE2 Options wired into YuE2 Generate Song. Options, top to bottom: cot full, max_seconds 0, keep_model_loaded false, cfg_scale 0.00, vae standard, device auto, attention_backend sdpa, download auto, quantization bf16, ode_steps 32, abc_temperature 0.70, abc_top_p 0.90, abc_top_k 30, temperature 1.00, top_p 0.95, top_k 100, repetition_penalty 1.200, offload auto, transpose 0, vocals_only false, low_vram false. Generate Song beside it: the options, style, lyrics and score_abc inputs, the seed with its control after generate, the Edit song... and Edit score... buttons, and the summary -- English, 88 BPM, expressive female voice; warm piano pop, acoustic piano, rounded bass and light drums, unhurried phrasing; the sections as [Verse] 2, [Chorus] 2; the lyrics -- above a panel reading no score yet](docs/node_options.png)
+![YuE2 Options with checkpoint as the last option and an RS-FW BF16 file selected.](docs/node_options.png)
 
-*Every widget at its default, before the first run. The two switches at the bottom
-are the ones a small card wants: `offload`, and `low_vram` under it.*
+*An RS-FW BF16 checkpoint selected in the last option. `offload` and
+`low_vram` control how much of the model the card holds.*
 
 - `cot` -- `full` plans melody and harmony, `melody` plans the tune only, `off`
   skips the score and generates directly. `full` is the default and the one the
@@ -1638,6 +1640,34 @@ are the ones a small card wants: `offload`, and `low_vram` under it.*
   aligner's 40 seconds at a time: on a four-minute song 3.5 GiB instead of 5.5
   for the speech model and 2.2 instead of 3.5 for the aligner, a fifth slower.
   Whisper and the speech model then take turns on the card.
+
+The last widget in **YuE2 Options**, `checkpoint`, selects local YuE2 weights.
+`auto` keeps the previous search and download behaviour. An explicit selection
+wins over `quantization`; missing or incompatible files are refused instead of
+replaced by the base model. The picker recognises ComfyUI BF16/INT8 ConvRot and
+original m-a-p files, including renamed ones, in configured model folders and
+one level below them. Refresh node definitions after adding a file. Original
+weights also need the YuE2 VAE and vocabulary. INT8 repacks are restored to
+BF16 by this loader: a smaller download alone does not reduce VRAM use.
+
+New plans and songs remember their resolved files. Render options at `auto`
+preserve the plan's selection; another explicit checkpoint can override it.
+Edits use the song's own checkpoint. If saved files disappear or change, select
+the checkpoint and make a new plan or song. Existing widget values and output
+connections keep their positions.
+
+### YuE2 Generation Info
+
+<img src="docs/generation_info.png" width="400" alt="YuE2 Generation Info: generation_info input and lyrics, seed, style, model_name, steps and text outputs.">
+
+`Generate Song`, `Render Plan` and `Decode Latents` append a `generation_info`
+output: a JSON string with `format_version`, lyrics, the used seed, style,
+loaded `model_name`, acoustic `steps` (`ode_steps`), settings and `score_abc`.
+Save it directly with a text node, or connect it to **YuE2 Generation Info**
+under `YuE2/Advanced` for separate `lyrics`, `seed` (INT), `style`, `model_name`,
+`steps` (INT) and readable `text` outputs. Absolute model paths are omitted.
+Old latent data without a recorded seed exports `null`; the field extractor
+requires a known seed. Decoding again keeps the original singing parameters.
 
 ### Staged nodes
 

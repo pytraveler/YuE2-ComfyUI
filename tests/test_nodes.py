@@ -40,7 +40,7 @@ def test_the_menu_offers_the_headline_nodes_and_hides_the_rest_one_level_down():
                 if cls.CATEGORY == constants.ADVANCED_CATEGORY}
     assert plain == {"YuE2GenerateSong", "YuE2WriteSong", "YuE2Options", "YuE2Transcribe", "YuE2LoadMidi",
                      "YuE2VocalsOnly", "YuE2LoRA", "YuE2EditTrack"}
-    assert advanced == set(nodes.STAGED_CLASSES)
+    assert advanced == set(nodes.STAGED_CLASSES) | {"YuE2GenerationInfo"}
 
 
 @pytest.mark.parametrize("name,cls", node_classes())
@@ -90,11 +90,11 @@ def test_new_widgets_go_last_so_saved_options_keep_their_places():
     the wrong widget, in every workflow saved before it existed. At the end, an
     older workflow simply has a value or two fewer, and the new widgets take
     their defaults. 'offload' was added first, 'transpose' after it,
-    'vocals_only' after that, and 'low_vram' last.
+    'vocals_only' after that, then 'low_vram' and 'checkpoint'.
     """
     spec = nodes.YuE2Options.INPUT_TYPES()
-    assert list(spec["optional"])[-4:] == ["offload", "transpose", "vocals_only",
-                                           "low_vram"]
+    assert list(spec["optional"])[-5:] == ["offload", "transpose", "vocals_only",
+                                           "low_vram", "checkpoint"]
 
 
 def test_transpose_reaches_an_octave_either_way_and_starts_at_zero():
@@ -159,11 +159,11 @@ def test_generate_returns_a_comfyui_audio_dict(monkeypatch):
     have to hold on a machine that has never downloaded the model.
     """
     torch = pytest.importorskip("torch")
-    from yue2_comfy import generate, loader
+    from yue2_comfy import download, generate, loader
 
     unloaded = []
-    monkeypatch.setattr(loader, "locate",
-                        lambda variant="standard": loader.Files("lm", "vae", "merges"))
+    monkeypatch.setattr(download, "ensure",
+                        lambda settings, progress=None: loader.Files("lm", "vae", "merges"))
     monkeypatch.setattr(loader, "acquire", lambda *args, **kwargs: FakeModels())
     monkeypatch.setattr(loader, "unload", lambda: unloaded.append(True))
     monkeypatch.setattr(generate, "run", lambda *args, **kwargs: (
@@ -176,7 +176,7 @@ def test_generate_returns_a_comfyui_audio_dict(monkeypatch):
 
     out = nodes.YuE2GenerateSong().generate(
         style="test", lyrics="[Verse]" + chr(10) + "hello", seed=1)
-    audio, score = out["result"]
+    audio, score, info = out["result"]
     assert out["ui"][edits.SCORE_UI] == ["X:1"]
     assert unloaded == [True], "keep_model_loaded is off by default, so it must unload"
     assert set(audio) == {"waveform", "sample_rate"}
@@ -249,7 +249,7 @@ def test_the_song_node_remembers_the_song_it_sang(monkeypatch):
     monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
     stub_run(monkeypatch, performance="sung from")
     out = sing_with("", options=dict(constants.DEFAULT_OPTIONS, cot="full"))
-    audio, score = out["result"]
+    audio, score, info = out["result"]
     assert len(kept) == 1
     given, origin, style, lyrics, seed, settings, sung, performance = kept[0]
     assert given is audio

@@ -21,7 +21,7 @@ import contextlib
 import logging
 import time
 
-from . import devices, edits, phrasing, songs
+from . import checkpoints, devices, edits, generation_info, phrasing, songs
 from .constants import (
     ADVANCED_CATEGORY, DEFAULT_LYRICS, DEFAULT_OPTIONS, DEFAULT_STYLE,
     LATENTS_TYPE, LORA_INPUT_TOOLTIP, LORA_TYPE, LYRICS_TOOLTIP, OPTIONS_TYPE, PLAN_TYPE,
@@ -216,6 +216,7 @@ def session(settings, unique_id, progress, loras=None):
     except (FileNotFoundError, download.DownloadError) as error:
         refuse(unique_id, str(error))
 
+    checkpoints.remember(settings, files)
     from .lora import choices
 
     chosen = loras if loras is not None else choices.from_settings(settings.get("loras"))
@@ -288,8 +289,7 @@ def _settings(plan, options, unique_id) -> dict:
     settings = dict(DEFAULT_OPTIONS)
     settings.update(plan.get("settings") or {})
     written = settings["cot"]
-    if options:
-        settings.update(options)
+    checkpoints.overlay(settings, options)
     if settings["cot"] != written:
         announce(unique_id, [("warn",
                               "This score was written with cot='{}' and is sung that "
@@ -498,8 +498,8 @@ class YuE2RenderPlan:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("AUDIO", LATENTS_TYPE)
-    RETURN_NAMES = ("audio", "latents")
+    RETURN_TYPES = ("AUDIO", LATENTS_TYPE, "STRING")
+    RETURN_NAMES = ("audio", "latents", "generation_info")
     FUNCTION = "render"
     CATEGORY = ADVANCED_CATEGORY
 
@@ -570,7 +570,8 @@ class YuE2RenderPlan:
                  plan["seed"], " | " + engine if engine else "")
         log.info("[yue2_comfy] %s", stage_times(timing, time.perf_counter() - began))
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
-        return (audio, _latents(plan, settings, score, latents, timing, performance))
+        return (audio, _latents(plan, settings, score, latents, timing, performance),
+                generation_info.encode(plan["style"], plan["lyrics"], plan["seed"], settings, score))
 
 
 class YuE2DecodeLatents:
@@ -596,8 +597,8 @@ class YuE2DecodeLatents:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("AUDIO",)
-    RETURN_NAMES = ("audio",)
+    RETURN_TYPES = ("AUDIO", "STRING")
+    RETURN_NAMES = ("audio", "generation_info")
     FUNCTION = "decode"
     CATEGORY = ADVANCED_CATEGORY
 
@@ -610,8 +611,9 @@ class YuE2DecodeLatents:
         progress = NodeProgress(unique_id, title="YuE2 Decode Latents")
         settings = dict(DEFAULT_OPTIONS)
         settings.update(latents.get("settings") or {})
-        if options:
-            settings.update(options)
+        checkpoints.overlay(settings, options)
+        sung = dict(DEFAULT_OPTIONS)
+        sung.update(latents.get("settings") or {})
 
         voice = bool(settings.get("vocals_only"))
         song_progress = Band(progress, 0.0, 1.0 - VOICE_SHARE) if voice else progress
@@ -627,13 +629,16 @@ class YuE2DecodeLatents:
             waveform = voice_of({"waveform": waveform, "sample_rate": SAMPLE_RATE}, settings, unique_id,
                                 Band(progress, 1.0 - VOICE_SHARE, 1.0), path=separator)["waveform"]
         audio = {"waveform": waveform, "sample_rate": SAMPLE_RATE}
+        sung["vae"] = settings["vae"]
+        sung["vocals_only"] = settings["vocals_only"]
         songs.keep(audio, "YuE2 Decode Latents", latents.get("style"), latents.get("lyrics"),
-                   latents.get("seed"), settings, latents.get("score"), latents.get("performance"))
+                   latents.get("seed"), sung, latents.get("score"), latents.get("performance"))
 
         log.info("[yue2_comfy] decoded %.1f s of audio with the %s decoder",
                  timing["seconds_of_audio"], settings["vae"])
         progress.finish("{:.0f} seconds of audio".format(timing["seconds_of_audio"]))
-        return (audio,)
+        return (audio, generation_info.encode(latents.get("style"), latents.get("lyrics"),
+                                              latents.get("seed"), sung, latents.get("score")))
 
 
 STAGED_CLASSES = {

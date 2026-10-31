@@ -7,6 +7,40 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.15.0 - 2026-11-01
+
+### Added
+
+- **Choose the YuE2 checkpoint.** The last widget in `YuE2 Options`,
+  `checkpoint`, lists local YuE2 weights, including
+  [RS-FW fine-tunes](https://huggingface.co/goldhub/YuE2-RS-Finetunes).
+  It recognises ComfyUI BF16/INT8 ConvRot and original m-a-p files. An explicit
+  file takes priority over `quantization`; `auto` keeps the previous search
+  and download behaviour. INT8 repacks are restored to BF16 by this loader.
+- **Save a generation's parameters.** `Generate Song`, `Render Plan` and
+  `Decode Latents` have a `generation_info` output: JSON with the lyrics,
+  used seed, style, loaded checkpoint name, acoustic steps, settings and score.
+  The new `YuE2 Generation Info` node under `YuE2/Advanced` reads it into
+  separate fields and a readable `text` output for saving.
+- **A metronome in the score editor.** A switch beside the playback controls
+  enables clicks at the current tempo and meter, with an accent on each bar's
+  first beat and a separate volume slider. Turn off the parts to hear only
+  clicks. Stop and closing the window stop the metronome too; it never enters
+  the generated song.
+
+### Changed
+
+- Plans and saved songs remember their resolved checkpoint files. Render
+  options at `auto` preserve the plan's model, and edits use the song's own
+  model. Missing or changed files stop the run instead of selecting other weights.
+- New sockets and the checkpoint widget are appended after existing ones,
+  preserving the connections and widget values in older workflows.
+
+### Fixed
+
+- Decoding existing latents keeps the original singing settings in the saved
+  song and exported parameters, even when the decode node has different options.
+
 ## 0.14.2 - 2026-10-25
 
 ### Security

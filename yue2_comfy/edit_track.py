@@ -145,7 +145,7 @@ or guide for one edit alone, see ``_edited``; that is a choice made about that
 stretch, not a setting of the run."""
 
 SUNG_KEYS = ("cot", "cfg_scale", "ode_steps", "temperature", "top_p", "top_k",
-             "repetition_penalty")
+             "repetition_penalty", "checkpoint")
 """The settings an edit sings by, and so the ones worth a word when an options node asks otherwise.
 
 The rest of an options node -- the score's sampling, 'max_seconds', 'transpose'
@@ -892,7 +892,8 @@ def _settings(song, options, unique_id) -> dict:
     if not options:
         return settings
     ignored = sorted(name for name, value in dict(options).items()
-                     if name in SUNG_KEYS and settings.get(name) != value)
+                     if name in SUNG_KEYS and settings.get(name) != value
+                     and not (name == "checkpoint" and value == "auto"))
     for name in RUN_KEYS:
         if name in options:
             settings[name] = options[name]

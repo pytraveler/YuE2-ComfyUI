@@ -781,9 +781,13 @@ class Player {
         this.started = 0;
         this.master = null;
         this.sounds = { ...sounds.DEFAULTS };
+        this.clicksOn = false;
+        this.clickVolume = 0.3;
+        this.clickTimer = null;
+        this.clickMaster = null;
     }
 
-    play(list) {
+    play(list, clicks = []) {
         this.stop();
         const context = audioContext();
         const master = context.createGain();
@@ -796,6 +800,41 @@ class Player {
             this.voices.push(...this.tone(context, master, origin + item.at, item.length, item.pitch, item.part));
         }
         this.playing = true;
+        this.clicks = clicks;
+        this.nextClick = 0;
+        this.clickMaster = context.createGain();
+        this.clickMaster.gain.value = this.clicksOn ? this.clickVolume : 0;
+        this.clickMaster.connect(master);
+        this.scheduleClicks();
+        this.clickTimer = setInterval(() => this.scheduleClicks(), 25);
+    }
+
+    metronome(enabled, volume) {
+        this.clicksOn = Boolean(enabled);
+        this.clickVolume = Math.max(0, Math.min(1, Number(volume) || 0));
+        if (this.clickMaster) this.clickMaster.gain.value = this.clicksOn ? this.clickVolume : 0;
+    }
+
+    scheduleClicks() {
+        if (!this.playing) return;
+        const context = audioContext();
+        const audioNow = context.currentTime;
+        while (this.nextClick < this.clicks.length) {
+            const item = this.clicks[this.nextClick];
+            const at = this.started + item.at;
+            if (at > audioNow + 0.12) break;
+            this.nextClick++;
+            if (at < audioNow || !this.clicksOn) continue;
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            oscillator.frequency.value = item.accent ? 1600 : 1000;
+            gain.gain.setValueAtTime(0.6, at);
+            gain.gain.exponentialRampToValueAtTime(0.001, at + 0.03);
+            oscillator.connect(gain).connect(this.clickMaster);
+            oscillator.start(at);
+            oscillator.stop(at + 0.035);
+            this.voices.push(oscillator);
+        }
     }
 
     soundOf(part) {
@@ -860,6 +899,8 @@ class Player {
     }
 
     stop() {
+        clearInterval(this.clickTimer);
+        this.clickTimer = null;
         for (const oscillator of this.voices) {
             try {
                 oscillator.stop();
@@ -870,6 +911,7 @@ class Player {
         this.voices = [];
         if (this.master) this.master.disconnect();
         this.master = null;
+        this.clickMaster = null;
         this.playing = false;
     }
 }
@@ -1023,10 +1065,26 @@ class ScoreEditor {
         this.hearVoice = checkControl("voice", true, "Play the voice part.");
         this.hearIns = checkControl("instrument", true, "Play the instrument part.");
         this.hearChords = checkControl("chords", false, "Play the chord symbols as soft held chords.");
+        this.metronome = checkControl("Metronome", false,
+            "Click on each beat at the current tempo, with an accent on the first beat. "
+            + "Turn off voice, instrument and chords to hear only the metronome.");
+        this.metroVolume = document.createElement("input");
+        this.metroVolume.type = "range";
+        this.metroVolume.min = "0";
+        this.metroVolume.max = "1";
+        this.metroVolume.step = "0.05";
+        this.metroVolume.value = "0.3";
+        this.metroVolume.style.width = "64px";
+        this.metroVolume.title = "Metronome volume";
+        this.metroVolume.setAttribute("aria-label", "Metronome volume");
+        const clickSettings = () => this.player.metronome(this.metronome.box.checked, this.metroVolume.value);
+        this.metronome.box.addEventListener("change", clickSettings);
+        this.metroVolume.addEventListener("input", clickSettings);
         tools.append(this.playButton, rewind,
             this.hearVoice.holder, this.soundControl("Vocal"),
             this.hearIns.holder, this.soundControl("Ins"),
             this.hearChords.holder, this.soundControl("chords"),
+            this.metronome.holder, this.metroVolume,
             element("span", "yue2-s-gap"), this.tempoControl(), element("span", "yue2-s-gap"),
             this.keyControl(), element("span", "yue2-s-gap"));
 
@@ -1548,6 +1606,7 @@ class ScoreEditor {
         if (!this.model || !this.sheet) return;
         const bpm = roll.tempoOf(value, this.sheetTempo);
         if (bpm === null || bpm === this.model.bpm) return;
+        this.stopPlaying();
         if (!this.tempoFrom) this.tempoFrom = this.model;
         this.model = { ...this.model, bpm };
         this.draw();
@@ -1564,6 +1623,7 @@ class ScoreEditor {
             this.draw();
             return;
         }
+        this.stopPlaying();
         this.commit({ ...from, bpm }, from);
     }
 
@@ -3491,7 +3551,7 @@ class ScoreEditor {
 
     stepped(entry) {
         this.notice = null;
-        if (entry.keyed) this.stopPlaying();
+        if (entry.keyed || entry.bpm !== this.model?.bpm) this.stopPlaying();
         this.restore(entry);
         this.clearPicks();
         this.localChanged = roll.changedBars(this.sheet, this.model);
@@ -3648,7 +3708,8 @@ class ScoreEditor {
             Vocal: this.hearVoice.box.checked, Ins: this.hearIns.box.checked, chords: this.hearChords.box.checked,
         });
         try {
-            this.player.play(list);
+            this.player.metronome(this.metronome.box.checked, this.metroVolume.value);
+            this.player.play(list, roll.metronomeEvents(this.sheet, from));
         } catch (error) {
             this.setStatus("The browser would not play sound: " + error.message, true);
             return;

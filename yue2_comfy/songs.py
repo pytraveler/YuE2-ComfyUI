@@ -46,7 +46,7 @@ import threading
 import time
 import zipfile
 
-from . import paths
+from . import checkpoints, paths
 from .constants import normalize_seed
 
 log = logging.getLogger(__name__)
@@ -472,7 +472,7 @@ def _scalar(value) -> bool:
 
 
 def _plain(settings) -> dict:
-    """The settings that can be written down: text, numbers, switches, and lists of plain rows.
+    """Writable settings, adapter rows and the resolved checkpoint's plain JSON record.
 
     The rows are the adapters a song was sung with (``lora.node``), each a
     name, a file, its SHA-256 and two strengths, so that an edit of the song
@@ -482,6 +482,11 @@ def _plain(settings) -> dict:
     for name, value in dict(settings or {}).items():
         if _scalar(value):
             kept[str(name)] = value
+        elif name == checkpoints.SOURCE and isinstance(value, dict):
+            try:
+                kept[str(name)] = json.loads(json.dumps(value, allow_nan=False))
+            except (TypeError, ValueError):
+                continue
         elif isinstance(value, (list, tuple)) and all(
                 isinstance(row, dict) and all(_scalar(item) for item in row.values())
                 for row in value):

@@ -260,6 +260,7 @@ DEFAULT_OPTIONS = {
     "transpose": 0,
     "vocals_only": False,
     "low_vram": False,
+    "checkpoint": "auto",
 }
 
 TRANSPOSE_LIMIT = 12

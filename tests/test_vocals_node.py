@@ -126,7 +126,7 @@ def test_the_song_node_separates_only_when_the_switch_is_on(monkeypatch, switch)
     stub_song(monkeypatch)
     out = nodes.YuE2GenerateSong().generate(style="a style", lyrics="words", seed=1,
                                             options=dict(constants.DEFAULT_OPTIONS, vocals_only=switch))
-    audio, score = out["result"]
+    audio, score, info = out["result"]
     assert score == "X:1"
     assert audio["sample_rate"] == constants.SAMPLE_RATE
     assert audio["waveform"].name == ("voice of song" if switch else "song")
@@ -159,7 +159,7 @@ def test_the_render_node_separates_only_when_the_switch_is_on(monkeypatch, switc
     stub_staged(monkeypatch)
     plan = {"style": "s", "lyrics": "l", "seed": 5, "score": "X:1\nK:C\nCDEF|\n", "ids": [1, 2],
             "settings": dict(constants.DEFAULT_OPTIONS)}
-    audio, latents = staged.YuE2RenderPlan().render(plan, options={"vocals_only": switch})
+    audio, latents, info = staged.YuE2RenderPlan().render(plan, options={"vocals_only": switch})
     assert audio["waveform"].name == ("voice of song" if switch else "song")
     assert latents["settings"]["vocals_only"] is switch
     assert len(calls["separate"]) == (1 if switch else 0)
@@ -169,9 +169,9 @@ def test_the_decode_node_follows_the_switch_the_render_node_ran_with(monkeypatch
     calls = stub_separation(monkeypatch)
     latents_class = stub_staged(monkeypatch)
     latents = {"latents": latents_class(), "settings": dict(constants.DEFAULT_OPTIONS, vocals_only=True)}
-    audio, = staged.YuE2DecodeLatents().decode(latents)
+    audio, info = staged.YuE2DecodeLatents().decode(latents)
     assert audio["waveform"].name == "voice of song"
-    audio, = staged.YuE2DecodeLatents().decode(latents, options={"vocals_only": False})
+    audio, info = staged.YuE2DecodeLatents().decode(latents, options={"vocals_only": False})
     assert audio["waveform"].name == "song"
     assert len(calls["separate"]) == 1
 

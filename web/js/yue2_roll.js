@@ -892,6 +892,21 @@ export function pitchSpan(model) {
     return { low: Math.max(LOWEST, low - 5), high: Math.min(HIGHEST, high + 5) };
 }
 
+export function metronomeEvents(sheet, fromTick = 0) {
+    const out = [];
+    for (const bar of sheet.bars) {
+        const [numerator, denominator] = String(bar.meter).split("/").map(Number);
+        if (!(numerator > 0 && denominator > 0)) continue;
+        const beat = sheet.per_quarter * 4 / denominator;
+        for (let index = 0; index < numerator; index++) {
+            const at = bar.start + index * beat;
+            if (at < fromTick || at >= bar.start + bar.length) continue;
+            out.push({ at: secondsAt(sheet, at - fromTick), accent: index === 0 });
+        }
+    }
+    return out;
+}
+
 export function events(sheet, model, fromTick, parts = { Vocal: true, Ins: true, chords: true }) {
     const tick = 60 / (sheet.bpm * sheet.per_quarter);
     const out = [];

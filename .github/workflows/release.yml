@@ -98,6 +98,7 @@ jobs:
                         CHANGELOG.md CHANGELOG_RU.md \
                         locales/ru/main.json locales/ru/nodeDefs.json \
                         yue2_comfy/nodes.py yue2_comfy/constants.py \
+                        yue2_comfy/checkpoints.py yue2_comfy/generation_info.py \
                         yue2_comfy/generate.py yue2_comfy/loader.py \
                         yue2_comfy/download.py yue2_comfy/llm.py \
                         yue2_comfy/catalog.py yue2_comfy/writers.json yue2_comfy/model_list.py \
@@ -150,7 +151,8 @@ jobs:
                         web/js/vendor/abcjs-LICENSE.md \
                         yue2_comfy/vendor/yue2/protocol.py \
                         yue2_comfy/vendor/yue2_music/abc_tools.py \
-                        tests/data/model_scores.json; do
+                        tests/data/model_scores.json \
+                        docs/generation_info.png docs/node_options.png docs/piano_roll.png; do
             echo "$listed" | grep -qxF "$PREFIX/$needed" || {
               echo "::error::$needed is missing from $ARCHIVE"
               exit 1

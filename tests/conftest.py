@@ -25,6 +25,14 @@ if PACKAGE not in sys.modules:
 
 
 @pytest.fixture(autouse=True)
+def checkpoint_picker_of_the_test_alone(monkeypatch):
+    """Node schema checks never scan the developer's real checkpoint folders."""
+    from yue2_comfy import checkpoints
+
+    monkeypatch.setattr(checkpoints, "roots", lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def songs_held_in_memory(monkeypatch):
     """Every test starts with an empty song memory that never touches the disk.
 

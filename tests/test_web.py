@@ -614,6 +614,27 @@ def run_roll(script: str):
     return json.loads(done.stdout)
 
 
+@needs_node
+def test_metronome_follows_meter_tempo_and_a_start_inside_the_bar():
+    result = run_roll("""
+        const sheet = { bpm: 120, per_quarter: 4, bars: [
+            {start: 0, length: 12, meter: "3/4"},
+            {start: 12, length: 12, meter: "6/8"},
+            {start: 24, length: 16, meter: "4/4"},
+        ]};
+        console.log(JSON.stringify([
+            r.metronomeEvents(sheet, 5),
+            r.metronomeEvents({...sheet, bpm: 60}, 5),
+        ]));
+    """)
+    fast, slow = result
+    assert fast[0] == {"at": 0.375, "accent": False}
+    assert fast[1] == {"at": 0.875, "accent": True}
+    assert len(fast) == 11
+    assert sum(event["accent"] for event in fast) == 2
+    assert [event["at"] for event in slow] == [2 * event["at"] for event in fast]
+
+
 def test_the_section_names_offered_are_the_ones_the_model_writes():
     """A name the editor suggests and the transcriber never writes would be an invention."""
     from yue2_comfy.sheetsage import vocab

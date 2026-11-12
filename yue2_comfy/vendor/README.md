@@ -48,6 +48,18 @@ is never called.
 
 `yue2_music/__init__.py` is this pack's own and only makes the folder a package.
 
+## vae_rs/
+
+`vae_rs/yue2_vae_rs.py`, LICENSE and NOTICE are copied verbatim from
+`goldhub/YuE2-RS-Finetunes`, revision
+`51df2593317e9b132161f3e5a5c7fa62674c22ce`, `VAE-RS/kit/` on Hugging Face.
+The module's SHA256 is
+`b7fd8baeddbe1f8c5dd9940cc071d9e4dd4a0f137ef695cb8f301396ecfb21a1`.
+Copyright 2026 Ruach Studio and Viktor Zhuromskyy; Apache-2.0.
+Only the explicitly selected VAE-RS variants import it.
+The two MIT notices in `vae_rs/licenses/` are copied from
+`m-a-p/YuE2-Vae/licenses/`.
+
 ## The ASCII rule does not apply here
 
 This project's own source is ASCII only. `modeling_yue2.py` contains 833

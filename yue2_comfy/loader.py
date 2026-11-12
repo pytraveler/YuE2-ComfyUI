@@ -25,7 +25,7 @@ import threading
 from typing import NamedTuple
 
 from . import devices, paths, placement
-from .constants import LM_REPO, MERGES_BYTES, install_command
+from .constants import LM_REPO, MERGES_BYTES, VAE_RS_VARIANTS, install_command
 from .discovery import Files, locate  # noqa: F401
 
 log = logging.getLogger(__name__)
@@ -216,6 +216,9 @@ def load_repack(path: str, device, variant: str = "standard", progress=None,
     217 tensors of the same shapes, and the strict load would take it under the
     legacy name without a word -- all 217 differ in value, measured 2026-09-18.
     """
+    if variant in VAE_RS_VARIANTS and not decoder_path:
+        raise ValueError("The repack does not contain the selected VAE-RS decoder. "
+                         "Enable downloads in YuE2 Options or install that decoder separately.")
     if variant == "legacy" and not decoder_path:
         raise ValueError(
             "Comfy-Org's repack carries only the standard decoder, and this run asked "
@@ -301,6 +304,10 @@ def load_vae(weights_path: str, variant: str = "standard"):
     stage, which is half a gigabyte and about a tenth of a second each way --
     cheaper than holding it on the card while the LM is generating.
     """
+    if variant in VAE_RS_VARIANTS:
+        from . import vae_rs
+
+        return vae_rs.load(weights_path, variant)
     from .vendor.yue2.modeling_vae import YuE2VAE, YuE2VAEConfig
 
     settings = _config_dict(weights_path)

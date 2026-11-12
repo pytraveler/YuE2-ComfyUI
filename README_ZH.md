@@ -1268,6 +1268,8 @@ CC BY-NC 4.0）：它写出一份没有人声音符的乐谱，然后把它演�
   `off` 是 1.01。
 - `max_seconds` —— 长度上限。`0` 表示根据歌词推算。见[歌曲长度](#歌曲长度)。
 - `vae` —— `standard` 用来听，`legacy` 用来复现已发表的基准测试数字。
+  `rs_x3_v1` 和 `rs_x3_v2` 是 Ruach Studio 为同一组演唱潜变量提供的可选
+  FP32 解码器，每个需下载 803 MB。
 - `device`、`keep_model_loaded` —— 模型在哪儿跑，以及两次运行之间是否常驻。
 - `attention_backend` —— 写乐谱和演唱时用的注意力内核。默认的 `sdpa` 是 torch
   自带的；`fast` 把注意力拆开，交给 torch 的高效（efficient）内核去算，不用装任何
@@ -1492,6 +1494,15 @@ INT8 检查点只在量化误差的范围内算是同一个模型，所以只有
 | `YuE2-Vae/model.safetensors` | 0.49 GB | [m-a-p/YuE2-Vae](https://huggingface.co/m-a-p/YuE2-Vae) |
 | `YuE2-Vae-legacy/model.safetensors` | 0.49 GB | [m-a-p/YuE2-Vae-legacy](https://huggingface.co/m-a-p/YuE2-Vae-legacy) |
 | `YuE2-3B/qwen.tiktoken` | 2.4 MB | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) |
+
+在 `YuE2 Options` 的 `vae` 中选择 VAE-RS，与 `checkpoint` 分开设置。
+`YuE2-VAE-RS-x3_v1.safetensors` 和 `YuE2-VAE-RS-x3_v2.safetensors`
+由 [Ruach Studio 和 Viktor Zhuromskyy](https://huggingface.co/goldhub/YuE2-RS-Finetunes/tree/main/VAE-RS)
+发布。只有选中时才会下载，保存到 `ComfyUI/models/YuE2/VAE-RS/`。
+若 `download` 为 `off`，请手动放入该目录或已配置的 `models/vae` 文件夹。
+每个文件 803 MB，权重许可为 CC BY-NC 4.0。解码始终使用 FP32 并关闭 TF32；
+`low_vram` 通过缩小分块节省显存。用 `YuE2 Decode Latents` 可以比较同一次演唱的
+不同解码结果，无需重新生成演唱。默认值仍是 `standard`。
 
 `YuE2 Write Song` 有自己的模型，取法相同，而且只在机器上一个 GGUF 都没有时才去取：
 

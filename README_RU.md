@@ -1567,7 +1567,8 @@ CC BY-NC 4.0): он пишет партитуру без нот для голо�
 - `max_seconds` -- потолок длины. `0` -- посчитать по тексту. См.
   [Длина песни](#длина-песни).
 - `vae` -- `standard` для прослушивания, `legacy` для воспроизведения
-  опубликованных чисел бенчмарка.
+  опубликованных чисел бенчмарка. `rs_x3_v1` и `rs_x3_v2` -- дополнительные
+  FP32-декодеры Ruach Studio для того же исполнения, каждый на 803 МБ.
 - `device`, `keep_model_loaded` -- где считать и оставлять ли модель
   резидентной между прогонами.
 - `attention_backend` -- ядро внимания, на котором пишется партитура и поётся
@@ -1837,6 +1838,17 @@ Legacy-декодер -- единственный файл, которого Com
 | `YuE2-Vae/model.safetensors` | 0.49 ГБ | [m-a-p/YuE2-Vae](https://huggingface.co/m-a-p/YuE2-Vae) |
 | `YuE2-Vae-legacy/model.safetensors` | 0.49 ГБ | [m-a-p/YuE2-Vae-legacy](https://huggingface.co/m-a-p/YuE2-Vae-legacy) |
 | `YuE2-3B/qwen.tiktoken` | 2.4 МБ | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) |
+
+VAE-RS выбирается в поле `vae` ноды `YuE2 Options`, независимо от `checkpoint`.
+Файлы `YuE2-VAE-RS-x3_v1.safetensors` и `YuE2-VAE-RS-x3_v2.safetensors`
+опубликованы [Ruach Studio и Viktor Zhuromskyy](https://huggingface.co/goldhub/YuE2-RS-Finetunes/tree/main/VAE-RS).
+При выборе декодера недостающий файл скачивается в
+`ComfyUI/models/YuE2/VAE-RS/`. Если `download` выключен, положите файл туда
+или в настроенную папку `models/vae`. Каждый занимает 803 МБ; лицензия --
+CC BY-NC 4.0. Декодирование идёт в FP32 с выключенным TF32, в том числе
+при `low_vram`: этот режим уменьшает размер плиток.
+Через `YuE2 Decode Latents` можно сравнить декодеры, не генерируя исполнение
+заново. По умолчанию остаётся `standard`.
 
 У `YuE2 Write Song` своя модель -- качается так же и только если на машине нет
 ни одного GGUF:

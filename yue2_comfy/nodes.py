@@ -127,7 +127,10 @@ VAE_TOOLTIP = (
     "'standard' is the one released for listening. 'legacy' is the decoder the "
     "published benchmark numbers were measured with; use it only to reproduce those. "
     "They are different weights of the same size, and the same latents decoded by "
-    "each will not sound identical."
+    "each will not sound identical.\n\n"
+    "'rs_x3_v1' and 'rs_x3_v2' select Ruach Studio's optional FP32 decoders of "
+    "the same latents. Each needs a separate 803 MB file. Missing files are "
+    "downloaded only when downloads are enabled."
 )
 
 KEEP_TOOLTIP = (

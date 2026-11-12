@@ -631,6 +631,9 @@ class YuE2DecodeLatents:
         audio = {"waveform": waveform, "sample_rate": SAMPLE_RATE}
         sung["vae"] = settings["vae"]
         sung["vocals_only"] = settings["vocals_only"]
+        if settings.get(checkpoints.SOURCE):
+            sung[checkpoints.SOURCE] = checkpoints.decoded_source(
+                sung.get(checkpoints.SOURCE), settings[checkpoints.SOURCE], settings["vae"])
         songs.keep(audio, "YuE2 Decode Latents", latents.get("style"), latents.get("lyrics"),
                    latents.get("seed"), sung, latents.get("score"), latents.get("performance"))
 

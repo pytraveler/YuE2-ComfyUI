@@ -47,7 +47,7 @@ from .constants import (
     LM_BYTES, LM_DIRNAME, MERGES_BYTES, MERGES_NAME, REPACK_BF16_BYTES,
     REPACK_BF16_NAME, REPACK_INT8_BYTES, REPACK_INT8_NAME, REPACK_REPO,
     SHEETSAGE_BYTES, SHEETSAGE_MARKERS, SHEETSAGE_NAME, SHEETSAGE_PATH,
-    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, VAE_SIGNATURE, VOCALS_BYTES,
+    VAE_BYTES, VAE_DIRNAME, VAE_LEGACY_DIRNAME, VAE_MARKERS, VAE_RS_VARIANTS, VAE_SIGNATURE, VOCALS_BYTES,
     VOCALS_KNOWN_BYTES, VOCALS_MARKERS, VOCALS_NAME, VOCALS_REPO, VOCALS_REVISION, WEIGHTS_NAME,
     WHISPER_BYTES, WHISPER_DIRNAME, WHISPER_FILES, WHISPER_GENERATION_NAME, WHISPER_REPO, WHISPER_TOKENIZER_NAME,
 )
@@ -232,6 +232,10 @@ def _first_file(home: str, name: str) -> str:
 
 def _layout_pass(roots: list, variant: str) -> dict:
     """What the published folder names give us, for three isfile calls apiece."""
+    if variant in VAE_RS_VARIANTS:
+        from . import vae_rs
+
+        return vae_rs.layout(roots, variant)
     want_vae = "legacy" if variant == "legacy" else "standard"
     found = {"lm": "", "vae": "", "merges": ""}
     for root in roots:
@@ -253,6 +257,11 @@ def _layout_pass(roots: list, variant: str) -> dict:
 
 def _sweep(roots: list, want: dict, variant: str) -> None:
     """Fill whatever the layout pass missed, by looking inside the files."""
+    if variant in VAE_RS_VARIANTS:
+        from . import vae_rs
+
+        vae_rs.sweep(roots, want, variant)
+        return
     want_vae = "legacy" if variant == "legacy" else "standard"
     for root in roots:
         if all(want.values()):
@@ -353,6 +362,10 @@ def locate(variant: str = "standard", quantization: str = "bf16") -> Files:
     a different model to within its quantization, and the legacy decoder is the
     one people use to reproduce the paper's numbers.
     """
+    if variant in VAE_RS_VARIANTS:
+        from . import vae_rs
+
+        return vae_rs.locate(variant, quantization)
     roots = paths.search_roots()
     if quantization == "int8" and variant != "legacy":
         candidate = find_repack(roots, "int8")

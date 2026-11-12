@@ -1576,7 +1576,8 @@ when this node is not on the graph at all.
 - `max_seconds` -- the length ceiling. `0` works it out from the lyrics. See
   [Song length](#song-length).
 - `vae` -- `standard` for listening, `legacy` to reproduce published benchmark
-  numbers.
+  numbers. `rs_x3_v1` and `rs_x3_v2` select Ruach Studio's optional FP32
+  decoders for the same performance, each with a separate 803 MB download.
 - `device`, `keep_model_loaded` -- where the model runs and whether it stays
   resident between runs.
 - `attention_backend` -- the attention kernel for writing the score and
@@ -1849,6 +1850,17 @@ decoder, not the checkpoint.
 | `YuE2-Vae/model.safetensors` | 0.49 GB | [m-a-p/YuE2-Vae](https://huggingface.co/m-a-p/YuE2-Vae) |
 | `YuE2-Vae-legacy/model.safetensors` | 0.49 GB | [m-a-p/YuE2-Vae-legacy](https://huggingface.co/m-a-p/YuE2-Vae-legacy) |
 | `YuE2-3B/qwen.tiktoken` | 2.4 MB | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) |
+
+VAE-RS is selected in `YuE2 Options` under `vae`, independently of `checkpoint`.
+The two files are `YuE2-VAE-RS-x3_v1.safetensors` and
+`YuE2-VAE-RS-x3_v2.safetensors`, published by
+[Ruach Studio and Viktor Zhuromskyy](https://huggingface.co/goldhub/YuE2-RS-Finetunes/tree/main/VAE-RS).
+They are downloaded into `ComfyUI/models/YuE2/VAE-RS/` only when selected;
+with `download` at `off`, place the file there or in a configured `models/vae`
+folder. Each is 803 MB and licensed CC BY-NC 4.0. The decoder runs in FP32
+with TF32 off, including in `low_vram`; that switch reduces tile size.
+Use `YuE2 Decode Latents` to compare decoders without singing the song again.
+`standard` remains the default.
 
 `YuE2 Write Song` has a model of its own, fetched the same way and only when
 the machine has no GGUF at all:

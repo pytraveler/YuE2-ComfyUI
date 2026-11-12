@@ -99,6 +99,10 @@ jobs:
                         locales/ru/main.json locales/ru/nodeDefs.json \
                         yue2_comfy/nodes.py yue2_comfy/constants.py \
                         yue2_comfy/checkpoints.py yue2_comfy/generation_info.py \
+                        yue2_comfy/vae_rs.py yue2_comfy/vendor/vae_rs/yue2_vae_rs.py \
+                        yue2_comfy/vendor/vae_rs/LICENSE yue2_comfy/vendor/vae_rs/NOTICE \
+                        yue2_comfy/vendor/vae_rs/licenses/SnakeBeta-NVIDIA-MIT.txt \
+                        yue2_comfy/vendor/vae_rs/licenses/stable-audio-tools-MIT.txt \
                         yue2_comfy/generate.py yue2_comfy/loader.py \
                         yue2_comfy/download.py yue2_comfy/llm.py \
                         yue2_comfy/catalog.py yue2_comfy/writers.json yue2_comfy/model_list.py \

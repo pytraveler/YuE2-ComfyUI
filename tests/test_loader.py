@@ -240,7 +240,8 @@ def test_a_rewritten_decoder_beside_a_repack_is_loaded_again(tmp_path):
     assert loader._cache_key(files, "cpu", "legacy") != before
 
 
-def test_the_repack_takes_its_decoder_from_the_file_beside_it(tmp_path, monkeypatch):
+@pytest.mark.parametrize("variant", ["legacy", "rs_x3_v1", "rs_x3_v2"])
+def test_the_repack_takes_its_decoder_from_the_file_beside_it(tmp_path, monkeypatch, variant):
     """With a decoder path, load_vae builds it and the repack's own decoder is never built."""
     pytest.importorskip("torch")
     from yue2_comfy import repack
@@ -257,11 +258,12 @@ def test_the_repack_takes_its_decoder_from_the_file_beside_it(tmp_path, monkeypa
     monkeypatch.setattr(repack, "merges_for", lambda path: "merges")
     monkeypatch.setattr(loader, "load_tokenizer", lambda path: "tokenizer")
 
-    result = loader.load_repack(str(tmp_path / "r.safetensors"), "cpu", "legacy",
-                                decoder_path="legacy.safetensors")
+    decoder_path = variant + ".safetensors"
+    result = loader.load_repack(str(tmp_path / "r.safetensors"), "cpu", variant,
+                                decoder_path=decoder_path)
 
     assert result == ("lm", "vae", "tokenizer")
-    assert calls == [("lm", True), ("vae", "legacy.safetensors", "legacy")]
+    assert calls == [("lm", True), ("vae", decoder_path, variant)]
 
 
 def test_acquire_hands_the_decoder_beside_a_repack_to_the_loader(tmp_path, monkeypatch):

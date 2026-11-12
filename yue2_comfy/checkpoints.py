@@ -137,7 +137,7 @@ def selected(settings: dict, progress=None):
     if kind not in KINDS:
         raise ValueError("The selected file is not a supported YuE2 checkpoint: " + os.path.basename(path))
     variant = settings.get("vae", "standard")
-    if kind != "lm" and variant != "legacy":
+    if kind != "lm" and variant == "standard":
         return discovery.Files(repack=path)
     roots = paths.search_roots()
     found = discovery._layout_pass(roots, variant)
@@ -175,3 +175,21 @@ def overlay(settings: dict, options) -> None:
     settings.update(options)
     if options.get("checkpoint", "auto") == "auto" and settings.get(SOURCE):
         settings["checkpoint"] = choice
+
+
+def decoded_source(original: dict, resolved: dict, variant: str) -> dict:
+    """Remember a new external decoder beside the backbone that sang the song."""
+    old_files = (original or {}).get("files") or {}
+    new_files = resolved.get("files") or {}
+    if not (old_files.get("lm") or old_files.get("repack")):
+        return dict(resolved)
+    if new_files.get("vae"):
+        source = dict(original)
+        source["files"] = dict(old_files, vae=new_files["vae"])
+        source["stamps"] = dict(original.get("stamps") or {},
+                                vae=(resolved.get("stamps") or {}).get("vae"))
+        source["vae_variant"] = variant
+        return source
+    if any(old_files.get(key) != new_files.get(key) for key in ("lm", "repack", "merges")):
+        return dict(original)
+    return dict(resolved)

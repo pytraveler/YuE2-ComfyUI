@@ -336,6 +336,33 @@ def test_decode_info_keeps_the_performances_steps_and_sampling(monkeypatch):
     assert data["settings"]["vae"] == "legacy"
 
 
+def test_decoding_through_another_vae_remembers_the_resolved_decoder(monkeypatch):
+    """The next edit must pin the decoder just used, rather than the original one."""
+    stub_singing(monkeypatch)
+    kept = []
+    monkeypatch.setattr(songs, "keep", lambda *args: kept.append(args))
+    source = {"name": "fine.safetensors", "vae_variant": "rs_x3_v1",
+              "files": {"lm": "fine.safetensors", "vae": "new-rs.safetensors"},
+              "stamps": {"vae": [803071224, 12]}}
+
+    @contextlib.contextmanager
+    def resolved(settings, *args, **kwargs):
+        settings["checkpoint_source"] = dict(source)
+        yield FakeModels()
+
+    monkeypatch.setattr(staged, "session", resolved)
+    original = dict(constants.DEFAULT_OPTIONS, ode_steps=16, checkpoint_source={
+        "name": "fine.safetensors", "vae_variant": "standard",
+        "files": {"lm": "fine.safetensors", "vae": "old.safetensors"}})
+    staged.YuE2DecodeLatents().decode(
+        {"latents": FakeLatents(), "settings": original, "seed": 5},
+        options=dict(constants.DEFAULT_OPTIONS, vae="rs_x3_v1", ode_steps=64))
+    saved = kept[0][5]
+    assert saved["checkpoint_source"] == source
+    assert saved["ode_steps"] == 16
+    assert original["checkpoint_source"]["vae_variant"] == "standard"
+
+
 def test_latents_from_before_the_song_memory_are_decoded_and_not_remembered(monkeypatch):
     """A link cached by an older version carries no performance, and keep is told None."""
     kept = []

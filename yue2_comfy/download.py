@@ -761,6 +761,17 @@ def fetch_decoder(variant: str, progress=None) -> None:
     On its own is what a legacy run needs on a machine that has the backbone
     already, in either shape: see ``ensure``.
     """
+    from .constants import VAE_RS_BYTES, VAE_RS_REPO, VAE_RS_REVISION, VAE_RS_VARIANTS
+
+    if variant in VAE_RS_VARIANTS:
+        from . import vae_rs
+
+        wanted = vae_rs.wanted(variant)
+        fetch(VAE_RS_REPO, wanted,
+              "Downloading the {} decoder ({})".format(variant, human_size(VAE_RS_BYTES)),
+              progress, revision=VAE_RS_REVISION)
+        vae_rs.check_download(next(iter(wanted.values())), variant, lambda: bool(_interrupted()))
+        return
     legacy = variant == "legacy"
     vae_dir = os.path.join(paths.models_root(), VAE_LEGACY_DIRNAME if legacy else VAE_DIRNAME)
     fetch(VAE_LEGACY_REPO if legacy else VAE_REPO,
@@ -892,6 +903,7 @@ def ensure(settings: dict, progress=None):
     the search already found somewhere else is not fetched a second time.
     """
     from . import checkpoints, discovery
+    from .constants import VAE_RS_VARIANTS
 
     explicit = checkpoints.selected(settings, progress)
     if explicit is not None:
@@ -910,13 +922,14 @@ def ensure(settings: dict, progress=None):
                 "and the node will fetch {} itself.".format(
                     "it" if backbone else "them")) from absent
 
-    if backbone and (variant == "legacy" or settings.get("download", "auto") != "comfy-org"):
+    external = variant == "legacy" or variant in VAE_RS_VARIANTS
+    if backbone and (external or settings.get("download", "auto") != "comfy-org"):
         fetch_decoder(variant, progress)
     elif source == "original":
         fetch_original(variant, progress)
     else:
         fetch_repack(quantization, progress)
-        if variant == "legacy" and not decoder:
+        if external and not decoder:
             fetch_decoder(variant, progress)
     if progress is not None:
         progress.text("Download finished")

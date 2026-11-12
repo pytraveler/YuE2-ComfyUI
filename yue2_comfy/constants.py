@@ -51,6 +51,16 @@ AUTO_WORDS_PER_LINE = 8
 LM_REPO = "m-a-p/YuE2-3B"
 VAE_REPO = "m-a-p/YuE2-Vae"
 VAE_LEGACY_REPO = "m-a-p/YuE2-Vae-legacy"
+VAE_RS_REPO = "goldhub/YuE2-RS-Finetunes"
+VAE_RS_REVISION = "51df2593317e9b132161f3e5a5c7fa62674c22ce"
+VAE_RS_DIRNAME = "VAE-RS"
+VAE_RS_BYTES = 803071224
+VAE_RS_VARIANTS = {
+    "rs_x3_v1": ("YuE2-VAE-RS-x3_v1.safetensors", "161953",
+                 "a88c8da0d0913115953196b01aaf770ea128ab224bde090a8f34ee46db3bb039"),
+    "rs_x3_v2": ("YuE2-VAE-RS-x3_v2.safetensors", "155030",
+                 "114da484c564a265a694f019d0715cde2f87da88815a054f72ce77c5250f1a0c"),
+}
 REPACK_REPO = "Comfy-Org/YuE2"
 WRITER_REPO = "unsloth/Qwen3.5-4B-GGUF"
 
@@ -171,7 +181,7 @@ LM_ALLOW = (WEIGHTS_NAME, MERGES_NAME, CONFIG_NAME, MANIFEST_NAME)
 VAE_ALLOW = (WEIGHTS_NAME, CONFIG_NAME, MANIFEST_NAME)
 
 COT_CHOICES = ("full", "melody", "off")
-VAE_CHOICES = ("standard", "legacy")
+VAE_CHOICES = ("standard", "legacy", *VAE_RS_VARIANTS)
 ATTENTION_CHOICES = ("sdpa", "fast", "flash")
 LEGACY_ATTENTION = {"cudnn": "fast"}
 """Attention choices this pack once offered, and what a workflow or a song that still names one gets.

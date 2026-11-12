@@ -63,6 +63,19 @@ SnakeBeta (Copyright (c) 2022 NVIDIA CORPORATION, MIT). Those notices travel
 with the model repository and are reproduced in the upstream
 `THIRD_PARTY_NOTICES.md`.
 
+## Vendored VAE-RS code
+
+`yue2_comfy/vendor/vae_rs/yue2_vae_rs.py` is carried verbatim from
+[goldhub/YuE2-RS-Finetunes](https://huggingface.co/goldhub/YuE2-RS-Finetunes),
+revision `51df2593317e9b132161f3e5a5c7fa62674c22ce`, `VAE-RS/kit/`.
+Copyright 2026 Ruach Studio and Viktor Zhuromskyy. The code is Apache-2.0;
+its LICENSE and NOTICE are included beside it. SnakeBeta and Oobleck follow
+stable-audio-tools (Stability AI, MIT) and BigVGAN (NVIDIA, MIT), whose notices
+are included in `yue2_comfy/vendor/vae_rs/licenses/`.
+
+The optional VAE-RS x3 v1 and v2 weights are adaptations of YuE2-Vae under
+CC BY-NC 4.0. They are downloaded separately and are not redistributed here.
+
 ## The example style lines
 
 **No licence.** YuE2's demo site carries none, as its reference code does not.

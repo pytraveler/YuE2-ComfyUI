@@ -7,6 +7,35 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.16.0 - 2026-11-12
+
+### Added
+
+- **YuE2-VAE-RS x3 v1 and v2**, from Ruach Studio and Viktor Zhuromskyy
+  ([#16](https://github.com/pytraveler/YuE2-ComfyUI/issues/16)). Select
+  `rs_x3_v1` or `rs_x3_v2` in the existing `vae` field of `YuE2 Options`,
+  independently of `checkpoint`. `YuE2 Decode Latents` lets you compare
+  decoders on one performance without singing it again.
+- Each optional decoder is an 803 MB FP32 file. Local copies are found in
+  configured model folders; missing files are downloaded only when allowed,
+  from a pinned revision and checked against the published SHA-256.
+
+### Fixed
+
+- After switching VAE in `YuE2 Decode Latents`, a saved song now remembers
+  the decoder actually used for later edits. It keeps the original singing
+  settings and backbone.
+
+### Compatibility
+
+- `standard` remains the default. Existing widget positions and output
+  connections are preserved. RS x3 uses a separate adapter with a 60-frame
+  decode context, FP32 and TF32 off; `low_vram` reduces the tile size.
+- On an RTX 5090 with ComfyUI 0.45.2, 24 GPU regression cases and three
+  complete generations through `standard`, `legacy` and `low_vram` matched
+  the previous version bit for bit. Both RS decoders passed the publisher's
+  reference checks, including tile seams.
+
 ## 0.15.0 - 2026-11-01
 
 ### Added

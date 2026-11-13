@@ -7,6 +7,7 @@ import { openSongs } from "./yue2_songs.js";
 import { openScoreFor } from "./yue2_score.js";
 import * as roll from "./yue2_roll.js";
 import { parseLyrics } from "./yue2_sheet.js";
+import { loraEditor } from "./yue2_lora.js";
 
 const NODE = "YuE2EditTrack";
 const EDITS = "edits";
@@ -1181,6 +1182,7 @@ class TrackWindow {
     }
 
     closed() {
+        this.styleLoras?.dispose();
         this.isClosed = true;
         this.dropSound();
         this.observer?.disconnect();
@@ -1954,6 +1956,8 @@ class TrackWindow {
     }
 
     paintWords() {
+        this.styleLoras?.dispose();
+        this.styleLoras = null;
         this.words.replaceChildren();
         this.blocks = [];
         this.paired = [];
@@ -2529,6 +2533,26 @@ class TrackWindow {
             [[0, "Voice where it is"], [-1, "An octave down"], [1, "An octave up"]],
             this.restyling.octave, (value) => { this.restyling.octave = Number(value); });
         box.appendChild(row);
+        const adapters = element("div", "yue2-t-wordrow");
+        adapters.appendChild(element("span", "yue2-t-dim", "LoRA"));
+        const ownRows = loraEditor(this.restyling.loras, (rows) => {
+            if (!this.restyling) return;
+            this.restyling.loras = rows;
+            this.paintStyleFact();
+        });
+        this.styleLoras = ownRows;
+        ownRows.element.hidden = this.restyling.loraMode !== "custom";
+        if (this.restyling.loraMode === "custom") ownRows.refresh();
+        this.styleChoice(adapters, "LoRAs for this edit",
+            [["inherit", "As in the original song"], ["custom", "Choose for this edit"],
+                ["none", "Without LoRA"]], this.restyling.loraMode, (value) => {
+                this.restyling.loraMode = value;
+                ownRows.element.hidden = value !== "custom";
+                if (value === "custom") ownRows.refresh();
+            });
+        box.append(adapters, ownRows.element);
+        box.appendChild(element("div", "yue2-t-dim",
+            "Only this edit. Put any LoRA trigger words into the style above."));
         const others = list.sameSections(this.grid(), this.restyling.selection);
         if (others.length) {
             const named = list.sectionStretch(this.grid(), this.restyling.selection).name;
@@ -2571,7 +2595,9 @@ class TrackWindow {
         const also = this.restyling.also ? list.sameSections(this.grid(), chosen) : [];
         return list.restyleFor(chosen, also, this.restyling.style, this.restyling.melody,
             this.restyling.octave, nodeTakes(this.node), this.knobs.seed,
-            { vary: this.knobs.vary, guide: this.knobs.guide });
+            { vary: this.knobs.vary, guide: this.knobs.guide,
+                loras: this.restyling.loraMode === "none" ? []
+                    : this.restyling.loraMode === "custom" ? this.restyling.loras : null });
     }
 
     paintStyleFact() {
@@ -2580,7 +2606,8 @@ class TrackWindow {
         const edit = this.styledEdit();
         const whole = list.wholeSections(this.grid(), edit.bars[0], edit.bars[1]);
         this.styleWhy.appendChild(document.createTextNode(
-            [this.restyleFact(edit, false), edit.melody === "new" && !whole ? NEW_WHOLE : STYLE_HOW]
+            [this.restyleFact(edit, false), list.adapterText(edit) + ".",
+                edit.melody === "new" && !whole ? NEW_WHOLE : STYLE_HOW]
                 .filter(Boolean).join(" ")));
         this.styleWhy.appendChild(element("div", "yue2-t-wordknobs", WORDS_KNOBS));
     }
@@ -2621,7 +2648,10 @@ class TrackWindow {
         this.restyling = { selection: { ...this.selection },
                            style: kept ? kept.style : String(this.payload?.style || ""),
                            melody: kept ? kept.melody : "same",
-                           octave: kept ? kept.octave : 0, also: kept ? kept.also : true };
+                           octave: kept ? kept.octave : 0, also: kept ? kept.also : true,
+                           loraMode: kept ? kept.loraMode : "inherit",
+                           loras: (kept ? kept.loras : this.payload?.loras || [])
+                               .map((entry) => ({ ...entry })) };
         this.paintWords();
         this.paintKnobs();
         this.draw();
@@ -3839,6 +3869,8 @@ const STYLE = `
     padding: 6px 10px; border: 1px solid var(--border-color, #4e4e4e); }
 .yue2-t-wordhead { font-size: 12px; font-weight: 600; color: var(--input-text, #ddd);
     margin-bottom: 4px; }
+.yue2-t-words:has(.yue2-lora-inline:not([hidden])) {
+    flex-basis: 400px; flex-shrink: 0; min-width: 360px; }
 .yue2-t-tag { color: #9CC4E0; margin-top: 6px; border-left: 2px solid transparent;
     padding-left: 4px; border-radius: 3px; }
 .yue2-t-word { overflow-wrap: anywhere; border-left: 2px solid transparent; padding-left: 4px;

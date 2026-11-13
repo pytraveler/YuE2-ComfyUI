@@ -1343,6 +1343,11 @@ same rule the node uses.*
   new style, from its start to a little past the selection, and its bars are
   laid into the song with the bar before each seam sung again, as a move does.
   A take costs about as long as singing the song that far.
+  - **LoRA** defaults to `As in the original song`. `Choose for this edit`
+    opens the same file picker and AR/NAR strengths as `YuE2 LoRA`;
+    `Without LoRA` sings this edit without adapters. The choice belongs to
+    this edit and is saved with the workflow. Put any trigger words into
+    the style yourself. Other edits keep the original song's adapters.
   - `Same notes` keeps the song's tune and takes any bars. `New melody` has
     the model write a tune for the new style, on from the bars before the
     selection -- a rapper's recitative, say -- and takes whole sections that

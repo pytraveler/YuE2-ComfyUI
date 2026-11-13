@@ -18,7 +18,8 @@ from .constants import (
     ATTENTION_CHOICES, CATEGORY, COT_CHOICES, DEFAULT_IDEA, DEFAULT_LYRICS,
     DEFAULT_OPTIONS, DEFAULT_STYLE, DOWNLOAD_CHOICES, LANGUAGE_CHOICES, LEGACY_ATTENTION,
     LORA_INPUT_TOOLTIP, LORA_TYPE, LYRICS_TOOLTIP, MAX_SECONDS, OFFLOAD_CHOICES, OPTIONS_TYPE,
-    QUANTIZATION_CHOICES, SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, TRANSPOSE_LIMIT, VAE_CHOICES, WRITER_AUTO,
+    QUANTIZATION_CHOICES, SAMPLE_RATE, SEED_TOOLTIP, STYLE_TOOLTIP, TRANSPOSE_LIMIT, VAE_CHOICES,
+    VAE_RS_VARIANTS, WRITER_AUTO,
     WRITER_LENGTH_CHOICES,
     WRITER_LENGTH_DEFAULT, WRITER_LENGTH_LINES, WRITER_MAX_NEW_TOKENS,
     WRITER_REPETITION_PENALTY, WRITER_TEMPERATURE, WRITER_TOP_K, WRITER_TOP_P,
@@ -319,12 +320,22 @@ class YuE2Options:
     CATEGORY = CATEGORY
 
     @classmethod
-    def IS_CHANGED(cls, checkpoint="auto", **_inputs):
-        """Replacing explicit weights under the same name invalidates cached plans and songs."""
+    def IS_CHANGED(cls, checkpoint="auto", vae=DEFAULT_OPTIONS["vae"], **_inputs):
+        """Replacing explicit weights or an RS decoder invalidates cached results."""
         if checkpoint == "auto":
-            return "auto"
-        path = checkpoints.catalogue().get(checkpoint)
-        return (checkpoint, checkpoints._stamp(path) if path else None)
+            mark = "auto"
+        else:
+            path = checkpoints.catalogue().get(checkpoint)
+            mark = (checkpoint, checkpoints._stamp(path) if path else None)
+        if vae not in VAE_RS_VARIANTS:
+            return mark
+        from . import paths, vae_rs
+
+        try:
+            decoder = vae_rs.find(paths.search_roots(), vae)
+        except (OSError, ValueError):
+            return float("nan")
+        return (mark, (decoder, checkpoints._stamp(decoder)) if decoder else None)
 
     @classmethod
     def VALIDATE_INPUTS(cls, attention_backend=DEFAULT_OPTIONS["attention_backend"], checkpoint="auto"):

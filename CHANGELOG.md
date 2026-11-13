@@ -7,6 +7,34 @@ the same thing; the release workflow refuses a tag that disagrees with
 `pyproject.toml`, or one that either changelog has no section for. The section it
 finds is published as the release notes, English above Russian.
 
+## 0.17.0 - 2026-11-13
+
+### Added
+
+- **A separate LoRA for a Style edit.** In `YuE2 Edit Track`, select bars,
+  open `Style...` and use `Choose for this edit` to pick adapters with their
+  own AR/NAR strengths. `As in the original song` inherits the song's
+  adapters; `Without LoRA` disables them for this edit. Each edit's choice
+  is saved in the workflow and the saved song.
+- Put any required trigger words into the style yourself. The effect depends
+  on the adapter and the melody mode: `Same notes` keeps the original tune,
+  while `New melody` lets the model write another tune for whole sections.
+
+### Fixed
+
+- Replacing or removing an RS x3 VAE file now invalidates ComfyUI's cached
+  result, including with `checkpoint=auto`. An incompatible replacement is
+  checked on the next run instead of returning the old audio
+  ([#16](https://github.com/pytraveler/YuE2-ComfyUI/issues/16)).
+- The `+ Add LoRA` label stays centred in the Style panel.
+
+### Compatibility
+
+- LoRA overrides use the existing `edits` field; node widgets and sockets
+  keep their positions. Edits without an override, including ordinary
+  `Retake`, use the original song's adapters.
+- Restart ComfyUI and refresh the browser after updating.
+
 ## 0.16.0 - 2026-11-12
 
 ### Added

@@ -11,6 +11,8 @@ times and a fourth run sings none.
 from __future__ import annotations
 
 import json
+import contextlib
+import dataclasses
 import re
 import time
 import types
@@ -2466,6 +2468,139 @@ def restyled_by_stand(torch, calls):
         return made
 
     return restyled
+
+
+@pytest.fixture
+def restyle_loras(stand, torch, tmp_path, monkeypatch):
+    """Real catalogue entries and adapter choices, with only the singing stood in for."""
+    import lora_files as lf
+    from yue2_comfy import loader
+    from yue2_comfy.inpaint import core
+    from yue2_comfy.lora import catalogue
+
+    root = tmp_path / "loras"
+    root.mkdir()
+    weights = lf.map_layer(0)
+    weights.update(lf.map_layer(0, half="nar"))
+    lf.write(root / "voice.safetensors", weights)
+    monkeypatch.setattr(catalogue, "roots", lambda: [str(root)])
+    sessions, sung, calls = [], [], []
+
+    def session(settings, unique_id, progress, loras=None):
+        sessions.append(loras)
+        return contextlib.nullcontext(loader.Models(None, None, None, "cpu", loras=loras))
+
+    sing = restyled_by_stand(torch, calls)
+
+    def restyled(models, old, waveform, state, step, style, octave, seeds, settings, *args, **kwargs):
+        sung.append((models.loras, list(settings.get("loras") or [])))
+        takes = sing(models, old, waveform, state, step, style, octave, seeds, settings, *args, **kwargs)
+        for take in takes:
+            take.song = dataclasses.replace(take.song, settings=old.settings)
+        return takes
+
+    monkeypatch.setattr("yue2_comfy.staged.session", session)
+    monkeypatch.setattr(core, "restyled", restyled)
+    monkeypatch.setattr("yue2_comfy.vocals_only.separator_weights", lambda *args: "separator.ckpt")
+    return types.SimpleNamespace(root=root, weights=weights, sessions=sessions, sung=sung)
+
+
+def own_restyle(rows, **changes):
+    edit = json.loads(RESTYLE)[0]
+    edit.update(loras=rows, **changes)
+    return edit
+
+
+def test_a_restyle_selects_its_own_adapters_and_keeps_them_in_the_workflow_and_song(
+        stand, restyle_loras):
+    rows = [{"name": "voice.safetensors", "ar": 0.7, "nar": 0.3}]
+    drawn = payload(run(stand, json.dumps([own_restyle(rows)])))
+    choice = restyle_loras.sung[0][0][0]
+    assert (choice.name, choice.ar, choice.nar) == ("voice.safetensors", 0.7, 0.3)
+    assert restyle_loras.sung[0][1][0]["sha256"] == choice.sha256
+    written = json.loads(drawn["edits"])[0]
+    assert written["loras"][0]["name"] == choice.name
+    assert "path" not in written["loras"][0]
+    kept = songs.store().get(drawn["song"])
+    assert not kept.settings.get("loras"), "one region must not change the whole song's default adapters"
+    assert kept.edit[0]["lora_files"] == [[choice.name, choice.sha256, 0.7, 0.3]]
+
+
+def test_restyles_switch_adapters_and_restore_the_song_defaults_without_reloading_weights(
+        stand, restyle_loras):
+    edits = [own_restyle([{"name": "voice.safetensors", "ar": 0.75, "nar": 0.5}]),
+             own_restyle([], seed=19), json.loads(RESTYLE)[0]]
+    run(stand, json.dumps(edits))
+    assert len(restyle_loras.sessions) == 1
+    assert len(restyle_loras.sung[0][0]) == 1
+    assert restyle_loras.sung[1:] == [((), []), ((), [])]
+    run(stand, json.dumps(edits))
+    assert len(restyle_loras.sung) == 3, "all three cached edits are reused"
+
+
+def test_changing_a_restyles_strength_or_file_invalidates_its_cached_takes(stand, restyle_loras):
+    import lora_files as lf
+
+    edit = own_restyle([{"name": "voice.safetensors", "ar": 0.5, "nar": 0.5}])
+    run(stand, json.dumps([edit]))
+    run(stand, json.dumps([edit]))
+    assert len(restyle_loras.sung) == 1
+    edit["loras"][0]["ar"] = 0.75
+    run(stand, json.dumps([edit]))
+    assert len(restyle_loras.sung) == 2
+    old_hash = restyle_loras.sung[-1][0][0].sha256
+    lf.write(restyle_loras.root / "voice.safetensors", restyle_loras.weights, {"title": "replacement"})
+    run(stand, json.dumps([edit]))
+    assert len(restyle_loras.sung) == 3
+    assert restyle_loras.sung[-1][0][0].sha256 != old_hash
+
+
+def test_an_edit_after_a_custom_restyle_uses_the_original_songs_nonzero_adapters(
+        stand, restyle_loras):
+    from yue2_comfy.lora import node as lora_node
+
+    original = lora_node.picked(json.dumps([{"name": "voice.safetensors", "ar": 0.2, "nar": 0.1}]))
+    stand.song.settings["loras"] = original
+    custom = own_restyle([{"name": "voice.safetensors", "ar": 0.8, "nar": 0.6}])
+    inherited = json.loads(RESTYLE)[0]
+    drawn = payload(run(stand, json.dumps([custom, inherited])))
+    assert [(rows[0].ar, rows[0].nar) for rows, _settings in restyle_loras.sung] == [(0.8, 0.6), (0.2, 0.1)]
+    assert songs.store().get(drawn["song"]).settings["loras"] == original
+    assert len(restyle_loras.sessions) == 1
+
+
+def test_changing_a_later_restyles_lora_reuses_the_earlier_edit(stand, restyle_loras):
+    inherited = json.loads(RESTYLE)[0]
+    custom = own_restyle([{"name": "voice.safetensors", "ar": 0.5, "nar": 0.25}], seed=27)
+    run(stand, json.dumps([inherited, custom]))
+    assert len(restyle_loras.sung) == 2
+    custom["loras"][0]["nar"] = 0.75
+    run(stand, json.dumps([inherited, custom]))
+    assert len(restyle_loras.sung) == 3
+
+
+def test_a_restyle_without_adapters_does_not_require_the_original_songs_missing_lora(
+        stand, restyle_loras):
+    stand.song.settings["loras"] = [{"name": "gone.safetensors", "path": "not-registered",
+                                     "ar": 1, "nar": 1}]
+    run(stand, json.dumps([own_restyle([])]))
+    assert restyle_loras.sung == [((), [])]
+
+
+def test_a_missing_restyle_adapter_is_refused_even_when_its_takes_are_cached(stand, restyle_loras):
+    text = json.dumps([own_restyle([{"name": "voice.safetensors"}])])
+    run(stand, text)
+    (restyle_loras.root / "voice.safetensors").unlink()
+    with pytest.raises(ValueError, match="Edit 1.*voice.safetensors"):
+        run(stand, text)
+    assert len(restyle_loras.sung) == 1
+
+
+def test_disabled_or_zero_restyle_adapters_need_no_file(stand, restyle_loras):
+    rows = [{"name": "gone.safetensors", "on": False},
+            {"name": "also-gone.safetensors", "ar": 0, "nar": 0}]
+    run(stand, json.dumps([own_restyle(rows)]))
+    assert restyle_loras.sung == [((), [])]
 
 
 def test_a_restyle_is_sung_by_the_core_and_drawn_as_takes_of_the_song_it_makes(stand, torch,

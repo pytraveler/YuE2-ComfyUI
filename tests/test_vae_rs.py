@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+import math
+import os
 import struct
 import types
 import pytest
 
-from yue2_comfy import checkpoints, constants, discovery, download, loader, paths, vae_rs
+from yue2_comfy import checkpoints, constants, discovery, download, loader, nodes, paths, vae_rs
 
 
 def rs_header(variant="rs_x3_v1"):
@@ -52,6 +54,80 @@ def test_a_wrong_file_under_the_published_name_is_refused(tmp_path):
     write_rs(tmp_path / filename, "rs_x3_v2")
     with pytest.raises(ValueError, match="rs_x3_v1"):
         vae_rs.find([str(tmp_path)], "rs_x3_v1")
+
+
+@pytest.mark.parametrize("variant", constants.VAE_RS_VARIANTS)
+@pytest.mark.parametrize("choice", ["auto", "chosen"])
+@pytest.mark.parametrize("renamed", [False, True])
+def test_options_cache_tracks_rs_files_and_keeps_checkpoint_tracking(tmp_path, monkeypatch,
+                                                                    variant, choice, renamed):
+    monkeypatch.setattr(paths, "search_roots", lambda: [str(tmp_path)])
+    backbone = tmp_path / "backbone.safetensors"
+    backbone.write_bytes(b"backbone")
+    monkeypatch.setattr(checkpoints, "catalogue", lambda: {"chosen": str(backbone)})
+
+    def changed():
+        return nodes.YuE2Options.IS_CHANGED(checkpoint=choice, vae=variant)
+
+    missing = changed()
+    name = "renamed.safetensors" if renamed else constants.VAE_RS_VARIANTS[variant][0]
+    decoder = tmp_path / "vae" / name
+    write_rs(decoder, variant)
+    original = changed()
+    assert original != missing
+    assert changed() == original
+
+    info = decoder.stat()
+    os.utime(decoder, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000_000))
+    assert changed() != original
+    os.utime(decoder, ns=(info.st_atime_ns, info.st_mtime_ns))
+    assert changed() == original
+
+    with decoder.open("ab") as handle:
+        handle.write(b"replacement")
+    os.utime(decoder, ns=(info.st_atime_ns, info.st_mtime_ns))
+    assert changed() != original
+    before_backbone = changed()
+    backbone.write_bytes(b"replacement backbone")
+    assert (changed() == before_backbone) == (choice == "auto")
+    before_move = changed()
+    moved = tmp_path / name
+    decoder.rename(moved)
+    assert changed() != before_move
+    before_removal = changed()
+    moved.unlink()
+    assert changed() != before_removal
+
+
+@pytest.mark.parametrize("fault", ["wrong-variant", "half", "missing", "corrupt"])
+def test_an_invalid_rs_replacement_cannot_keep_cached_audio(tmp_path, monkeypatch, fault):
+    monkeypatch.setattr(paths, "search_roots", lambda: [str(tmp_path)])
+    decoder = tmp_path / constants.VAE_RS_VARIANTS["rs_x3_v1"][0]
+    write_rs(decoder)
+    original = nodes.YuE2Options.IS_CHANGED(vae="rs_x3_v1")
+    header = rs_header("rs_x3_v2" if fault == "wrong-variant" else "rs_x3_v1")
+    if fault == "half":
+        header["unused.0"]["dtype"] = "F16"
+    elif fault == "missing":
+        del header["unused.0"]
+    if fault == "corrupt":
+        decoder.write_bytes(b"not a safetensors file")
+    else:
+        write_rs(decoder, header=header)
+    changed = nodes.YuE2Options.IS_CHANGED(vae="rs_x3_v1")
+    assert changed != original
+    assert math.isnan(changed)
+
+
+@pytest.mark.parametrize("variant", ["standard", "legacy"])
+@pytest.mark.parametrize("choice", ["auto", "chosen"])
+def test_existing_decoder_cache_does_not_search_for_rs(tmp_path, monkeypatch, variant, choice):
+    monkeypatch.setattr(paths, "search_roots", no_download)
+    backbone = tmp_path / "backbone.safetensors"
+    backbone.write_bytes(b"backbone")
+    monkeypatch.setattr(checkpoints, "catalogue", lambda: {"chosen": str(backbone)})
+    expected = "auto" if choice == "auto" else (choice, checkpoints._stamp(str(backbone)))
+    assert nodes.YuE2Options.IS_CHANGED(checkpoint=choice, vae=variant) == expected
 
 
 @pytest.mark.parametrize("fault", ["half", "missing", "shape"])

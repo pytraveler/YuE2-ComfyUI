@@ -102,6 +102,8 @@ const STYLE = `
     gap: ${GAP}px; overflow: hidden; font-family: system-ui, sans-serif; font-size: 11px;
     color: var(--input-text, #ddd); user-select: none; }
 .yue2-lora-top { flex: 0 0 auto; }
+.yue2-lora-inline { height: auto; flex: 0 0 auto; padding: 5px 0; }
+.yue2-lora-inline[hidden] { display: none; }
 .yue2-lora-head, .yue2-lora-line { display: grid; grid-template-columns: ${COLUMNS};
     column-gap: ${COLUMN_GAP}px; align-items: center; padding: 0 2px; }
 .yue2-lora-head { height: ${HEAD_H}px; font-size: 10px; color: var(--descrip-text, #999); }
@@ -166,6 +168,8 @@ const STYLE = `
     background: var(--comfy-input-bg, #2b2b2b); border: 1px solid var(--border-color, #4e4e4e); }
 .yue2-lora-add:hover { background: var(--comfy-menu-bg, #353535); }
 .yue2-lora-add:active { background: #3B7DD8; border-color: #3B7DD8; color: #fff; }
+.yue2-lora-inline .yue2-lora-add { display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 12px; line-height: 1; white-space: nowrap; }
 .yue2-lora-summary { flex: 1 1 auto; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; color: var(--descrip-text, #999); }
 
@@ -314,7 +318,15 @@ function writeRows(node, rows, quiet) {
     }
     if (quiet) return;
     redraw(node);
-    graphChanged();
+    rowsChanged(node);
+}
+
+function rowsChanged(node) {
+    const state = node[STATE];
+    if (!state) return;
+    const callback = state.changed;
+    if (callback) callback(readRows(node).rows);
+    else graphChanged();
 }
 
 function change(node, index, edit) {
@@ -347,7 +359,7 @@ function refreshListing() {
         }
         LISTED.asking = null;
         for (const node of [...LIVE]) {
-            if (node.graph) redraw(node);
+            if (node.graph || node[STATE]?.inline) redraw(node);
             else LIVE.delete(node);
         }
         PICKER?.paint();
@@ -626,7 +638,7 @@ function strength(node, index, key, entry, item) {
             setTimeout(() => {
                 if (node[STATE]?.typing) return;
                 release(node, dragged);
-                if (dragged) graphChanged();
+                if (dragged) rowsChanged(node);
             }, 0);
         };
         window.addEventListener("pointermove", moving, true);
@@ -828,7 +840,7 @@ function buildRow(node, entry, index) {
 }
 
 function header(node, rows) {
-    if (!rows.length) return element("div", "yue2-lora-empty", EMPTY_TEXT);
+    if (!rows.length) return element("div", "yue2-lora-empty", node[STATE]?.empty || EMPTY_TEXT);
     const bar = element("div", "yue2-lora-head");
     const all = rows.every((row) => row.on);
     const none = rows.every((row) => !row.on);
@@ -926,7 +938,7 @@ function replaceWidget(node, holder) {
     return widget;
 }
 
-function build(node) {
+function build(node, inline = null) {
     installStyle(STYLE_ID, STYLE);
     const holder = element("div", "yue2-lora");
     const top = element("div", "yue2-lora-top");
@@ -939,7 +951,8 @@ function build(node) {
     foot.append(add, summary);
     holder.append(top, rows, foot);
     holder.addEventListener("dblclick", (event) => event.stopPropagation());
-    node[STATE] = { top, rows, summary, count: 0, quiet: false, busy: false, typing: false, pending: false };
+    node[STATE] = { top, rows, summary, count: 0, quiet: false, busy: false, typing: false, pending: false,
+        inline: Boolean(inline), changed: inline?.changed, empty: inline?.empty };
 
     add.addEventListener("pointerdown", hold);
     add.addEventListener("click", (event) => {
@@ -951,14 +964,33 @@ function build(node) {
         });
     });
 
-    if (!replaceWidget(node, holder)) {
+    if (!inline && !replaceWidget(node, holder)) {
         delete node[STATE];
         return;
     }
     LIVE.add(node);
     redraw(node);
-    if (node.size) node.setSize?.([Math.max(node.size[0], MIN_WIDTH), node.computeSize?.()?.[1] ?? node.size[1]]);
-    freshen();
+    if (!inline && node.size) {
+        node.setSize?.([Math.max(node.size[0], MIN_WIDTH), node.computeSize?.()?.[1] ?? node.size[1]]);
+    }
+    if (!inline) freshen();
+    return holder;
+}
+
+export function loraEditor(rows, changed) {
+    const owner = { widgets: [{ name: WIDGET, value: JSON.stringify(rows || []) }] };
+    const holder = build(owner, { changed,
+        empty: "Add the LoRAs for this edit. With no active rows it is sung without adapters." });
+    holder.classList.add("yue2-lora-inline");
+    return {
+        element: holder,
+        refresh: freshen,
+        dispose() {
+            if (PICKER?.node === owner) shutPicker();
+            LIVE.delete(owner);
+            delete owner[STATE];
+        },
+    };
 }
 
 app.registerExtension({

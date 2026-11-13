@@ -186,7 +186,33 @@ function restyling(item, where, bars) {
                 + "once.");
         }
     }
-    return { style, melody, octave, also };
+    const result = { style, melody, octave, also };
+    if (given(item, "loras") !== null) result.loras = adapterRows(item.loras, where);
+    return result;
+}
+
+function adapterRows(value, where) {
+    if (!Array.isArray(value)) throw new Error(where + ": LoRA rows must be a list.");
+    return value.map((row, index) => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+            throw new Error(where + ": LoRA row " + (index + 1) + " is not an object.");
+        }
+        if (row.name !== undefined && typeof row.name !== "string") {
+            throw new Error(where + ": LoRA name must be text.");
+        }
+        if (row.on !== undefined && typeof row.on !== "boolean") {
+            throw new Error(where + ": LoRA on must be true or false.");
+        }
+        const entry = { name: (row.name || "").replace(PY_EDGES, ""), on: row.on !== false };
+        for (const half of ["ar", "nar"]) {
+            const number = row[half] === undefined ? 1 : row[half];
+            if (typeof number !== "number" || !Number.isFinite(number) || Math.abs(number) > 10) {
+                throw new Error(where + ": LoRA " + half + " strength must be between -10 and 10.");
+            }
+            entry[half] = number;
+        }
+        return entry;
+    });
 }
 
 function editOf(item, index, takes) {
@@ -200,6 +226,9 @@ function editOf(item, index, takes) {
             + "is 'retake', 'cut', 'words', 'notes', 'extend', 'move', 'break' or 'restyle'.");
     }
     const span = rangeOf(item, where, op);
+    if (op !== "restyle" && given(item, "loras") !== null) {
+        throw new Error(where + " selects LoRAs, which only a restyle can do.");
+    }
     if (op === "cut") {
         return { op, bars: span.bars, seconds: span.seconds, seed: 0, takes: 1, take: null,
                  vary: null, guide: null, lines: null, text: null, score: null,
@@ -372,6 +401,9 @@ function editItems(edits) {
             item.melody = edit.melody;
             item.octave = edit.octave;
             if (edit.also && edit.also.length) item.also = edit.also.map((one) => [one[0], one[1]]);
+            if (edit.loras !== undefined && edit.loras !== null) {
+                item.loras = edit.loras.map((row) => ({ ...row }));
+            }
         }
         if (edit.op === "retake" || edit.op === "words" || edit.op === "notes"
             || edit.op === "extend" || edit.op === "break" || edit.op === "restyle") {
@@ -544,8 +576,18 @@ export function describeEdit(edit, index, count = 0) {
     if (typeof edit.vary === "number") extra.push("variety " + edit.vary.toFixed(2));
     if (typeof edit.guide === "number") extra.push("guide " + edit.guide.toFixed(1));
     if (typeof edit.fade === "number") extra.push("fade " + edit.fade.toFixed(1) + " s");
+    if (edit.op === "restyle" && edit.loras !== undefined && edit.loras !== null) {
+        extra.push(adapterText(edit));
+    }
     return (index + 1) + ". " + what + joiner + where + kept
         + (extra.length ? ", " + extra.join(", ") : "");
+}
+
+export function adapterText(edit) {
+    if (edit.loras === undefined || edit.loras === null) return "LoRA: as in the original song";
+    const active = edit.loras.filter((row) => row.on !== false && row.name && (row.ar || row.nar));
+    return active.length ? "LoRA: " + active.map((row) => row.name + " (AR " + row.ar
+        + ", NAR " + row.nar + ")").join("; ") : "LoRA: none";
 }
 
 export function wordsFor(lines, said, takes, seed, selection = null, knobs = {}) {
@@ -713,6 +755,9 @@ export function restyleFor(selection, also, style, melody, octave, takes, seed, 
                    also: (also || []).map((one) => [one[0], one[1]]) };
     if (typeof knobs.vary === "number") edit.vary = knobs.vary;
     if (typeof knobs.guide === "number") edit.guide = knobs.guide;
+    if (knobs.loras !== undefined && knobs.loras !== null) {
+        edit.loras = adapterRows(knobs.loras, "This edit");
+    }
     return edit;
 }
 

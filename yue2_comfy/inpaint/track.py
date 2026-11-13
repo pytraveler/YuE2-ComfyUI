@@ -276,6 +276,11 @@ class Edit:
     the other ``(first, stop)`` bars sung in it beside ``bars`` -- the other
     choruses, say, which one song sung in the style gives them all, so one
     voice sings them. None for anything else.
+
+    ``loras`` is a restyle's own adapter rows: None inherits the original
+    song and an empty tuple switches adapters off. ``lora_files`` is filled
+    by the node with the live file identities before any cache lookup; it
+    is never trusted from the workflow or written into its widget.
     """
 
     op: str
@@ -297,6 +302,8 @@ class Edit:
     melody: str | None = None
     octave: int | None = None
     also: tuple | None = None
+    loras: tuple | None = None
+    lora_files: tuple = ()
 
     def seeds(self) -> tuple:
         """The seed of every take this edit asks for, counted on from its own."""
@@ -597,6 +604,30 @@ def _restyling(item, where: str, bars: tuple) -> tuple:
     return style, melody, octave, tuple(found)
 
 
+def _adapter_rows(value, where: str) -> tuple:
+    """A restyle's portable adapter rows, without paths or caller-supplied file identities."""
+    if not isinstance(value, list):
+        raise ValueError(where + ": LoRA rows must be a list.")
+    found = []
+    for index, row in enumerate(value, 1):
+        if not isinstance(row, dict):
+            raise ValueError("{}: LoRA row {} is not an object.".format(where, index))
+        name = row.get("name", "")
+        if not isinstance(name, str):
+            raise ValueError(where + ": LoRA name must be text.")
+        if not isinstance(row.get("on", True), bool):
+            raise ValueError(where + ": LoRA on must be true or false.")
+        entry = {"name": name.strip(), "on": row.get("on", True)}
+        for half in ("ar", "nar"):
+            number = row.get(half, 1.0)
+            if (not isinstance(number, (float, int)) or isinstance(number, bool)
+                    or number != number or abs(number) > 10):
+                raise ValueError("{}: LoRA {} strength must be between -10 and 10.".format(where, half))
+            entry[half] = float(number)
+        found.append(entry)
+    return tuple(found)
+
+
 def _edit(item, index: int, takes: int) -> Edit:
     where = "Edit {}".format(index + 1)
     if not isinstance(item, dict):
@@ -607,6 +638,11 @@ def _edit(item, index: int, takes: int) -> Edit:
                          "'cut', 'words', 'notes', 'extend', 'move', 'break' or 'restyle'.".format(
                              where, op))
     bars, seconds = _range(item, index, op)
+    loras = None
+    if item.get("loras") is not None:
+        if op != "restyle":
+            raise ValueError("{} selects LoRAs, which only a restyle can do.".format(where))
+        loras = _adapter_rows(item["loras"], where)
     if op == "cut":
         return Edit(op=op, bars=bars, seconds=seconds, seed=0, takes=1, take=None,
                     fade=_measure(item, "fade", where, "the fade", FADE))
@@ -647,7 +683,7 @@ def _edit(item, index: int, takes: int) -> Edit:
                 vary=_measure(item, "vary", where, "the variety", VARY),
                 guide=_measure(item, "guide", where, "the guide", GUIDE),
                 lines=lines, text=words, score=score, to=to, length=length, at=at,
-                style=style, melody=melody, octave=octave, also=also)
+                style=style, melody=melody, octave=octave, also=also, loras=loras)
 
 
 def read(text, takes: int = 1) -> tuple:
@@ -753,6 +789,8 @@ def _restyled_fields(edit: Edit) -> dict:
     fields = {"style": edit.style, "melody": edit.melody, "octave": edit.octave}
     if edit.also:
         fields["also"] = [[first, stop] for first, stop in edit.also]
+    if edit.loras is not None:
+        fields["loras"] = [dict(row) for row in edit.loras]
     return fields
 
 
@@ -1484,6 +1522,8 @@ def _spelled(edit: Edit, seed) -> dict:
             item["at"] = edit.at
     if edit.op == "restyle":
         item.update(_restyled_fields(edit))
+        if edit.lora_files:
+            item["lora_files"] = [list(identity) for identity in edit.lora_files]
     for key, value in (("vary", edit.vary), ("guide", edit.guide)):
         if value is not None:
             item[key] = value

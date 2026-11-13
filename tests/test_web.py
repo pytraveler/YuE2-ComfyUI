@@ -1558,7 +1558,53 @@ def spelled(edit):
     if edit.op == "restyle":
         shape.update(style=edit.style, melody=edit.melody, octave=edit.octave,
                      also=[list(stretch) for stretch in edit.also])
+        if edit.loras is not None:
+            shape["loras"] = list(edit.loras)
     return shape
+
+
+@needs_node
+@pytest.mark.parametrize("rows", [None, [], [{"name": "voice.safetensors"}],
+                                  [{"name": "voice.safetensors", "ar": -0.5, "nar": 0.75,
+                                    "on": False, "path": "ignored", "sha256": "untrusted"}]])
+def test_a_restyles_adapter_rows_survive_the_browser_and_python_round_trip(rows):
+    from yue2_comfy.inpaint import track
+
+    text = json.dumps([{"op": "restyle", "bars": [4, 8], "style": "pop", "loras": rows}])
+    made = run_edits("const edit = e.readEdits(%s, 2); console.log(JSON.stringify({"
+                     "read: edit, written: e.writeEdits(edit.edits)}));" % json.dumps(text))
+    assert not made["read"]["error"]
+    wanted = track.read(text, 2)
+    assert made["read"]["edits"] == [spelled(edit) for edit in wanted]
+    assert json.loads(made["written"]) == json.loads(track.written(wanted))
+    assert track.read(made["written"], 2) == wanted
+
+
+@needs_node
+@pytest.mark.parametrize("rows", ["voice.safetensors", {}, [None], [[]], [{"name": 1}],
+                                  [{"on": "false"}], [{"ar": None}], [{"nar": "0.5"}],
+                                  [{"ar": True}], [{"nar": []}], [{"ar": -10.01}]])
+def test_the_browser_and_node_refuse_the_same_malformed_restyle_adapters(rows):
+    from yue2_comfy.inpaint import track
+
+    text = json.dumps([{"op": "restyle", "bars": [4, 8], "style": "pop", "loras": rows}])
+    with pytest.raises(ValueError) as error:
+        track.read(text)
+    made = run_edits("console.log(JSON.stringify(e.readEdits(%s)));" % json.dumps(text))
+    assert made["error"] == str(error.value)
+
+
+@needs_node
+def test_a_new_restyle_keeps_its_own_adapter_rows_when_another_take_is_chosen():
+    made = run_edits("""
+        const rows = [{ name: "voice.safetensors", ar: 0.7, nar: 0.2, on: true }];
+        const edit = e.restyleFor({ first: 4, stop: 8 }, [], "pop", "same", 0, 2, 7, { loras: rows });
+        rows[0].ar = 9;
+        const copy = e.readEdits(e.writeEdits([edit]), 2).edits;
+        console.log(JSON.stringify([edit.loras, e.writeEdits(e.withTakes(copy, 0, 3))]));
+    """)
+    assert made[0] == [{"name": "voice.safetensors", "ar": 0.7, "nar": 0.2, "on": True}]
+    assert json.loads(made[1])[0]["loras"] == made[0]
 
 
 @needs_node

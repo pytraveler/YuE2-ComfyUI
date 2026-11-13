@@ -904,6 +904,40 @@ def _settings(song, options, unique_id) -> dict:
     return settings
 
 
+def _edit_adapters(wanted, settings, unique_id):
+    """Resolve each restyle's own adapters before looking up any of its takes.
+
+    Omitted rows inherit the original song; an empty list explicitly sings
+    without adapters. Only catalogue names are accepted from the edit list.
+    The live files' hashes belong to the result key, while paths never go
+    into the workflow field. The song keeps its original default adapters.
+    """
+    import dataclasses
+
+    from .lora import node as lora_node
+    from .staged import adapters
+
+    inherited = adapters(settings, unique_id) if not wanted or any(
+        edit.loras is None for edit in wanted) else ()
+    prepared, choices = [], []
+    for index, edit in enumerate(wanted):
+        if edit.loras is None:
+            prepared.append(edit)
+            choices.append((settings, inherited))
+            continue
+        try:
+            specs = lora_node.picked(json.dumps(edit.loras))
+        except (ValueError, FileNotFoundError) as error:
+            refuse(unique_id, "Edit {}: {}".format(index + 1, error))
+        own = dict(settings, loras=specs)
+        selected = adapters(own, unique_id)
+        identities = tuple((spec["name"], spec["sha256"], spec["ar"], spec["nar"])
+                           for spec in specs)
+        prepared.append(dataclasses.replace(edit, lora_files=identities))
+        choices.append((own, selected))
+    return tuple(prepared), choices, inherited
+
+
 def _held_bytes(entry) -> int:
     return sum(int(take.waveform.numel()) * 4 for take in entry["takes"].values())
 
@@ -1656,7 +1690,8 @@ def _stamped(edited, waveform, parent: str, before, marks):
                "at": [round(mark["start"] * FRAME_SECONDS, 3),
                       round((mark["start"] + mark["count"]) * FRAME_SECONDS, 3)],
                "bars": mark["bars"], "seed": mark["seed"], "took": mark["took"],
-               "was": mark["was"], "now": mark["now"]}
+               "was": mark["was"], "now": mark["now"],
+               **{key: mark[key] for key in ("loras", "lora_files") if key in mark}}
               for mark in marks])
 
 
@@ -1847,7 +1882,7 @@ class YuE2EditTrack:
         refused on any other: its bars belong to that song.
         """
         from .inpaint import core
-        from .staged import adapters, session
+        from .staged import session
 
         progress = NodeProgress(unique_id, title=ORIGIN)
         given = bool(use_audio) and bool(audio) and audio.get("waveform") is not None
@@ -1883,7 +1918,7 @@ class YuE2EditTrack:
             if made_on != name:
                 refuse(unique_id, ANOTHER_SONG.format(_song_said(made_on), _song_said(name, song)))
         settings = _settings(song, options, unique_id)
-        loras = adapters(settings, unique_id)
+        wanted, edit_adapters, loras = _edit_adapters(wanted, settings, unique_id)
         sheet = notation.read(song.score) if song.score else None
         if wanted and wanted[0].bars is not None:
             if sheet is None:
@@ -1896,17 +1931,20 @@ class YuE2EditTrack:
         began = time.perf_counter()
         stack = contextlib.ExitStack()
         models = [None]
+        loaded_loras = [None]
         singing = [None]
         listened = set()
 
-        def loaded():
+        def loaded(chosen=loras):
             if models[0] is None:
                 _ears_away(settings)
                 held = contextlib.ExitStack()
                 stack.callback(held.close)
-                models[0] = held.enter_context(session(settings, unique_id, progress, loras))
+                models[0] = held.enter_context(session(settings, unique_id, progress, chosen))
+                loaded_loras[0] = chosen
                 singing[0] = held
-            return models[0]
+            return (models[0] if chosen == loaded_loras[0]
+                    else models[0]._replace(loras=chosen))
 
         def released():
             if singing[0] is not None:
@@ -1981,8 +2019,9 @@ class YuE2EditTrack:
                                                   settings)
                         opens = found_by
                     hears = closes - (closes - opens) * HEARD_SHARE if asked else closes
-                    entry = self._sung(loaded, current, sound, state, step, edit, made,
-                                       settings, Band(progress, opens, hears), unique_id,
+                    own_settings, chosen = edit_adapters[index]
+                    entry = self._sung(lambda: loaded(chosen), current, sound, state, step, edit, made,
+                                       own_settings, Band(progress, opens, hears), unique_id,
                                        held | set(walked))
                     seeds = (0,) if _one_take(step) else edit.seeds()
                     if asked:
@@ -2012,6 +2051,9 @@ class YuE2EditTrack:
                                   "seed": None if _one_take(step) else int(kept.seed),
                                   "took": round((step.stop - step.start) * FRAME_SECONDS, 3),
                                   "was": "\n".join(step.was), "now": "\n".join(step.now)})
+                    if edit.loras is not None:
+                        marks[-1]["loras"] = [dict(row) for row in edit.loras]
+                        marks[-1]["lora_files"] = [list(identity) for identity in edit.lora_files]
                     shown = (step, ordered, pick, made, prior, seeds, earlier, entry)
                     before = {"label": track.sound_name(name, history[:-1]),
                               "disk": name if len(history) == 1 else "", "sound": earlier,
@@ -2573,6 +2615,9 @@ class YuE2EditTrack:
             payload["grid"] = grid.layout(state.sheet, state.clock, state.frames)
         payload["goes_on"] = _goes_on(state)
         payload["breaks"] = _breaks(state)
+        payload["loras"] = [{"name": str(spec.get("name") or ""),
+                             "ar": spec.get("ar", 0.0), "nar": spec.get("nar", 0.0), "on": True}
+                            for spec in settings.get("loras") or () if isinstance(spec, dict)]
         if shown is None:
             return payload
         step, ordered, pick, made, prior, seeds, earlier, entry = shown
